@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_props: Webmachine resource for listing bucket properties.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -80,7 +79,8 @@
               bucketprops,  %% proplist() - properties of the bucket
               method,       %% atom() - HTTP method for the request
               api_version,  %% non_neg_integer() - old or new http api
-              security     %% security context
+              security,     %% security context
+              connection_id = riak_kv_wm_utils:make_connection_id()
              }).
 -type context() :: #ctx{}.
 
@@ -112,10 +112,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
              Ctx#ctx{
                method=wrq:method(RD),
                client=C,
-               bucket=case wrq:path_info(bucket, RD) of
-                         undefined -> undefined;
-                         B -> list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, B))
-                      end
+               bucket=riak_kv_wm_utils:get_bucket(RD)
               }};
         Error ->
             {false,
@@ -126,7 +123,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     end.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -154,14 +151,13 @@ forbidden(RD, Ctx=#ctx{security=Security}) ->
                     "riak_core.get_bucket";
                 'HEAD' ->
                     "riak_core.get_bucket";
-		'DELETE' ->
+		        'DELETE' ->
                     "riak_core.set_bucket"
             end,
 
-            Res = riak_core_security:check_permission({Perm,
-                                                           {Ctx#ctx.bucket_type,
-                                                            Ctx#ctx.bucket}},
-                                                           Security),
+            Res = riak_kv_wm_utils:has_permission(
+                Perm, {Ctx#ctx.bucket_type, Ctx#ctx.bucket}, Security, Ctx#ctx.connection_id
+            ),
             case Res of
                 {false, Error, _} ->
                     RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),

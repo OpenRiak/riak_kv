@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_crdt: Webmachine resource for convergent data types
-%%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -131,7 +130,8 @@
           returnbody,
           method,
           timeout,
-          security
+          security,
+          connection_id = riak_kv_wm_utils:make_connection_id()
          }).
 -include("riak_kv_wm_raw.hrl").
 -include("riak_kv_types.hrl").
@@ -169,7 +169,7 @@ allowed_methods(RD, Ctx) ->
     {['GET', 'HEAD', 'POST'], RD, Ctx}.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -281,8 +281,7 @@ forbidden_check_security(RD, Ctx=#ctx{security=undefined}) ->
 forbidden_check_security(RD, Ctx=#ctx{bucket_type=BType, bucket=Bucket,
                                       security=SecContext, method=Method}) ->
     Perm = permission(Method),
-    case riak_core_security:check_permission({Perm, {BType, Bucket}},
-                                             SecContext) of
+    case riak_kv_wm_utils:has_permission(Perm, {BType, Bucket}, SecContext, Ctx#ctx.connection_id) of
         {false, Error, _} ->
             {true, error_response(Error, RD), Ctx};
         {true, _} ->

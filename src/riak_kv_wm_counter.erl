@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_counter: Webmachine resource for counters
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -102,7 +101,8 @@
               bucketprops,  %% proplist() - properties of the bucket
               method,       %% atom() - HTTP method for the request
               counter_op    :: integer() | undefined, %% The amount to add to the counter
-              security      %% security context
+              security,     %% security context
+              connection_id = riak_kv_wm_utils:make_connection_id()
              }).
 -type context() :: #ctx{}.
 
@@ -153,7 +153,7 @@ service_available(RD, Ctx=#ctx{riak=RiakProps}) ->
     end.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -181,10 +181,11 @@ forbidden(RD, Ctx=#ctx{security=Security}) ->
                     "riak_kv.get"
             end,
 
-            Res = riak_core_security:check_permission({Perm,
-                                                           {<<"default">>,
-                                                            Ctx#ctx.bucket}},
-                                                           Security),
+            Res = riak_kv_wm_utils:has_permission(
+                Perm, {<<"default">>, Ctx#ctx.bucket},
+                Security,
+                Ctx#ctx.connection_id
+            ),
             case Res of
                 {false, Error, _} ->
                     RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),

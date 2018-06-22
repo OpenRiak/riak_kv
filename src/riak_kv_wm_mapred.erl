@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_mapred: webmachine resource for mapreduce requests
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2010-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -36,14 +35,14 @@
 -define(DEFAULT_TIMEOUT, 60000).
 
 
--record(state, {inputs, timeout, mrquery, boundary, security}).
+-record(state, {inputs, timeout, mrquery, boundary, security, connection_id = riak_kv_wm_utils:make_connection_id()}).
 -type state() :: #state{}.
 
 init(_) ->
     {ok, #state{}}.
 
 is_authorized(ReqData, State) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, State#state.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, State};
         {true, SecContext} ->
@@ -70,9 +69,9 @@ forbidden(RD, State) ->
                         {ok, ParsedInputs, _ParsedQuery, _Timeout} ->
                             Permissions = riak_kv_mapred_term:get_required_permissions(ParsedInputs,
                                                                                        _ParsedQuery),
-                            Res = riak_core_security:check_permissions(
-                                    Permissions,
-                                    State#state.security),
+                            Res = riak_kv_wm_utils:has_permissions(
+                                Permissions, State#state.security, State#state.connection_id
+                            ),
                             case Res of
                                 {false, Error, _} ->
                                     RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),

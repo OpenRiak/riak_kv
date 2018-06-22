@@ -1,9 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_keylist - Webmachine resource for listing
-%%                      the keys in a bucket.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -64,7 +62,8 @@
               riak,         %% local | {node(), atom()} - params for riak client
               allow_props_param, %% true if the user can also list props. (legacy API)
               timeout,      %% integer() - list keys timeout
-              security      %% security context
+              security,     %% security context
+              connection_id = riak_kv_wm_utils:make_connection_id()
              }).
 -type context() :: #ctx{}.
 
@@ -111,7 +110,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     end.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -132,10 +131,9 @@ forbidden(RD, Ctx) ->
         true ->
             {true, RD, Ctx};
         false ->
-            Res = riak_core_security:check_permission({"riak_kv.list_keys",
-                                                       {Ctx#ctx.bucket_type,
-                                                        Ctx#ctx.bucket}},
-                                                      Ctx#ctx.security),
+            Res = riak_kv_wm_utils:has_permission(
+                "riak_kv.list_keys", {Ctx#ctx.bucket_type, Ctx#ctx.bucket}, Ctx#ctx.security, Ctx#ctx.connection_id
+            ),
             case Res of
                 {false, Error, _} ->
                     RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),

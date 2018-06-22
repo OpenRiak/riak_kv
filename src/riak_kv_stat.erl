@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_stat: collect, aggregate, and provide stats about the local node
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -306,7 +305,15 @@ do_update({consistent_put, _Bucket, Microsecs, ObjSize}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, consistent, puts], 1),
     ok = exometer:update([P, ?APP, consistent, puts, time], Microsecs),
-    create_or_update([P, ?APP, consistent, puts, objsize], ObjSize, histogram).
+    create_or_update([P, ?APP, consistent, puts, objsize], ObjSize, histogram);
+do_update(https_authn_success) ->
+    exometer:update([?PFX, ?APP, https_authn_success], 1);
+do_update(https_authn_fail) ->
+    exometer:update([?PFX, ?APP, https_authn_fail], 1);
+do_update(https_authz_success) ->
+    exometer:update([?PFX, ?APP, https_authz_success], 1);
+do_update(https_authz_fail) ->
+    exometer:update([?PFX, ?APP, https_authz_fail], 1).
 
 
 %% private
@@ -594,6 +601,10 @@ stats() ->
                                                {95    , node_put_fsm_map_time_95},
                                                {99    , node_put_fsm_map_time_99},
                                                {max   , node_put_fsm_map_time_100}]},
+     {https_authn_success, counter, [], [{value, https_authn_success}]},
+     {https_authn_fail, counter, [], [{value, https_authn_fail}]},
+     {https_authz_success, counter, [], [{value, https_authz_success}]},
+     {https_authz_fail, counter, [], [{value, https_authz_fail}]},
      {[index, fsm, create], spiral, [], [{one, index_fsm_create}]},
      {[index, fsm, create, error], spiral, [], [{one, index_fsm_create_error}]},
      {[index, fsm, active], counter, [], [{value, index_fsm_active}]},

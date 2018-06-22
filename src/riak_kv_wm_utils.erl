@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_utils: Common functions used by riak_kv_wm_* modules.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -36,7 +35,14 @@
          accept_value/2,
          any_to_list/1,
          any_to_bool/1,
+         make_connection_id/0,
+         is_authorized/2,
          is_forbidden/1,
+         has_permission/3,
+         has_permission/4,
+         has_permissions/3,
+         get_bucket/1,
+         get_key/1,
          jsonify_bucket_prop/1,
          erlify_bucket_prop/1,
          ensure_bucket_type/3,
@@ -51,6 +57,7 @@
 -type jsonpropvalue() :: integer()|string()|boolean()|{struct,[jsonmodfun()]}.
 -type jsonmodfun() :: {ModBinary :: term(), binary()}|{FunBinary :: term(), binary()}.
 -type erlpropvalue() :: integer()|string()|boolean().
+-type security_context() :: any().
 
 maybe_decode_uri(RD, Val) ->
     case application:get_env(riak_kv, http_url_encoding) of
@@ -247,9 +254,124 @@ any_to_bool(V) when is_integer(V) ->
 any_to_bool(V) when is_boolean(V) ->
     V.
 
+-spec make_connection_id() -> string().
+make_connection_id() ->
+    binary_to_list(
+        base64:encode(
+            term_to_binary(erlang:make_ref())
+        )
+    ).
+
+%% Adapted from riak_api_web_security, which is defined in riak_api, but
+%% which previously had only used by riak_kv_wm_* modules.
+-spec is_authorized(any(), string()) -> {true, security_context()} | false | insecure.
+is_authorized(ReqData, ConnectionId) ->
+    case riak_core_security:is_enabled() of
+        true ->
+            Scheme = wrq:scheme(ReqData),
+            case Scheme == https of
+                true ->
+                    case wrq:get_req_header("Authorization", ReqData) of
+                        "Basic " ++ Base64 ->
+                            UserPass = base64:decode_to_string(Base64),
+                            [User, Pass] = [list_to_binary(X) || X <- string:tokens(UserPass, ":")],
+                            {ok, Peer} = inet_parse:address(wrq:peer(ReqData)),
+                            case riak_core_security:authenticate(User, Pass, [{ip, Peer}]) of
+                                {ok, SecurityContext} ->
+                                    riak_kv_stat:update(https_authn_success),
+                                    lager:notice(
+                                        "AUTHN HTTPS Authentication succeeded for user '~s' from address ~p.  ConnectionId: ~s",
+                                        [binary_to_list(User), ReqData#wm_reqdata.peer, ConnectionId]
+                                    ),
+                                    {true, SecurityContext};
+                                {error, _SecurityContext} ->
+                                    riak_kv_stat:update(https_authn_fail),
+                                    lager:notice(
+                                        "AUTHN HTTPS Authentication failed for user '~s' from address ~p.  ConnectionId: ~s",
+                                        [binary_to_list(User), ReqData#wm_reqdata.peer, ConnectionId]
+                                    ),
+                                    false
+                            end;
+                        _ ->
+                            riak_kv_stat:update(https_authn_fail),
+                            lager:notice(
+                                "AUTHN HTTPS Authentication failed from address ~p -- no credentials.  ConnectionId: ~s",
+                                [ReqData#wm_reqdata.peer, ConnectionId]
+                            ),
+                            false
+                    end;
+                false ->
+                    %% security is enabled, but they're connecting over HTTP.
+                    %% which means if they authed, the credentials would be in
+                    %% plaintext
+                    riak_kv_stat:update(https_authn_fail),
+                    lager:notice(
+                        "AUTHN HTTPS Authentication failed from address ~p failed because client connected over plain HTTP.  ConnectionId: ~s",
+                        [ReqData#wm_reqdata.peer, ConnectionId]
+                    ),
+                    insecure
+            end;
+        false ->
+            {true, undefined} %% no security context
+    end.
+
 is_forbidden(RD) ->
     is_null_origin(RD) or
     (app_helper:get_env(riak_kv,secure_referer_check,true) and not is_valid_referer(RD)).
+
+
+has_permission(Permission, SecurityContext, ConnectionId) ->
+    has_permission(Permission, undefined, SecurityContext, ConnectionId).
+
+has_permission(Permission, BucketOrBucketType, SecurityContext, ConnectionId) ->
+    case check_permission(Permission, BucketOrBucketType, SecurityContext) of
+        {true, _NewContext} = HasPermission ->
+            riak_kv_stat:update(https_authz_success),
+            HasPermission;
+        {false, Reason, NewContext} = HasPermission ->
+            User = riak_core_security:get_username(NewContext),
+            riak_kv_stat:update(https_authz_fail),
+            lager:notice(
+                "AUTHZ HTTPS Authorization failed.  User '~s' DENIED permission for operation ~p on Bucket or Bucket type ~p for reason ~s.  ConnectionId: ~s",
+                [binary_to_list(User), Permission, BucketOrBucketType, binary_to_list(Reason), ConnectionId]
+            ),
+            HasPermission
+    end.
+
+has_permissions(Permissions, SecurityContext, ConnectionId) ->
+    case riak_core_security:check_permissions(Permissions, SecurityContext) of
+        {true, _NewContext} = HasPermission ->
+            riak_kv_stat:update(https_authz_success),
+            HasPermission;
+        {false, Reason, NewContext} = HasPermission ->
+            User = riak_core_security:get_username(NewContext),
+            riak_kv_stat:update(https_authz_fail),
+            lager:notice(
+                "AUTHZ HTTPS Authorization failed.   User '~s' DENIED permission for operations ~p for reason ~s.  ConnectionId: ~s",
+                [binary_to_list(User), Permissions, binary_to_list(Reason), ConnectionId]
+            ),
+            HasPermission
+    end.
+
+check_permission(Permission, undefined, SecurityContext) ->
+    riak_core_security:check_permission({Permission}, SecurityContext);
+check_permission(Permission, BucketOrBucketType, SecurityContext) ->
+    riak_core_security:check_permission({Permission, BucketOrBucketType}, SecurityContext).
+
+get_bucket(ReqData) ->
+    get_req_data_field(ReqData, bucket).
+
+
+get_key(ReqData) ->
+    get_req_data_field(ReqData, key).
+
+
+get_req_data_field(ReqData, Field) ->
+    case wrq:path_info(Field, ReqData) of
+        undefined -> undefined;
+        K -> list_to_binary(riak_kv_wm_utils:maybe_decode_uri(ReqData, K))
+    end.
+
 
 %% @doc Check if the Origin header is "null". This is useful to look for attempts
 %%      at CSRF, but is not a complete answer to the problem.

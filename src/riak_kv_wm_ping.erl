@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_ping: simple Webmachine resource for availability test
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2010-2013 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -33,11 +32,15 @@
 
 -include_lib("webmachine/include/webmachine.hrl").
 
+-record(ctx, {
+    connection_id = riak_kv_wm_utils:make_connection_id()
+}).
+
 init([]) ->
-    {ok, undefined}.
+    {ok, #ctx{}}.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, _SecContext} ->

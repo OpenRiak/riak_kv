@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_index - Webmachine resource for running index queries.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -73,7 +72,8 @@
           return_terms = false :: boolean(), %% should the index values be returned
           timeout :: non_neg_integer() | undefined | infinity,
           pagination_sort :: boolean() | undefined,
-          security        %% security context
+          security,       %% security context
+          connection_id = riak_kv_wm_utils:make_connection_id()
          }).
 -type context() :: #ctx{}.
 
@@ -110,7 +110,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     end.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -132,10 +132,11 @@ forbidden(RD, Ctx) ->
             {true, RD, Ctx};
         false ->
             Bucket = list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(bucket, RD))),
-            Res = riak_core_security:check_permission({"riak_kv.index",
-                                                       {Ctx#ctx.bucket_type,
-                                                        Bucket}},
-                                                      Ctx#ctx.security),
+            Res = riak_kv_wm_utils:has_permission(
+                "riak_kv.index", {Ctx#ctx.bucket_type, Bucket},
+                Ctx#ctx.security,
+                Ctx#ctx.connection_id
+            ),
             case Res of
                 {false, Error, _} ->
                     RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
@@ -343,7 +344,7 @@ handle_streaming_index_query(RD, Ctx) ->
                 RD),
 
     Opts0 = [{max_results, MaxResults}] ++ [{pagination_sort, PgSort} || PgSort /= undefined],
-    Opts = riak_index:add_timeout_opt(Timeout, Opts0), 
+    Opts = riak_index:add_timeout_opt(Timeout, Opts0),
 
     {ok, ReqID, FSMPid} =  Client:stream_get_index(Bucket, Query, Opts),
     StreamFun = index_stream_helper(ReqID, FSMPid, Boundary, ReturnTerms, MaxResults, proplists:get_value(timeout, Opts), undefined, 0),
@@ -431,7 +432,7 @@ handle_all_in_memory_index_query(RD, Ctx) ->
     Timeout = Ctx#ctx.timeout,
 
     Opts0 = [{max_results, MaxResults}] ++ [{pagination_sort, PgSort} || PgSort /= undefined],
-    Opts = riak_index:add_timeout_opt(Timeout, Opts0), 
+    Opts = riak_index:add_timeout_opt(Timeout, Opts0),
 
     %% Do the index lookup...
     case Client:get_index(Bucket, Query, Opts) of

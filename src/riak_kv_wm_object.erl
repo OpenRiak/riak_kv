@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_object: Webmachine resource for KV object level operations.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -150,7 +149,8 @@
               index_fields, %% [index_field()]
               method,       %% atom() - HTTP method for the request
               timeout,      %% integer() - passed-in timeout value in ms
-              security      %% security context
+              security,     %% security context
+              connection_id = riak_kv_wm_utils:make_connection_id()
              }).
 -type context() :: #ctx{}.
 
@@ -186,14 +186,8 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
              Ctx#ctx{
                method=wrq:method(RD),
                client=C,
-               bucket=case wrq:path_info(bucket, RD) of
-                         undefined -> undefined;
-                         B -> list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, B))
-                      end,
-               key=case wrq:path_info(key, RD) of
-                       undefined -> undefined;
-                       K -> list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, K))
-                   end,
+               bucket=riak_kv_wm_utils:get_bucket(RD),
+               key=riak_kv_wm_utils:get_key(RD),
                vtag=wrq:get_qs_value(?Q_VTAG, RD)
               }};
         Error ->
@@ -205,7 +199,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     end.
 
 is_authorized(ReqData, Ctx) ->
-    case riak_api_web_security:is_authorized(ReqData) of
+    case riak_kv_wm_utils:is_authorized(ReqData, Ctx#ctx.connection_id) of
         false ->
             {"Basic realm=\"Riak\"", ReqData, Ctx};
         {true, SecContext} ->
@@ -233,10 +227,9 @@ validate(RD, Ctx=#ctx{security=undefined}) ->
     validate_resource(RD, Ctx, riak_kv_wm_utils:method_to_perm(Ctx#ctx.method));
 validate(RD, Ctx=#ctx{security=Security}) ->
     Perm = riak_kv_wm_utils:method_to_perm(Ctx#ctx.method),
-    Res = riak_core_security:check_permission({Perm,
-                                              {Ctx#ctx.bucket_type,
-                                              Ctx#ctx.bucket}},
-                                              Security),
+    Res = riak_kv_wm_utils:has_permission(
+        Perm, {Ctx#ctx.bucket_type, Ctx#ctx.bucket}, Security, Ctx#ctx.connection_id
+    ),
     maybe_validate_resource(Res, RD, Ctx, Perm).
 
 -spec maybe_validate_resource(term(), #wm_reqdata{}, context(), string()) -> term().
