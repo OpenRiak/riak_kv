@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2015 Basho Technologies, Inc.
-%% Copyright (c) 2018 Workday, Inc.
+%% Copyright (c) 2018-2019 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -42,7 +42,7 @@
 %% API
 -export([start_link/0, get_stats/0,
          update/1, perform_update/1, register_stats/0, unregister_vnode_stats/1, produce_stats/0,
-         leveldb_read_block_errors/0, stat_update_error/3, stop/0]).
+         stat_update_error/3, stop/0]).
 -export([track_bucket/1, untrack_bucket/1]).
 -export([active_gets/0, active_puts/0]).
 -export([value/1]).
@@ -616,9 +616,6 @@ stats() ->
      {mapper_count, counter, [], [{value, executing_mappers}]},
      {precommit_fail, counter, [], [{value, precommit_fail}]},
      {postcommit_fail, counter, [], [{value, postcommit_fail}]},
-     {[vnode, backend, leveldb, read_block_error],
-      {function, ?MODULE, leveldb_read_block_errors, [], match, value}, [],
-      [{value, leveldb_read_block_error}]},
      {[counter, actor_count], histogram, [], [{mean  , counter_actor_counts_mean},
                                               {median, counter_actor_counts_median},
                                               {95    , counter_actor_counts_95},
@@ -751,70 +748,6 @@ do_register_stat(Name, Type) ->
 produce_stats() ->
     riak_kv_stat_bc:produce_stats().
 
-%% @doc get the leveldb.ReadBlockErrors counter.
-%% non-zero values mean it is time to consider replacing
-%% this nodes disk.
-leveldb_read_block_errors() ->
-    %% level stats are per node
-    %% but the way to get them is
-    %% is with riak_kv_vnode:vnode_status/1
-    %% for that reason just chose a partition
-    %% on this node at random
-    %% and ask for it's stats
-    {ok, R} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:my_indices(R) of
-        [] -> undefined;
-        [Idx] ->
-            Status = vnode_status(Idx),
-            leveldb_read_block_errors(Status);
-        Indices ->
-            %% technically a call to status is a vnode
-            %% operation, so spread the load by picking
-            %% a vnode at random.
-            Nth = crypto:rand_uniform(1, length(Indices)),
-            Idx = lists:nth(Nth, Indices),
-            Status = vnode_status(Idx),
-            leveldb_read_block_errors(Status)
-    end.
-
-vnode_status(Idx) ->
-    PList = [{Idx, node()}],
-    [{Idx, Status}] = riak_kv_vnode:vnode_status(PList),
-    case lists:keyfind(backend_status, 1, Status) of
-        false ->
-            %% if for some reason backend_status is absent from the
-            %% status list
-            {error, no_backend_status};
-        BEStatus ->
-            BEStatus
-    end.
-
-leveldb_read_block_errors({backend_status, riak_kv_eleveldb_backend, Status}) ->
-    rbe_val(proplists:get_value(read_block_error, Status));
-leveldb_read_block_errors({backend_status, riak_kv_multi_backend, Statuses}) ->
-    multibackend_read_block_errors(Statuses, undefined);
-leveldb_read_block_errors({error, Reason}) ->
-    {error, Reason};
-leveldb_read_block_errors(_) ->
-    undefined.
-
-multibackend_read_block_errors([], Val) ->
-    rbe_val(Val);
-multibackend_read_block_errors([{_Name, Status}|Rest], undefined) ->
-    RBEVal = case proplists:get_value(mod, Status) of
-                 riak_kv_eleveldb_backend ->
-                     proplists:get_value(read_block_error, Status);
-                 _ -> undefined
-             end,
-    multibackend_read_block_errors(Rest, RBEVal);
-multibackend_read_block_errors(_, Val) ->
-    rbe_val(Val).
-
-rbe_val(Bin) when is_binary(Bin) ->
-    list_to_integer(binary_to_list(Bin));
-rbe_val(_) ->
-    undefined.
-
 %% All stat creation is serialized through riak_kv_stat.
 %% Some stats are created on demand as part of the call to `update/1'.
 %% When a stat error is caught, the stat must be deleted and recreated.
@@ -839,33 +772,6 @@ stat_repair_loop(Dad) ->
     stat_repair_loop().
 
 -ifdef(TEST).
--define(LEVEL_STATUS(Idx, Val),  [{Idx, [{backend_status, riak_kv_eleveldb_backend,
-                                          [{read_block_error, Val}]}]}]).
--define(BITCASK_STATUS(Idx),  [{Idx, [{backend_status, riak_kv_bitcask_backend,
-                                       []}]}]).
--define(MULTI_STATUS(Idx, Val), [{Idx,  [{backend_status, riak_kv_multi_backend, Val}]}]).
-
-leveldb_rbe_test_() ->
-    {foreach,
-     fun() ->
-	     exometer:start(),
-             meck:new(riak_core_ring_manager),
-             meck:new(riak_core_ring),
-             meck:new(riak_kv_vnode),
-             meck:expect(riak_core_ring_manager, get_my_ring, fun() -> {ok, [fake_ring]} end)
-     end,
-     fun(_) ->
-	     exometer:stop(),
-             meck:unload(riak_kv_vnode),
-             meck:unload(riak_core_ring),
-             meck:unload(riak_core_ring_manager)
-     end,
-     [{"Zero indexes", fun zero_indexes/0},
-      {"Single index", fun single_index/0},
-      {"Multi indexes", fun multi_index/0},
-      {"Bitcask Backend", fun bitcask_backend/0},
-      {"Multi Backend", fun multi_backend/0}]
-    }.
 
 start_exometer_test_env() ->
     ok = exometer:start(),
@@ -900,50 +806,5 @@ repeat_create_or_update(Name, UpdateVal, Type, Times, Ops) when Ops < Times ->
     repeat_create_or_update(Name, UpdateVal, Type, Times, Ops + 1);
 repeat_create_or_update(_Name, _UpdateVal, _Type, Times, Ops) when Ops >= Times ->
     ok.
-
-zero_indexes() ->
-    meck:expect(riak_core_ring, my_indices, fun(_R) -> [] end),
-    ?assertEqual(undefined, leveldb_read_block_errors()).
-
-single_index() ->
-    meck:expect(riak_core_ring, my_indices, fun(_R) -> [index1] end),
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) -> ?LEVEL_STATUS(Idx, <<"100">>) end),
-    ?assertEqual(100, leveldb_read_block_errors()),
-
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) -> ?LEVEL_STATUS(Idx, nonsense) end),
-    ?assertEqual(undefined, leveldb_read_block_errors()).
-
-multi_index() ->
-    meck:expect(riak_core_ring, my_indices, fun(_R) -> [index1, index2, index3] end),
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) -> ?LEVEL_STATUS(Idx, <<"100">>) end),
-    ?assertEqual(100, leveldb_read_block_errors()).
-
-bitcask_backend() ->
-    meck:expect(riak_core_ring, my_indices, fun(_R) -> [index1, index2, index3] end),
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) -> ?BITCASK_STATUS(Idx) end),
-    ?assertEqual(undefined, leveldb_read_block_errors()).
-
-multi_backend() ->
-    meck:expect(riak_core_ring, my_indices, fun(_R) -> [index1, index2, index3] end),
-    %% some backends, none level
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) ->
-                                                     ?MULTI_STATUS(Idx,
-                                                                   [{name1, [{mod, bitcask}]},
-                                                                    {name2, [{mod, fired_chicked}]}]
-                                                                  )
-                                             end),
-    ?assertEqual(undefined, leveldb_read_block_errors()),
-
-    %% one or movel leveldb backends (first level answer is returned)
-    meck:expect(riak_kv_vnode, vnode_status, fun([{Idx, _}]) ->
-                                                     ?MULTI_STATUS(Idx,
-                                                                   [{name1, [{mod, bitcask}]},
-                                                                    {name2, [{mod, riak_kv_eleveldb_backend},
-                                                                             {read_block_error, <<"99">>}]},
-                                                                    {name2, [{mod, riak_kv_eleveldb_backend},
-                                                                             {read_block_error, <<"1000">>}]}]
-                                                                  )
-                                             end),
-    ?assertEqual(99, leveldb_read_block_errors()).
 
 -endif.
