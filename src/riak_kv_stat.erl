@@ -46,6 +46,7 @@
 -export([track_bucket/1, untrack_bucket/1]).
 -export([active_gets/0, active_puts/0]).
 -export([value/1]).
+-export([uncovered_preflists/0, uncovered_preflists/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -438,6 +439,27 @@ do_repairs(Indices, Preflist) ->
 create_or_update(Name, UpdateVal, Type) ->
     exometer:update_or_create(Name, UpdateVal, Type, []).
 
+uncovered_preflists() ->
+    uncovered_preflists(
+        app_helper:get_env(riak_kv, uncovered_preflists_nval, 3),
+        app_helper:get_env(riak_kv, uncovered_preflists_min, 1),
+        riak_core_node_watcher:nodes(riak_kv)
+    ).
+
+uncovered_preflists(NVal, Min, UpNodes) ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            AllPreflists = riak_core_ring:all_preflists(Ring, NVal),
+            [PrefList || PrefList <- AllPreflists, not preflist_in_nodes(PrefList, UpNodes, Min)];
+        Error ->
+            Error
+    end.
+
+%% @private
+preflist_in_nodes(PrefList, Nodes, Min) ->
+    InNodes = [IndexNode || {_Index, Node} = IndexNode <- PrefList, lists:member(Node, Nodes)],
+    length(InNodes) >= Min.
+
 %% @doc list of {Name, Type} for static
 %% stats that we can register at start up
 stats() ->
@@ -691,7 +713,10 @@ stats() ->
 									   ring_ownership]},
       [], [{ring_members       , ring_members},
            {ring_num_partitions, ring_num_partitions},
-           {ring_ownership     , ring_ownership}]}
+           {ring_ownership     , ring_ownership}]},
+     {uncovered_preflists,
+         {function, riak_kv_stat, uncovered_preflists, [], match, value}, [], [{value, uncovered_preflists}]
+     }
      | read_repair_aggr_stats(Pfx)] ++ bc_stats(Pfx).
 
 read_repair_aggr_stats(Pfx) ->
