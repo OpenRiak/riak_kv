@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_console: interface for Riak admin commands
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2014 Basho Technologies, Inc.
+%% Copyright (c) 2019 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -44,7 +43,8 @@
          bucket_type_create/1,
          bucket_type_update/1,
          bucket_type_reset/1,
-         bucket_type_list/1]).
+         bucket_type_list/1,
+         version_running/1]).
 
 -export([ensemble_status/1]).
 
@@ -846,3 +846,8 @@ bucket_error_xlate({Property, Error}) ->
     [atom_to_list(Property), ": ", io_lib:format("~p", [Error])];
 bucket_error_xlate(X) ->
     io_lib:format("~p", [X]).
+
+version_running(_) ->
+    Releases = release_handler:which_releases(),
+    Riak = lists:keyfind("riak", 1, Releases),
+    element(2, Riak).
