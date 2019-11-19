@@ -404,6 +404,10 @@ use_legacy_prepare() ->
     app_helper:get_env(riak_kv, put_fsm_legacy_prepare, true).
 
 %% @private
+allow_spawn_remote() ->
+    app_helper:get_env(riak_kv, put_fsm_allow_spawn_remote, true).
+
+%% @private
 new_prepare(timeout, State) ->
     {Bucket, _Key} = State#state.bkey,
     Bucket = riak_object:bucket(State#state.robj),
@@ -439,7 +443,13 @@ prepare_coordinated_put(N, Bucket, BucketProps, Preflist, State) ->
     LocalPL = [IndexNode || {{_Index, Node} = IndexNode, _Type} <- Preflist, Node == node()],
     case LocalPL of
         [] ->
-            spawn_remote_coordinator(Preflist, State);
+            case allow_spawn_remote() of
+                true ->
+                    spawn_remote_coordinator(Preflist, State);
+                _ ->
+                    CoordPLEntry = select_random_indexnode(Preflist),
+                    prepare_pl_entry(N, Bucket, BucketProps, Preflist, CoordPLEntry, State)
+            end;
         [CoordPLEntry | _] ->
             prepare_pl_entry(N, Bucket, BucketProps, Preflist, CoordPLEntry, State)
     end.
@@ -448,7 +458,7 @@ prepare_coordinated_put(N, Bucket, BucketProps, Preflist, State) ->
 spawn_remote_coordinator(Preflist, State) ->
     %% This node is not in the preference list
     %% forward on to a random node
-    CoordNode = select_coordinator(Preflist),
+    {_Idx, CoordNode} = select_random_indexnode(Preflist),
     ?DTRACE(State#state.trace, ?C_PUT_FSM_PREPARE, [1], ["prepare", atom2list(CoordNode)]),
     try
         {UseAckP, Options2} = make_ack_options([{ack_execute, self()} | State#state.options]),
@@ -469,10 +479,10 @@ spawn_remote_coordinator(Preflist, State) ->
     end.
 
 %% @private
-select_coordinator(Preflist) ->
+select_random_indexnode(Preflist) ->
     {ListPos, _} = random:uniform_s(length(Preflist), os:timestamp()),
-    {{_Idx, CoordNode},_Type} = lists:nth(ListPos, Preflist),
-    CoordNode.
+    {IndexNode, _Type} = lists:nth(ListPos, Preflist),
+    IndexNode.
 
 %% @private
 prepare_asis_put(N, Bucket, BucketProps, Preflist, State) ->
