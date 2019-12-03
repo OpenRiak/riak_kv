@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_app: application startup for Riak
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2019 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,6 +16,8 @@
 %% KIND, either express or implied.  See the License for the
 %% specific language governing permissions and limitations
 %% under the License.
+%%
+%% -------------------------------------------------------------------
 
 %% @doc Bootstrapping the Riak application.
 
@@ -184,8 +185,8 @@ start(_Type, _StartArgs) ->
                                           v1),
 
             riak_core_capability:register({riak_kv, vclock_data_encoding},
-                                          [encode_zlib, encode_raw],
-                                          encode_zlib),
+                                          riak_object:vclock_encoding_methods(),
+                                          riak_object:vclock_encoding_default()),
 
             riak_core_capability:register({riak_kv, crdt},
                                           [?TOP_LEVEL_TYPES, [pncounter], []],
