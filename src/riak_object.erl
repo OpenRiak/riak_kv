@@ -65,21 +65,21 @@
 -type index_value() :: integer() | binary().
 -type binary_version() :: v0 | v1.
 
-%% Transitional encodings for VClocks:
-%%  encode_comp - RFC-1951 compressed data in RFC-1950 envelope.
-%%                This is the preferred external encoding, as it is the most
-%%                compact portable format.
-%%  encode_xbin - Erlang compressed external binary form.
-%%                Portable?
-%%  encode_gzip - RFC-1952 compressed data in RFC-1950 envelope.
-%%                This may never be actively used - it's included for evaluation purposes.
-%%  encode_raw  - Uncompressed.
-%%  encode_comp - Raw, unwrapped RFC-1951 compressed data.
-%%                This is the old default, and should go away, as it cannot be manipulated
-%%                safely in other common programming languages.
--type vc_encoding() :: encode_comp | encode_xbin | encode_gzip | encode_raw | encode_zlib.
-%% Default compression level of 6 is most efficient.
--define(VCT2B(T), erlang:term_to_binary(T, [{compressed, 6}, {minor_version, 1}])).
+%% VClock encodings:
+%%  encode_raw  - Native VClock, entire envelope compressed.
+%%  encode_zlib - Raw, unwrapped RFC-1951 compressed data.
+%%                This is the old default, and is only maintained for backward compatibility.
+%%                It should not be used, as it cannot be manipulated safely in other common
+%%                programming languages.
+-type vc_encoding() :: encode_raw | encode_zlib.
+-define(VClockEncodingDefault, encode_raw).
+-define(VClockEncodingMethods, [?VClockEncodingDefault, encode_zlib]).
+
+%% Default compression level of 6 is most efficient - at best, level 9 *may* squeeze out
+%% another byte or two with a long vclock, but will take more time and memory to do so.
+%% In worst-case scenarios level 9 has been observed taking more resources *and* resulting
+%% in a larger final binary!
+-define(RawVClockToBinaryOpts, [{compressed, 6}, {minor_version, 1}]).
 
 -define(MAX_KEY_SIZE, 65536).
 
@@ -111,15 +111,10 @@
 %% @doc
 %% The supported VClock encoding methods, in the order in which they'll be
 %% preferred in capabilities.
-%% The non-default (as returned by vclock_encoding_default/0) portable
-%% encodings SHOULD precede the default, with non-portable (deprecated)
-%% encodings comprising the tail.
-%% The order of the portable, non-default encodings should be most to least
-%% efficient, based on some combination of size and speed for assorted VClocks.
 %% The riak_test module verify_vclock prints a subset of potentially useful
 %% comparable statistics.
 vclock_encoding_methods() ->
-    [encode_comp, encode_xbin, encode_gzip, encode_raw, encode_zlib].
+    ?VClockEncodingMethods.
 
 -spec vclock_encoding_default() -> vc_encoding().
 %% @doc
@@ -127,7 +122,7 @@ vclock_encoding_methods() ->
 %% This MUST be backward-compatible to version 2.0, and preferably portable
 %% outside Erlang, leaving one choice.
 vclock_encoding_default() ->
-    encode_raw.
+    ?VClockEncodingDefault.
 
 %% @doc Constructor for new riak objects.
 -spec new(Bucket::bucket(), Key::key(), Value::value()) -> riak_object().
@@ -1111,57 +1106,48 @@ update_last_modified(RObj) ->
 %%
 
 %% Fetch the preferred VClock encoding method.
-%% This should continue to default to 'encode_raw' even after the default is changed,
-%% as that's the only encoding/encapsulation that's guaranteed to be properly handled
-%% by ANY Riak 2+ node.
 -spec vclock_encoding_method() -> vc_encoding().
 vclock_encoding_method() ->
-    riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_raw).
+    riak_core_capability:get({riak_kv, vclock_data_encoding}, ?VClockEncodingDefault).
 
 %% Encode a VClock in accordance with our capability setting:
 encode_vclock(VClock) ->
     encode_vclock(vclock_encoding_method(), VClock).
 
+%% Encode a vclock into a binary.
+%% Distinct function for use from module eunit tests.
 -spec encode_vclock(vc_encoding(), VClock :: vclock:vclock()) -> binary().
-encode_vclock(encode_comp = Method, VClock) ->
-    term_to_binary({Method, zlib:compress(term_to_binary(VClock))});
-encode_vclock(encode_xbin = Method, VClock) ->
-    term_to_binary({Method, ?VCT2B(VClock)});
-encode_vclock(encode_gzip = Method, VClock) ->
-    term_to_binary({Method, zlib:gzip(term_to_binary(VClock))});
-encode_vclock(encode_zlib = Method, VClock) ->
-    term_to_binary({Method, zlib:zip(term_to_binary(VClock))});
 encode_vclock(encode_raw = Method, VClock) ->
-    ?VCT2B({Method, VClock});
+    erlang:term_to_binary({Method, VClock}, ?RawVClockToBinaryOpts);
+encode_vclock(encode_zlib = Method, VClock) ->
+    %% Compression here will grow the result, so don't do it.
+    erlang:term_to_binary({Method, zlib:zip(erlang:term_to_binary(VClock))});
 encode_vclock(Method, _) ->
-    lager:error("Bad vclock encoding method ~p", [Method]),
-    error(badarg, {bad_vclock_encoding_method, Method}).
+    lager:error("Unknown vclock encoding method ~p", [Method]),
+    erlang:error(badarg, {bad_vclock_encoding_method, Method}).
 
 -spec decode_vclock(binary()) -> vclock:vclock().
 decode_vclock(EncodedVClock) ->
-    % For later versions, we expect to simply read the embedded encoding
-    % so switching will not be a problem. But upgrading from first version
-    % without embedded encoding is handled by the try/catch. We should be
-    % able to remove that expensive part a couple of releases after 1.4
-    {Method, EncodedVClock2} = try binary_to_term(EncodedVClock)
-    catch error:badarg -> {encode_zlib, EncodedVClock} end,
-    decode_vclock(Method, EncodedVClock2).
+    %% Basho releases didn't embed the 'encode_zlib' encoding metadata, though that
+    %% approach was *supposed* to be deprecated and phased out once 2.x came out.
+    try
+        {Method, VClock} = erlang:binary_to_term(EncodedVClock),
+        decode_vclock(Method, VClock)
+    catch
+        error:badarg ->
+            decode_vclock(encode_zlib, EncodedVClock)
+    end.
 
-%% Decode a vclock vc_encoding our capability settings:
+%% Decode an encoded vclock.
+%% Distinct function for use from module eunit tests.
 -spec decode_vclock(vc_encoding(), VClock :: term()) -> vclock:vclock().
-decode_vclock(encode_comp, VClock) ->
-    binary_to_term(zlib:uncompress(VClock));
-decode_vclock(encode_xbin, VClock) ->
-    binary_to_term(VClock);
-decode_vclock(encode_gzip, VClock) ->
-    binary_to_term(zlib:gunzip(VClock));
-decode_vclock(encode_zlib, VClock) ->
-    binary_to_term(zlib:unzip(VClock));
 decode_vclock(encode_raw, VClock) ->
     VClock;
+decode_vclock(encode_zlib, VClock) ->
+    erlang:binary_to_term(zlib:unzip(VClock));
 decode_vclock(Method, _) ->
-    lager:error("Bad vclock encoding method ~p", [Method]),
-    error(badarg, {bad_vclock_encoding_method, Method}).
+    lager:error("Unknown vclock encoding method ~p", [Method]),
+    erlang:error(badarg, {bad_vclock_encoding_method, Method}).
 
 -ifdef(TEST).
 
