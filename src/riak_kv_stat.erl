@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2015 Basho Technologies, Inc.
-%% Copyright (c) 2018-2019 Workday, Inc.
+%% Copyright (c) 2018-2020 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -307,6 +307,12 @@ do_update({consistent_put, _Bucket, Microsecs, ObjSize}) ->
     ok = exometer:update([P, ?APP, consistent, puts], 1),
     ok = exometer:update([P, ?APP, consistent, puts, time], Microsecs),
     create_or_update([P, ?APP, consistent, puts, objsize], ObjSize, histogram);
+do_update(pb_put_request) ->
+    exometer:update([?PFX, ?APP, pb_put_request], 1);
+do_update(pb_get_request) ->
+    exometer:update([?PFX, ?APP, pb_get_request], 1);
+do_update(pb_delete_request) ->
+    exometer:update([?PFX, ?APP, pb_delete_request], 1);
 do_update(https_authn_success) ->
     exometer:update([?PFX, ?APP, https_authn_success], 1);
 do_update(https_authn_fail) ->
@@ -623,6 +629,9 @@ stats() ->
                                                {95    , node_put_fsm_map_time_95},
                                                {99    , node_put_fsm_map_time_99},
                                                {max   , node_put_fsm_map_time_100}]},
+     {pb_put_request, counter, [], [{value,node_pb_put_requests_total}]},
+     {pb_get_request, counter, [], [{value,node_pb_get_requests_total}]},
+     {pb_delete_request, counter, [], [{value,node_pb_delete_requests_total}]},
      {https_authn_success, counter, [], [{value, https_authn_success}]},
      {https_authn_fail, counter, [], [{value, https_authn_fail}]},
      {https_authz_success, counter, [], [{value, https_authz_success}]},

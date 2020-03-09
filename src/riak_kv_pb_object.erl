@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_pb_object: Expose KV functionality to Protocol Buffers
-%%
-%% Copyright (c) 2012-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2013 Basho Technologies, Inc.
+%% Copyright (c) 2020 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -130,6 +129,7 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
     B = maybe_bucket_type(T, B0),
+    riak_kv_stat:update(pb_get_request),
     case C:get(B, K, make_option(deletedvclock, DeletedVClock) ++
                    make_option(r, R) ++
                    make_option(pr, PR) ++
@@ -254,7 +254,8 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
                    _ ->
                        Options
                end,
-    case C:put(O, make_options([{w, W}, {dw, DW}, {pw, PW}, 
+    riak_kv_stat:update(pb_put_request),
+    case C:put(O, make_options([{w, W}, {dw, DW}, {pw, PW},
                                 {timeout, Timeout}, {asis, AsIs},
                                 {n_val, N_val},
                                 {sloppy_quorum, SloppyQuorum}]) ++ Options2) of
@@ -298,9 +299,10 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
     RW = decode_quorum(RW0),
 
     B = maybe_bucket_type(T, B0),
-    Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW}, 
+    Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW},
                             {dw, DW}, {timeout, Timeout}, {n_val, N_val},
                             {sloppy_quorum, SloppyQuorum}]),
+    riak_kv_stat:update(pb_delete_request),
     Result = case PbVc of
                  undefined ->
                      C:delete(B, K, Options);
