@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2019 Workday, Inc.
+%% Copyright (c) 2019-2020 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -687,7 +687,12 @@ precommit(timeout, State = #state{precommit = [Hook | Rest],
     end.
 
 %% @private
-execute(State=#state{options = Options, coord_pl_entry = CPL}) ->
+execute(State=#state{options = Options, coord_pl_entry = CPL, robj = RObj}) ->
+    case riak_kv_util:is_x_deleted(RObj) of
+        true  ->
+            riak_kv_stat:update(tombstone_put);
+        _ -> ok
+    end,
     %% If we are a forwarded coordinator, the originating node is expecting
     %% an ack from us.
     case get_option(ack_execute, Options) of

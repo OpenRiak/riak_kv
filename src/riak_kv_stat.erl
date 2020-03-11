@@ -313,6 +313,8 @@ do_update(pb_get_request) ->
     exometer:update([?PFX, ?APP, pb_get_request], 1);
 do_update(pb_delete_request) ->
     exometer:update([?PFX, ?APP, pb_delete_request], 1);
+do_update(tombstone_put) ->
+    exometer:update([?PFX, ?APP, node, puts, tombstones], 1);
 do_update(https_authn_success) ->
     exometer:update([?PFX, ?APP, https_authn_success], 1);
 do_update(https_authn_fail) ->
@@ -608,6 +610,7 @@ stats() ->
                                           {95    , node_put_fsm_time_95},
                                           {99    , node_put_fsm_time_99},
                                           {max   , node_put_fsm_time_100}]},
+     {[node, puts, tombstones], counter, [], [{value, node_put_fsm_tombstones_total}]},
      {[node, puts, counter], spiral, [], [{one  , node_puts_counter},
                                           {count, node_puts_counter_total}]},
      {[node, puts, counter, time], histogram, [], [{mean  , node_put_fsm_counter_time_mean},
