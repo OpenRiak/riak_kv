@@ -817,9 +817,11 @@ stats() ->
      {precommit_fail, counter, [], [{value, precommit_fail}]},
      {postcommit_fail, counter, [], [{value, postcommit_fail}]},
      {write_once_merge, counter, [], [{value, write_once_merge}]},
-     {[vnode, backend, leveldb, read_block_error],
-      {function, ?MODULE, leveldb_read_block_errors, [], match, value}, [],
-      [{value, leveldb_read_block_error}]},
+    %% Remove leveldb stat call, because it requires a call to the vnode.
+    %% This call can block the retrieval of stats when a vnode is slow to respond.
+    %  {[vnode, backend, leveldb, read_block_error],
+    %   {function, ?MODULE, leveldb_read_block_errors, [], match, value}, [],
+    %   [{value, leveldb_read_block_error}]},
      {tictacaae_controller_queue, histogram, [], [{mean, tictacaae_queue_microsec_mean},
                                                     {max, tictacaae_queue_microsec__max}]},
 
