@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_pb_object: Expose KV functionality to Protocol Buffers
-%%
-%% Copyright (c) 2012-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2013 Basho Technologies, Inc.
+%% Copyright (c) 2020-2022 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -152,6 +151,7 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
         make_option(basic_quorum, BQ) ++
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
+    riak_kv_stat:update(pb_get_request),
     case riak_client:get(B, K, Options, C) of
         {ok, O} ->
             case erlify_rpbvc(VClock) == riak_object:vclock(O) of
@@ -184,7 +184,7 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
 
 process(#rpbfetchreq{queuename = QueueName, encoding = EncodingBin},
         #state{client=C, repl_compress=ToCompress} = State) ->
-    Result = 
+    Result =
         try
             riak_client:fetch(binary_to_existing_atom(QueueName, utf8), C)
         catch _:badarg ->
@@ -359,7 +359,7 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
                           _ -> []
                       end
               end,
-    {Options2, State} = 
+    {Options2, State} =
         case State0#state.is_consistent of
             true ->
                 {[{if_none_match, true}|Options],
@@ -373,6 +373,7 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
                         {timeout, Timeout}, {asis, AsIs},
                         {n_val, N_val},
                         {sloppy_quorum, SloppyQuorum}]) ++ Options2,
+    riak_kv_stat:update(pb_put_request),
     case riak_client:put(O, Opts, C) of
         ok when is_binary(ReturnKey) ->
             PutResp = #rpbputresp{key = ReturnKey},
@@ -414,9 +415,10 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
     RW = decode_quorum(RW0),
 
     B = maybe_bucket_type(T, B0),
-    Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW}, 
+    Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW},
                             {dw, DW}, {timeout, Timeout}, {n_val, N_val},
                             {sloppy_quorum, SloppyQuorum}]),
+    riak_kv_stat:update(pb_delete_request),
     Result =
         case PbVc of
             undefined ->
@@ -465,7 +467,7 @@ unpack_keyclock_fun(RpbKeysClock) ->
 
 -spec make_binarykey(riak_object:bucket(), riak_object:key()) -> binary().
 %% @doc
-%% Convert Bucket and Key into a single binary 
+%% Convert Bucket and Key into a single binary
 make_binarykey({Type, Bucket}, Key)
                     when is_binary(Type), is_binary(Bucket), is_binary(Key) ->
     <<Type/binary, Bucket/binary, Key/binary>>;
