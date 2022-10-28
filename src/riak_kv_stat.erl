@@ -424,6 +424,14 @@ do_update({consistent_put, _Bucket, Microsecs, ObjSize}) ->
     ok = exometer:update([P, ?APP, consistent, puts], 1),
     ok = exometer:update([P, ?APP, consistent, puts, time], Microsecs),
     create_or_update([P, ?APP, consistent, puts, objsize], ObjSize, histogram);
+do_update(pb_put_request) ->
+    exometer:update([?PFX, ?APP, pb_put_request], 1);
+do_update(pb_get_request) ->
+    exometer:update([?PFX, ?APP, pb_get_request], 1);
+do_update(pb_delete_request) ->
+    exometer:update([?PFX, ?APP, pb_delete_request], 1);
+do_update(tombstone_put) ->
+    exometer:update([?PFX, ?APP, node, puts, tombstones], 1);
 do_update({write_once_put, Microsecs, ObjSize}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, write_once, puts], 1),
@@ -779,6 +787,7 @@ stats() ->
                                           {95    , node_put_fsm_time_95},
                                           {99    , node_put_fsm_time_99},
                                           {max   , node_put_fsm_time_100}]},
+     {[node, puts, tombstones], counter, [], [{value, node_put_fsm_tombstones_total}]},
      {[node, puts, counter], spiral, [], [{one  , node_puts_counter},
                                           {count, node_puts_counter_total}]},
      {[node, puts, counter, time], histogram, [], [{mean  , node_put_fsm_counter_time_mean},
@@ -807,6 +816,9 @@ stats() ->
                                                {95    , node_put_fsm_map_time_95},
                                                {99    , node_put_fsm_map_time_99},
                                                {max   , node_put_fsm_map_time_100}]},
+     {pb_put_request, counter, [], [{value,node_pb_put_requests_total}]},
+     {pb_get_request, counter, [], [{value,node_pb_get_requests_total}]},
+     {pb_delete_request, counter, [], [{value,node_pb_delete_requests_total}]},
      {[node, puts, ngrrepl_empty], spiral, [], [{one, ngrrepl_empty},
                                                     {count, ngrrepl_empty_total}]},
      {[node, puts, ngrrepl_object], spiral, [], [{one, ngrrepl_object},

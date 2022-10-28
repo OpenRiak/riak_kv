@@ -169,6 +169,7 @@ process(
         make_option(basic_quorum, BQ) ++
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
+    riak_kv_stat:update(pb_get_request),
     case riak_client:get(B, K, Options, C) of
         {ok, O} ->
             case erlify_rpbvc(VClock) == riak_object:vclock(O) of
@@ -423,6 +424,8 @@ process(
                             {sloppy_quorum, SloppyQuorum}
                         ]
                     ),
+
+            riak_kv_stat:update(pb_put_request),
             PutRsp =
                 case SessionToken of
                     none ->
@@ -491,6 +494,7 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
     Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW}, 
                             {dw, DW}, {timeout, Timeout}, {n_val, N_val},
                             {sloppy_quorum, SloppyQuorum}]),
+    riak_kv_stat:update(pb_delete_request),
     Result =
         case PbVc of
             undefined ->

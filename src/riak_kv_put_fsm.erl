@@ -503,7 +503,12 @@ precommit(timeout, State = #state{precommit = [Hook | Rest],
     end.
 
 %% @private
-execute(State=#state{options = Options, timeout = Timeout, coord_pl_entry = CPL}) ->
+execute(State=#state{options = Options, timeout = Timeout, coord_pl_entry = CPL, robj = RObj}) ->
+    case riak_kv_util:is_x_deleted(RObj) of
+        true  ->
+            riak_kv_stat:update(tombstone_put);
+        _ -> ok
+    end,
     %% If we are a forwarded coordinator, the originating node is expecting
     %% an ack from us.
     case get_option(ack_execute, Options) of
