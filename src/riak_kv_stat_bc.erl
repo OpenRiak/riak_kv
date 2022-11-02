@@ -1,9 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_stat_bc: backwards compatible stats module. Maps new folsom stats
-%%                  to legacy riak_kv stats.
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2014 Basho Technologies, Inc.
+%% Copyright (c) 2019-2022 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -215,7 +213,7 @@ ring_stats() ->
     {ok, R} = riak_core_ring_manager:get_my_ring(),
     [{ring_members, riak_core_ring:all_members(R)},
      {ring_num_partitions, riak_core_ring:num_partitions(R)},
-     {ring_ownership, list_to_binary(lists:flatten(io_lib:format("~p", [dict:to_list(
+     {ring_ownership, dict:to_list(
                         lists:foldl(fun({_P, N}, Acc) ->
                                             case dict:find(N, Acc) of
                                                 {ok, V} ->
@@ -223,7 +221,7 @@ ring_stats() ->
                                                 error ->
                                                     dict:store(N, 1, Acc)
                                             end
-                                    end, dict:new(), riak_core_ring:all_owners(R)))])))}].
+                                    end, dict:new(), riak_core_ring:all_owners(R)))}].
 
 
 config_stats() ->
