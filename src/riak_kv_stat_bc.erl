@@ -209,19 +209,31 @@ app_stats() ->
     [{list_to_atom(atom_to_list(A) ++ "_version"), list_to_binary(V)}
      || {A,_,V} <- application:which_applications()].
 
+%% @private
+node_partition_count_fold_fun({_Partition, Node}, Acc) ->
+    case maps:find(Node, Acc) of
+        {ok, Count} ->
+            Acc#{Node := Count + 1};
+        error ->
+            Acc#{Node => 1}
+    end.
+
+%% @private
+partitions_owned_per_node(R) ->
+    maps:to_list(
+        lists:foldl(
+            fun node_partition_count_fold_fun/2,
+            maps:new(),
+            riak_core_ring:all_owners(R)
+        )
+    ).
+
 ring_stats() ->
     {ok, R} = riak_core_ring_manager:get_my_ring(),
     [{ring_members, riak_core_ring:all_members(R)},
      {ring_num_partitions, riak_core_ring:num_partitions(R)},
-     {ring_ownership, dict:to_list(
-                        lists:foldl(fun({_P, N}, Acc) ->
-                                            case dict:find(N, Acc) of
-                                                {ok, V} ->
-                                                    dict:store(N, V+1, Acc);
-                                                error ->
-                                                    dict:store(N, 1, Acc)
-                                            end
-                                    end, dict:new(), riak_core_ring:all_owners(R)))}].
+     {ring_ownership, partitions_owned_per_node(R)
+    }].
 
 
 config_stats() ->
