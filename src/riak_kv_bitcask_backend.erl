@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_bitcask_backend: Bitcask Driver for Riak
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2022 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,6 +18,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% riak_kv_bitcask_backend: Bitcask Driver for Riak
 
 -module(riak_kv_bitcask_backend).
 -behavior(riak_kv_backend).
@@ -80,7 +81,7 @@
 
 -type state() :: #state{}.
 -type config() :: [{atom(), term()}].
--type version() :: {non_neg_integer(), non_neg_integer(), non_neg_integer()}.
+-type version() :: {vsn, list(non_neg_integer())}.
 
 %% ===================================================================
 %% Public API
@@ -705,13 +706,25 @@ has_bitcask_files(Dir) ->
             {error, Err}
     end.
 
--spec needs_upgrade(version() | undefined, version()) -> boolean().
+-spec needs_upgrade(CurVsn :: version() | undefined, NewVsn :: version()) -> boolean().
+%% At present, the only transition point is 1.6 to 1.7, update as needed.
+%% As such, the first head should match all current use cases. The rest are
+%% included for full coverage (historical Bitcask versions start at 0.1,
+%% though we're unlikely to encounter them).
+needs_upgrade({vsn, [Major | _]}, {vsn, [Major | _]}) when Major > 1 ->
+    false;
+needs_upgrade({vsn, [Major, Minor | _]}, {vsn, [Major, Minor | _]}) ->
+    false;
+needs_upgrade({vsn, [CurMajor | _]}, {vsn, [NewMajor | _]})
+        when CurMajor > 1 andalso NewMajor > 1 ->
+    false;
+needs_upgrade({vsn, [CurMajor, CurMinor | _]}, {vsn, [NewMajor, NewMinor | _]}) ->
+    Transition = {1, 6},
+    {CurMajor, CurMinor} =< Transition andalso {NewMajor, NewMinor} > Transition;
 needs_upgrade(undefined, _) ->
     true;
-needs_upgrade({A1, B1, _}, {A2, B2, _})
-  when {A1, B1} =< {1, 6}, {A2, B2} > {1, 6} ->
-    true;
-needs_upgrade(_, _) ->
+needs_upgrade(CurVsn, NewVsn) ->
+    lager:warning("unrecognized bitcask version(s): '~w', '~w'", [CurVsn, NewVsn]),
     false.
 
 -spec maybe_start_upgrade(string()) -> no_upgrade | {upgrading, version()}.
@@ -830,9 +843,18 @@ check_upgrade(Dir) ->
 
 -spec version_from_str(string()) -> version().
 version_from_str(VsnStr) ->
-    [Major, Minor, Patch] =
-        [list_to_integer(Tok) || Tok <- string:tokens(VsnStr, ".")],
-    {Major, Minor, Patch}.
+    version_from_str(string:lexemes(VsnStr, ".-+"), []).
+
+-spec version_from_str(list(string()), list()) -> version().
+version_from_str([], Result) ->
+    {vsn, lists:reverse(Result)};
+version_from_str([Segment | Segments], Result) ->
+    case string:to_integer(Segment) of
+        {error, _} ->
+            version_from_str(Segments, Result);
+        {Seg, _} ->
+            version_from_str(Segments, [Seg | Result])
+    end.
 
 -spec bitcask_version() -> version().
 bitcask_version() ->
@@ -840,18 +862,45 @@ bitcask_version() ->
 
 -spec bitcask_version_str() -> string().
 bitcask_version_str() ->
-    Apps = application:which_applications(),
-    % For tests, etc without the app, use big version number to avoid upgrades
-    BitcaskVsn = hd([Vsn || {bitcask, _, Vsn} <- Apps] ++ ["999.999.999"]),
-    BitcaskVsn.
+    case lists:keyfind(bitcask, 1, application:which_applications()) of
+        {bitcask, _, AppVsn} ->
+            AppVsn;
+        _ ->
+            %% If the app isn't loaded, we're likely in a test, so bitcask's
+            %% ebin directory should be on the code path.
+            %% As a last resort, if we can't find the .app file or have a
+            %% problem reading it, log an error and use a version that's
+            %% unrealistically high - the prior version of this code suggested
+            %% that would avoid upgrades, but don't believe it.
+            case code:where_is_file("bitcask.app") of
+                non_existing ->
+                    lager:error(
+                        "File 'bitcask.app' not found on the code path!"
+                        " Using version '999.999.999'"),
+                    "999.999.999";
+                BcAppFile ->
+                    case file:consult(BcAppFile) of
+                        {ok, [{_, bitcask, Vars}]} ->
+                            {vsn, VsnStr} = lists:keyfind(vsn, 1, Vars),
+                            VsnStr;
+                        Error ->
+                            lager:error(
+                                "file:consult(\"~s\") returned '~w'."
+                                " Using version '999.999.999'",
+                                [BcAppFile, Error]),
+                            "999.999.999"
+                    end
+            end
+
+    end.
 
 -spec version_to_str(version()) -> string().
-version_to_str({Major, Minor, Patch}) ->
-    io_lib:format("~p.~p.~p", [Major, Minor, Patch]).
+version_to_str({vsn, Vsn}) ->
+    lists:flatten(lists:join(".", [erlang:integer_to_list(Seg) || Seg <- Vsn])).
 
 -spec write_version(File::string(), Vsn::string() | version()) ->
     ok | {error, term()}.
-write_version(File, {_, _, _} = Vsn) ->
+write_version(File, {vsn, _} = Vsn) ->
     write_version(File, version_to_str(Vsn));
 write_version(File, Vsn) ->
     riak_core_util:replace_file(File, Vsn).
