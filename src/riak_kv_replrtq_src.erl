@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_replrtq_src: Source of replication updates from this node
+%% Copyright (c) 2019-2022 Martin Sumner.
+%% Copyright (c) 2023 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -160,7 +161,7 @@
     % If a priority 3 item is pushed to the queue and the length of the
     % queue_cache is less than the object limit, and the overflowq is empty
     % for this priority, the item will be added to the queue_cache.
-    % 
+    %
     % If a priority 3 item is pushed to the queue and the length of the
     % queue_cache is at/over the object limit, or the overflowq is non-empty
     % then the item will be added to the overflowq, and if the object_ref is
@@ -170,7 +171,7 @@
     % added first to the overflowq .
     %
     % If a fetch request is received and the priority 3 queue_cache is
-    % non-empty then the next entry from this queue will be returned.  
+    % non-empty then the next entry from this queue will be returned.
     % If the overflow queue is empty, then an attempt will be made to
     % return a batch from the overflowq, to add to the queue_cache.
     %
@@ -670,9 +671,14 @@ handle_info(log_queue, State) ->
                 lists:map(
                     MapFun,
                     [?FLD_PRIORITY, ?AAE_PRIORITY, ?RTQ_PRIORITY]),
-            lager:info(
-                "QueueName=~w has queue sizes p1=~w p2=~w p3=~w",
-                [QueueName, P1L, P2L, P3L])
+            case {P1L, P2L, P3L} of
+                {0, 0, 0} ->
+                    ok;
+                _ ->
+                    lager:info(
+                        "QueueName=~w has queue sizes p1=~w p2=~w p3=~w",
+                        [QueueName, P1L, P2L, P3L])
+            end
         end,
     lists:foreach(LogFun, State#state.queue_filtermap),
     erlang:send_after(State#state.log_frequency_in_ms, self(), log_queue),
@@ -828,7 +834,7 @@ empty_local_queue() ->
     {{queue:new(), 0, 0}, {queue:new(), 0, 0}, {queue:new(), 0, 0}}.
 
 -spec empty_overflow_queue(queue_name(), string())
-        -> riak_kv_overflow_queue:overflowq(). 
+        -> riak_kv_overflow_queue:overflowq().
 empty_overflow_queue(QueueName, FilePath) ->
     {_OL, QL} = get_limits(),
     Priorities = [?FLD_PRIORITY, ?AAE_PRIORITY, ?RTQ_PRIORITY],
@@ -1079,7 +1085,7 @@ limit_aaefold_test() ->
 
     ok = replrtq_aaefold(?QN1, Grp4),
     ?assertMatch({?QN1, {100000, 0, 2000}}, length_rtq(?QN1)),
-    
+
     lists:foreach(fun(_I) -> _ = popfrom_rtq(?QN1) end, lists:seq(1, 4000)),
     ?assertMatch({?QN1, {98000, 0, 0}}, length_rtq(?QN1)),
 
@@ -1106,7 +1112,7 @@ limit_ttaaefs_test() ->
 
     ok = replrtq_ttaaefs(?QN1, Grp4),
     ?assertMatch({?QN1, {0, 100000, 2000}}, length_rtq(?QN1)),
-    
+
     lists:foreach(fun(_I) -> _ = popfrom_rtq(?QN1) end, lists:seq(1, 4000)),
     ?assertMatch({?QN1, {0, 98000, 0}}, length_rtq(?QN1)),
 
@@ -1118,7 +1124,7 @@ limit_ttaaefs_test() ->
 
     ok = replrtq_ttaaefs(?QN1, Grp4),
     ?assertMatch({?QN1, {0, 2000, 0}}, length_rtq(?QN1)),
-    
+
     lists:foreach(fun(_I) -> _ = popfrom_rtq(?QN1) end, lists:seq(1, 2000)),
     ?assertMatch({?QN1, {0, 0, 0}}, length_rtq(?QN1)),
 
