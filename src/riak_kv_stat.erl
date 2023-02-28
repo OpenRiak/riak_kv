@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2018-2022 Workday, Inc.
+%% Copyright (c) 2018-2023 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -46,6 +46,7 @@
 -export([track_bucket/1, untrack_bucket/1]).
 -export([active_gets/0, active_puts/0]).
 -export([value/1]).
+-export([uncovered_preflists/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -533,6 +534,12 @@ do_repairs(Indices, Preflist) ->
 create_or_update(Name, UpdateVal, Type) ->
     exometer:update_or_create(Name, UpdateVal, Type, []).
 
+%% @private
+uncovered_preflists() ->
+    riak_core_ring_util:uncovered_preflists(
+        riak_core_node_watcher:nodes(riak_kv)
+    ).
+
 %% @doc list of {Name, Type} for static
 %% stats that we can register at start up
 stats() ->
@@ -946,7 +953,10 @@ stats() ->
 									   ring_ownership]},
       [], [{ring_members       , ring_members},
            {ring_num_partitions, ring_num_partitions},
-           {ring_ownership     , ring_ownership}]}
+           {ring_ownership     , ring_ownership}]},
+           {uncovered_preflists,
+                {function, riak_kv_stat, uncovered_preflists, [], match, value},
+                [], [{value, uncovered_preflists}]}
      | read_repair_aggr_stats(Pfx)] ++ bc_stats(Pfx).
 
 read_repair_aggr_stats(Pfx) ->
