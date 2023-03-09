@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2022 Workday, Inc.
+%% Copyright (c) 2022-2023 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -168,7 +168,10 @@ start(Partition, Config0) ->
                 {ok, DataDir} ->
                     BitcaskDir = filename:join(DataRoot, DataDir),
                     UpgradeRet = maybe_start_upgrade(BitcaskDir),
-                    BitcaskOpts = set_mode(read_write, Config),
+                    BitcaskOpts0 = set_mode(read_write, Config),
+                    BackendInstanceName = filename:basename(DataRoot),
+                    BitcaskOpts = set_stats_callback(BackendInstanceName, BitcaskOpts0),
+                    register_stats(BackendInstanceName, Config),
                     case bitcask:open(BitcaskDir, BitcaskOpts) of
                         Ref when is_reference(Ref) ->
                             check_fcntl(),
@@ -580,6 +583,22 @@ fold_objects_fun(FoldObjectsFun, Bucket) ->
     end.
 
 %% @private
+%% Register conditional stats
+register_stats(BackendInstanceName, Opts) ->
+    ExpirySecs = bitcask:get_opt(expiry_secs, Opts),
+    case ExpirySecs of
+        undefined ->
+            ok;
+        N when is_integer(N), N > 0 ->
+            riak_kv_stat:register_backend_stat(BackendInstanceName, expired_keys, counter),
+            riak_kv_stat:register_backend_stat(BackendInstanceName, expired_bytes, counter);
+        _Else ->
+            lager:notice("Registering Bitcask stats given incorrect expiry secs: ~p",
+                         [ExpirySecs]),
+            ok
+    end.
+
+%% @private
 %% Schedule sync (if necessary)
 maybe_schedule_sync(Ref) when is_reference(Ref) ->
     case application:get_env(bitcask, sync_strategy) of
@@ -659,6 +678,15 @@ set_mode(read_only, Config) ->
 set_mode(read_write, Config) ->
     Config1 = lists:keystore(read_write, 1, Config, {read_write, true}),
     lists:keydelete(read_only, 1, Config1).
+
+set_stats_callback(BackendInstanceName, Config) ->
+    StatsCallbackHandler = stats_callback_handler(BackendInstanceName),
+    lists:keystore(stats_callback, 1, Config, {stats_callback, StatsCallbackHandler}).
+
+stats_callback_handler(BackendInstanceName) ->
+    fun(Args) ->
+        riak_kv_stat:update({BackendInstanceName, Args})
+    end.
 
 -spec read_version(File::string()) -> undefined | version().
 read_version(File) ->
