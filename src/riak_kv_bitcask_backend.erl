@@ -587,7 +587,7 @@ fold_objects_fun(FoldObjectsFun, Bucket) ->
 register_stats(BackendInstanceName, Opts) ->
     ExpirySecs = bitcask:get_opt(expiry_secs, Opts),
     case ExpirySecs of
-        undefined ->
+        -1 ->
             ok;
         N when is_integer(N), N > 0 ->
             riak_kv_stat:register_backend_stat(BackendInstanceName, expired_keys, counter),
