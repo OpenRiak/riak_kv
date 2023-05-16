@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_client: object used for access into the riak system
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -50,7 +48,9 @@
 -export([ensemble/1]).
 -export([fetch/2, push/4]).
 -export([membership_request/1, replrtq_reset_all_peers/1, replrtq_reset_all_workercounts/2]).
+-export([tictacaae_suspend_node/0, tictacaae_resume_node/0]).
 -export([remove_node_from_coverage/0, reset_node_for_coverage/0]).
+-export([repair_node/0]).
 
 -compile({no_auto_import,[put/2]}).
 %% @type default_timeout() = 60000
@@ -167,7 +167,7 @@ replrtq_resetpeer_fun(QueueN) ->
     fun(Node, Acc) ->
         B = rpc:call(Node, riak_kv_replrtq_peer, update_discovery, [QueueN]),
         if B -> [Node|Acc]; true -> Acc end
-    end. 
+    end.
 
 %% @doc Reset the worker count and per peer limit on each up node, returning
 %% a list of nodes to which the change was successfully applied
@@ -178,7 +178,7 @@ replrtq_reset_all_workercounts(WorkerC, PerPeerL) ->
     UpNodes = riak_core_node_watcher:nodes(riak_kv),
     FoldFun =
         fun(Node, Acc) ->
-            UpdateSuccess = 
+            UpdateSuccess =
                 rpc:call(
                     Node,
                     riak_kv_replrtq_peer,
@@ -187,7 +187,7 @@ replrtq_reset_all_workercounts(WorkerC, PerPeerL) ->
             if UpdateSuccess -> [Node|Acc]; true -> Acc end
         end,
     lists:foldl(FoldFun, [], UpNodes).
-     
+
 
 %% @doc Fetch the next item from the replication queue
 -spec fetch(riak_kv_replrtq_src:queue_name(), riak_client()) ->
@@ -224,7 +224,7 @@ fetch(QueueName, {?MODULE, [Node, _ClientId]}) ->
             {error, timeout} |
             {error, {n_val_violation, N::integer()}}.
 push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
-    RObj = 
+    RObj =
         case riak_object:is_robject(RObjMaybeBin) of
             % May get pushed a riak object, or a riak object as a binary, but
             % only want to deal with a riak object
@@ -265,7 +265,7 @@ push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
     R = wait_for_reqid(ReqId, Timeout),
     LMD =
         lists:max(
-            lists:map(fun riak_object:get_last_modified/1, 
+            lists:map(fun riak_object:get_last_modified/1,
                         riak_object:get_metadatas(RObj))),
     Reply = {R, LMD},
 
@@ -278,7 +278,7 @@ push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
                     riak_kv_get_fsm:start({raw, ReapReqId, Me},
                                             Bucket, Key, ReapOptions);
                 _ ->
-                    % Still using the deprecated `start_link' alias for 
+                    % Still using the deprecated `start_link' alias for
                     %`start' here, in case the remote node is pre-2.2:
                     proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
                                         [{raw, ReapReqId, Me},
@@ -529,7 +529,7 @@ delete(Bucket,Key,{?MODULE, [_Node, _ClientId]}=THIS) -> delete(Bucket,Key,[],?D
 %%      nodes have responded with a value or error.
 %% @equiv delete(Bucket, Key, RW, default_timeout())
 delete(Bucket,Key,Options,{?MODULE, [_Node, _ClientId]}=THIS) when is_list(Options) ->
-    delete(Bucket,Key,Options,?DEFAULT_TIMEOUT,THIS);
+    delete(Bucket,Key,Options,recv_timeout(Options),THIS);
 delete(Bucket,Key,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
     delete(Bucket,Key,[{rw, RW}],?DEFAULT_TIMEOUT,THIS).
 
@@ -575,7 +575,7 @@ consistent_delete(Bucket, Key, Options, _Timeout, {?MODULE, [Node, _ClientId]}) 
     end.
 
 
--spec reap(riak_object:bucket(), riak_object:key(), riak_client()) 
+-spec reap(riak_object:bucket(), riak_object:key(), riak_client())
                                                                 -> boolean().
 reap(Bucket, Key, Client) ->
     case normal_get(Bucket, Key, [deletedvclock], Client) of
@@ -620,7 +620,7 @@ delete_vclock(Bucket,Key,VClock,{?MODULE, [_Node, _ClientId]}=THIS) ->
 %%      nodes have responded with a value or error.
 %% @equiv delete(Bucket, Key, RW, default_timeout())
 delete_vclock(Bucket,Key,VClock,Options,{?MODULE, [_Node, _ClientId]}=THIS) when is_list(Options) ->
-    delete_vclock(Bucket,Key,VClock,Options,?DEFAULT_TIMEOUT,THIS);
+    delete_vclock(Bucket,Key,VClock,Options,recv_timeout(Options),THIS);
 delete_vclock(Bucket,Key,VClock,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
     delete_vclock(Bucket,Key,VClock,[{rw, RW}],?DEFAULT_TIMEOUT,THIS).
 
@@ -901,13 +901,14 @@ aae_fold(Query) ->
 aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    TimeOut = ?DEFAULT_FOLD_TIMEOUT,
+    TimeOut =
+        app_helper:get_env(
+            riak_kv, riak_client_aaefold_timeout, ?DEFAULT_FOLD_TIMEOUT),
     Q0 = riak_kv_clusteraae_fsm:convert_fold(Query),
     case riak_kv_clusteraae_fsm:is_valid_fold(Q0) of
         true ->
-            riak_kv_clusteraae_fsm_sup:start_clusteraae_fsm(Node,
-                                                            [{raw, ReqId, Me},
-                                                            [Query, TimeOut]]),
+            riak_kv_clusteraae_fsm_sup:start_clusteraae_fsm(
+                Node, [{raw, ReqId, Me}, [Q0, TimeOut]]),
             wait_for_fold_results(ReqId, TimeOut);
         false ->
             {error, "Invalid AAE fold definition"}
@@ -929,9 +930,8 @@ ttaaefs_fullsync(WorkItem) ->
 -spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer()) -> ok.
 ttaaefs_fullsync(WorkItem, SecsTimeout) ->
     ReqId = mk_reqid(),
-    riak_kv_ttaaefs_manager:process_workitem(WorkItem,
-                                                ReqId,
-                                                os:timestamp()),
+    riak_kv_ttaaefs_manager:process_workitem(
+        WorkItem, ReqId, os:timestamp()),
     wait_for_reqid(ReqId, SecsTimeout * 1000).
 
 %% @doc
@@ -941,22 +941,42 @@ ttaaefs_fullsync(WorkItem, SecsTimeout) ->
                                                     erlang:timestamp()) -> ok.
 ttaaefs_fullsync(WorkItem, SecsTimeout, Now) ->
     ReqId = mk_reqid(),
-    riak_kv_ttaaefs_manager:process_workitem(WorkItem,
-                                                ReqId,
-                                                Now),
+    riak_kv_ttaaefs_manager:process_workitem(WorkItem, ReqId, Now),
     wait_for_reqid(ReqId, SecsTimeout * 1000).
 
+-spec repair_node() -> ok.
+repair_node() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    NodeToRepair = node(),
+    PartitionsToRepair =
+        lists:filtermap(
+            fun({P, Node}) ->
+                case Node of
+                    NodeToRepair ->
+                        {true, P};
+                    _ ->
+                        false
+                end
+            end,
+            riak_core_ring:all_owners(Ring)),
+    [riak_kv_vnode:repair(P) || P <- PartitionsToRepair],
+    ok.
+
+-spec tictacaae_suspend_node() -> ok.
+tictacaae_suspend_node() ->
+    application:set_env(riak_kv, tictacaae_suspend, true).
+
+-spec tictacaae_resume_node() -> ok.
+tictacaae_resume_node() ->
+    application:set_env(riak_kv, tictacaae_suspend, false).
 
 -spec participate_in_coverage(boolean()) -> ok.
 participate_in_coverage(Participate) ->
     F =
-        fun(Ring, _) ->
-            {new_ring, 
-                riak_core_ring:update_member_meta(node(),
-                                                    Ring,
-                                                    node(),
-                                                    participate_in_coverage,
-                                                    Participate)}
+        fun(R, _) ->
+            {new_ring,
+                riak_core_ring:update_member_meta(
+                    node(), R, node(), participate_in_coverage, Participate)}
         end,
     {ok, _FinalRing} = riak_core_ring_manager:ring_trans(F, undefined),
     ok.

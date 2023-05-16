@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -589,7 +589,7 @@ load_built(#state{trees=Trees}) ->
 
 %% Generate a hash value for a `riak_object'
 -spec hash_object({riak_object:bucket(), riak_object:key()},
-                    riak_object_t2b() | 
+                    riak_object_t2b() |
                         riak_object:riak_object() | riak_object:proxy_object(),
                     version()) -> binary().
 hash_object({Bucket, Key}, RObj, Version) ->
@@ -614,10 +614,10 @@ fold_keys(Partition, HashtreePid, Index, HasIndexTree) ->
     FoldFun = fold_fun(HashtreePid, HasIndexTree),
     {Limit, Wait} = get_build_throttle(),
     lager:info("Making fold request to reconstruct AAE tree idx=~p"
-                            ++ " with version ~w", 
+                            ++ " with version ~w",
                 [Partition, Version]),
-    Opts = 
-        case Version of 
+    Opts =
+        case Version of
             legacy ->
                 [aae_reconstruction, {iterator_refresh, true}];
             _ ->
@@ -635,13 +635,13 @@ fold_keys(Partition, HashtreePid, Index, HasIndexTree) ->
 
 %% The accumulator in the fold is the number of bytes hashed
 %% modulo the "build limit" size. If we get an int back, everything is ok
-handle_fold_keys_result({Result, {Limit, Delay}}, HashtreePid, Index) 
+handle_fold_keys_result({Result, {Limit, Delay}}, HashtreePid, Index)
                                                 when is_integer(Result) ->
-    lager:info("Finished AAE tree build idx=~p limit ~w delay ~w", 
+    lager:info("Finished AAE tree build idx=~p limit ~w delay ~w",
                     [Index, Limit, Delay]),
     gen_server:cast(HashtreePid, build_finished);
 handle_fold_keys_result(Result, HashtreePid, Index) ->
-    lager:error("Failed to build hashtree for idx=~p. Result was: ~p", 
+    lager:error("Failed to build hashtree for idx=~p. Result was: ~p",
                     [Index, Result]),
     gen_server:cast(HashtreePid, build_failed).
 
@@ -708,8 +708,10 @@ fold_fun(HashtreePid, _HasIndexTree = true) ->
 -spec handle_corrupted_object(
     riak_object:bucket(), riak_object:key(), term(), term()) -> ok.
 handle_corrupted_object(Bucket, Key, Error, Reason) ->
-    lager:warning("Unable to read B=~p K=~p", [Bucket, Key]),
-    lager:warning("Read failure due to ~w ~w", [Error, Reason]),
+    lager:warning(
+        "Unable to read B=~p K=~p due to ~p ~p during tree rebuild " ++
+        "so will prompt read_repair - ignore warning during shutdown",
+        [Bucket, Key, Error, Reason]),
     riak_kv_reader:request_read({Bucket, Key}).
 
 -spec object_fold_fun(pid()) ->
@@ -864,7 +866,7 @@ expand_items(HasIndex, Items, Version) ->
 expand_item(Has2ITree, {object, BKey, RObj}, Version, Others) ->
     IndexN = riak_kv_util:get_index_n(BKey),
     BinBKey = term_to_binary(BKey),
-    ObjHash = 
+    ObjHash =
         try
             hash_object(BKey, RObj, Version)
         catch Error:Reason ->

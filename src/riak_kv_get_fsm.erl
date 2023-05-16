@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_get_fsm: coordination of Riak GET requests
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,6 +17,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc coordination of Riak GET requests
 
 -module(riak_kv_get_fsm).
 -behaviour(gen_fsm).
@@ -90,9 +90,8 @@
 
 -define(DEFAULT_TIMEOUT, 60000).
 -define(DEFAULT_R, default).
--define(DEFAULT_PR, 0).
+-define(DEFAULT_PR, default).
 -define(DEFAULT_RT, head).
--define(DEFAULT_NC, 0).
 -define(QUEUE_EMPTY_LOOPS, 8).
 
 %% ===================================================================
@@ -115,7 +114,7 @@ start_link(ReqId,Bucket,Key,R,Timeout,From) ->
 %% {notfound_ok, boolean()}  - Count notfound reponses as successful.
 %% {timeout, pos_integer() | infinity} -  Timeout for vnode responses
 -spec start({raw, req_id(), pid()},
-            queue_name|binary(), 
+            queue_name|binary(),
             binary()|riak_kv_replrtq_src:queue_name(),
             options()) -> {ok, pid()} | {error, any()}.
 start(From, Bucket, Key, GetOptions) ->
@@ -142,7 +141,7 @@ start_link(From, Bucket, Key, GetOptions) -> start(From, Bucket, Key, GetOptions
 
 -ifdef(TEST).
 
--compile({nowarn_deprecated_function, 
+-compile({nowarn_deprecated_function,
             [{gen_fsm, start_link, 3}]}).
 
 %% Create a get FSM for testing.  StateProps must include
@@ -286,7 +285,7 @@ prepare(timeout, StateData=#state{bkey=BKey={Bucket,_Key},
                         riak_core_apl:get_apl_ann(DocIdx, N, UpNodes)
                 end,
             RequestType = get_default_support_request_type(?DEFAULT_RT),
-            
+
             new_state_timeout(validate,
                                 StateData#state{
                                             starttime=riak_core_util:moment(),
@@ -321,7 +320,7 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
     NodeConfirms =
         riak_kv_util:expand_rw_value(node_confirms, NodeConfirms0,
                                         BucketProps, N),
-    
+
     case validate_quorum(R, R0, N, PR, PR0, NodeConfirms,
                             NumPrimaries, NumVnodes, NumNodes) of
         ok ->
@@ -420,13 +419,13 @@ waiting_vnode_r({r, VnodeResult, Idx, _ReqId},
     UpdGetCore =
         case StateData#state.request_type of
             update ->
-                
+
                 riak_kv_get_core:update_result(Idx,
                                                 VnodeResult,
                                                 StateData#state.override_vnodes,
                                                 ResNode,
                                                 GetCore);
-            _ -> 
+            _ ->
                 riak_kv_get_core:add_result(Idx, VnodeResult, ResNode, GetCore)
         end,
     case riak_kv_get_core:enough(UpdGetCore) of
@@ -542,12 +541,12 @@ validate_quorum(_R, _ROpt, _N, _PR, _PROpt, NodeConfirms,
                 _NumPrimaries, _NumVnodes, NumNodes)
                                                 when NodeConfirms > NumNodes ->
     {error, {insufficient_nodes, NumNodes, need, NodeConfirms}};
-validate_quorum(_R, _ROpt, _N, _PR, _PROpt, _NodeConfirms, 
+validate_quorum(_R, _ROpt, _N, _PR, _PROpt, _NodeConfirms,
                 _NumPrimaries, _NumVnodes, _NumNodes) ->
     ok.
 
 count_nodes(Preflist) ->
-    CountFun = 
+    CountFun =
         fun({{_Idx, Node}, _PriFall}, Acc) ->
             case lists:member(Node, Acc) of
                 true -> Acc;
@@ -690,12 +689,30 @@ roll_d100() ->
 -endif.
 
 %% Issue read repairs for any vnodes that are out of date
-read_repair(Indices, RepairObj,
+read_repair(GetCoreIndices, RepairObj,
             #state{req_id = ReqId, starttime = StartTime,
                    preflist2 = Sent, bkey = BKey, crdt_op = CrdtOp,
                    bucket_props = BucketProps, trace = Trace}) ->
-    RepairPreflist = [{Idx, Node} || {{Idx, Node}, _Type} <- Sent,
-                                     get_option(Idx, Indices) /= undefined],
+    RepairPreflist =
+        lists:filtermap(
+            fun({{Idx, Node}, Type}) ->
+                read_repair_index({{Idx, Node}, Type}, GetCoreIndices)
+            end,
+            Sent),
+    DocIdxList =
+        lists:map(
+            fun({{Idx, Node}, _Type, Reason}) ->
+                case app_helper:get_env(riak_kv, read_repair_log, false) of
+                    true ->
+                        lager:info(
+                            "Read repair of ~p on ~w ~w for reason ~w",
+                            [BKey, Idx, Node, Reason]);
+                    false ->
+                        ok
+                    end,
+                {Idx, Node}
+            end,
+            RepairPreflist),
     case Trace of
         true ->
             Ps = preflist_for_tracing(RepairPreflist),
@@ -703,11 +720,33 @@ read_repair(Indices, RepairObj,
         _ ->
             ok
     end,
-    riak_kv_vnode:readrepair(RepairPreflist, BKey, RepairObj, ReqId,
+    riak_kv_vnode:readrepair(DocIdxList, BKey, RepairObj, ReqId,
                              StartTime, [{returnbody, false},
                                          {bucket_props, BucketProps},
                                          {crdt_op, CrdtOp}]),
-    ok = riak_kv_stat:update({read_repairs, Indices, Sent}).
+    ok = riak_kv_stat:update({read_repairs, RepairPreflist}).
+
+-spec read_repair_index(
+    {{non_neg_integer(), node()}, primary|fallback},
+        list({non_neg_integer(), outofdate|notfound})) ->
+            boolean()|
+                {true,
+                    {{non_neg_integer(), node()},
+                    primary|fallback,
+                    outofdate|notfound}}.
+read_repair_index({{Idx, Node}, Type}, Indices) ->
+    case get_option(Idx, Indices) of
+        undefined ->
+            false;
+        Reason ->
+            RRP = app_helper:get_env(riak_kv, read_repair_primaryonly, false),
+            case {RRP, Type} of
+                {true, fallback} ->
+                    false;
+                _ ->
+                {true, {{Idx, Node}, Type, Reason}}
+            end
+    end.
 
 get_option(Name, Options) ->
     get_option(Name, Options, undefined).
@@ -735,7 +774,7 @@ client_reply(Reply0, StateData = #state{from = {raw, ReqId, Pid},
     % returned for replication.  However, a normal GET is not expecting that
     % format - so only return {error, {deleted, VClock}} for backwards
     % compatability
-    Reply = 
+    Reply =
         case Reply0 of
             {error, {deleted, TombClock, TombStone}} ->
                 case StateData#state.return_tombstone of

@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_object: container for Riak data and metadata
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -249,7 +247,7 @@ remove_dominated(Objects) ->
 %% IdxHeadList is a list of indexes and headers that may need to be updated to
 %% objects before the merge can be complete, and the IdxObjList is a list of
 %% vnode indexes and objects which are ready to be merged
--spec find_bestobject(list({non_neg_integer(), {ok, riak_object()}})) -> 
+-spec find_bestobject(list({non_neg_integer(), {ok, riak_object()}})) ->
                         {list({non_neg_integer(), {ok, riak_object()}}),
                             list({non_neg_integer(), {ok, riak_object()}})}.
 find_bestobject(FetchedItems) ->
@@ -263,7 +261,7 @@ find_bestobject(FetchedItems) ->
     {Objects, Heads} = lists:partition(ObjNotJustHeadFun, FetchedItems),
     %% prefer full objects to heads
     FoldList = Heads ++ Objects,
-    
+
     DescendsFun =
         fun(ObjClock, DescendsDirection) ->
             fun({_BestIdxSib, {ok, BestObjSib}}) ->
@@ -275,12 +273,12 @@ find_bestobject(FetchedItems) ->
                 end
             end
         end,
-    
+
     FoldFun =
         % BestAnswers are a list of [{Idx, {ok, Obj}}] there are either the
         % best answer or a sibling of the best answer,  BestAnswers can also
         % be undefined at the start of the fold
-        % 
+        %
         % If BestAnswers is undefined the object being folded over must now
         % be the head of the list of BestAnswers
         %
@@ -293,7 +291,7 @@ find_bestobject(FetchedItems) ->
         % on the Best answers and becomes the single best answer
         %
         % If neither way represents a clean descent, then we consider
-        % Comparison Object to be a sibling of at least one of the BestAnswers 
+        % Comparison Object to be a sibling of at least one of the BestAnswers
         fun({Idx, {ok, Obj}}, BestAnswers) ->
             case BestAnswers of
                 undefined ->
@@ -317,7 +315,7 @@ find_bestobject(FetchedItems) ->
                     end
             end
         end,
-    
+
     %% prefer the rightmost (fastest responder)
     BestAnswerList = lists:foldr(FoldFun, undefined, FoldList),
 
@@ -326,9 +324,9 @@ find_bestobject(FetchedItems) ->
     % gives variation in behaviour base don order, to make this more
     % determenistic by removing all dominated siblings with this additional
     % check
-    DominatedSibCheckFun = 
+    DominatedSibCheckFun =
         fun({_, {ok, BA_Obj}}) ->
-            not lists:any(fun({_, {ok, CheckObj}}) -> 
+            not lists:any(fun({_, {ok, CheckObj}}) ->
                                 vclock:dominates(vclock(CheckObj),
                                                     vclock(BA_Obj))
                             end,
@@ -348,6 +346,8 @@ find_bestobject(FetchedItems) ->
 
 -spec is_head({ok, riak_object()}|riak_object()) -> boolean().
 %% @private Check if an object is simply a head response
+is_head({ok, #r_object{contents=[]}}) ->
+    false;
 is_head({ok, #r_object{contents=Contents}}) ->
     C0 = lists:nth(1, Contents),
     case C0#r_content.value of
@@ -851,12 +851,12 @@ hash(Obj=#r_object{}) ->
             legacy_hash(Obj)
     end.
 
--spec hash(bucket(), key(), 
-            riak_object()|proxy_object()|binary(), 
+-spec hash(bucket(), key(),
+            riak_object()|proxy_object()|binary(),
             non_neg_integer()|legacy) -> binary().
 %% @doc calculates the canonical hash of a riak object depending on version
 %% May accept as input either a real object or a proxy object, or an object
-%% that is still serialised in a binary form (where that serialised object 
+%% that is still serialised in a binary form (where that serialised object
 %% could be either a proxy or a riak object)
 hash(_Bucket, _Key, RObj=#r_object{}, Version) ->
     hash(RObj, Version);
@@ -877,7 +877,7 @@ hash(Obj=#r_object{}, _Version) ->
 -spec legacy_hash(riak_object()) -> binary().
 legacy_hash(Obj=#r_object{}) ->
     % Blow up if we ever try performing a legacy hash on a proxy
-    % object.  
+    % object.
     UpdObj = riak_object:set_vclock(Obj, lists:sort(vclock(Obj))),
     Hash = erlang:phash2(to_binary(v0, UpdObj)),
     term_to_binary(Hash).
@@ -1260,14 +1260,14 @@ from_binary(_B, _K, Obj = #r_object{}) ->
     Obj.
 
 
--spec summary_from_binary(binary()) -> 
+-spec summary_from_binary(binary()) ->
         {vclock:vclock(), integer(), integer(),
             list(erlang:timestamp())|undefined, binary()}.
 %% @doc
-%% Extract only sumarry infromation from the binary - the vector, the object 
+%% Extract only sumarry infromation from the binary - the vector, the object
 %% size and the sibling count
 summary_from_binary(<<131, _Rest/binary>>=ObjBin) ->
-    case binary_to_term(ObjBin) of 
+    case binary_to_term(ObjBin) of
         {proxy_object, HeadBin, ObjSize, _Fetcher} ->
             summary_from_binary(HeadBin, ObjSize);
         T ->
@@ -1286,15 +1286,15 @@ summary_from_binary(Object = #r_object{}) ->
 -spec summary_from_binary(binary(), integer()) ->
     {vclock:vclock(), non_neg_integer(), non_neg_integer(),
         list(erlang:timestamp()), binary()}.
-%% @doc 
+%% @doc
 %% Return afrom a version 1 binary the vector clock and siblings
 summary_from_binary(ObjBin, ObjSize) ->
-    <<?MAGIC:8/integer, 
-        1:8/integer, 
-        VclockLen:32/integer, VclockBin:VclockLen/binary, 
-        SibCount:32/integer, 
+    <<?MAGIC:8/integer,
+        1:8/integer,
+        VclockLen:32/integer, VclockBin:VclockLen/binary,
+        SibCount:32/integer,
         SibsBin/binary>> = ObjBin,
-    {LastMods, SibBin} = 
+    {LastMods, SibBin} =
         case SibCount of
             SC when is_integer(SC) ->
                 get_metadata_from_siblings(SibsBin,
@@ -1307,7 +1307,7 @@ summary_from_binary(ObjBin, ObjSize) ->
 %% @doc
 %% Function used to split objects in parallel AAE store
 -spec aae_from_object_binary(boolean()) ->
-        fun((binary()) -> 
+        fun((binary()) ->
             {integer(), integer(), integer(),
                 list(erlang:timestamp()), binary()}).
 aae_from_object_binary(true) ->
@@ -1392,7 +1392,7 @@ is_aae_object_deleted([], ReturnMD) ->
             {false, undefined}
     end;
 is_aae_object_deleted(MDs, ReturnMD) ->
-    PredFun = 
+    PredFun =
         fun(M) ->
             dict:is_key(<<"X-Riak-Deleted">>, M)
         end,
@@ -1676,6 +1676,17 @@ delete_hash(ObjOrClock) ->
 
 -ifdef(TEST).
 
+%% See https://github.com/basho/riak_kv/issues/1707
+object_with_empty_contents_test() ->
+    B = <<"buckets_are_binaries">>,
+    K = <<"keys are binaries">>,
+
+    Contents = [],
+    O = #r_object{bucket=B,key=K,
+                  contents=Contents,vclock=vclock:fresh()},
+
+    ?assertEqual(false, is_head(O)).
+
 object_test() ->
     B = <<"buckets_are_binaries">>,
     K = <<"keys are binaries">>,
@@ -1849,7 +1860,7 @@ find_bestobject_reconcile() ->
                                         {4, {ok, Obj4}},
                                         {3, {ok, Obj3}},
                                         {5, {ok, Obj5}}])),
-                                        
+
     Obj6 = riak_object:increment_vclock(Obj2, two_pid),
     Hdr6 = convert_object_to_headonly(B, K, Obj6),
 
@@ -1861,7 +1872,7 @@ find_bestobject_reconcile() ->
                     find_bestobject([{2, {ok, Obj2}},
                                         {3, {ok, Obj3}},
                                         {6, {ok, Obj6}}])),
-                                        
+
     ?assertMatch({[{6, {ok, Obj6}}], []},
                     find_bestobject([{2, {ok, Obj2}},
                                     {4, {ok, Obj4}},
@@ -1877,7 +1888,7 @@ find_bestobject_reconcile() ->
                                     {6, {ok, Obj6}},
                                     {7, {ok, Obj6}},
                                     {8, {ok, Hdr6}}])),
-    
+
     Hdr3 = convert_object_to_headonly(B, K, Obj3),
     ?assertMatch({[{7, {ok, Obj6}}], [{3, {ok, Hdr3}}]},
                     find_bestobject([{2, {ok, Obj2}},
@@ -2258,7 +2269,7 @@ head_binary(VC1) ->
     head_binary(VC1, false).
 
 head_binary(VC1, IsDeleted) ->
-    DelBin = 
+    DelBin =
         case IsDeleted of
             true -> <<1>>;
             false -> <<0>>
@@ -2289,7 +2300,7 @@ from_binary_headonly_test() ->
     Bucket = <<"B">>,
     Key = <<"K1">>,
     VC1 = term_to_binary(vclock:fresh(a, 3)),
-    
+
     RObjBin = head_binary(VC1, false),
     RObj = riak_object:from_binary(Bucket, Key, RObjBin),
 
@@ -2297,7 +2308,7 @@ from_binary_headonly_test() ->
     ?assertMatch(VC1, term_to_binary(riak_object:vclock(RObj))),
     ?assertMatch(true, is_head(RObj)),
     ?assertMatch(false, riak_kv_util:is_x_deleted(RObj)),
-    
+
     RObjBinD = head_binary(VC1, true),
     RObjD = riak_object:from_binary(Bucket, Key, RObjBinD),
     ?assertMatch(true, is_robject(RObjD)),
@@ -2382,13 +2393,13 @@ summary_binary_extract() ->
     ?assertMatch(true, element(1, is_aae_object_deleted(SibBinB, true))),
     ?assertMatch(false, element(1, is_aae_object_deleted(SibBinC, true))),
     ?assertMatch({true, undefined}, is_aae_object_deleted(SibBinE, false)),
-    
+
     ObjBinA = trim_value_frombinary(to_binary(v1, ObjectA)),
     ObjBinB = trim_value_frombinary(to_binary(v1, ObjectB)),
     ObjBinC = trim_value_frombinary(to_binary(v1, ObjectC)),
     ObjBinD = trim_value_frombinary(to_binary(v1, ObjectD)),
     ObjBinE = trim_value_frombinary(to_binary(v1, ObjectE)),
-    
+
     % Prove that we cna extract metadata - and see is deleted status
     MDLA = aae_fold_metabin(ObjBinA, []),
     MDLB = aae_fold_metabin(ObjBinB, []),
@@ -2400,7 +2411,7 @@ summary_binary_extract() ->
     ?assertMatch({false, undefined}, is_aae_object_deleted(MDLC, false)),
     ?assertMatch({true, undefined}, is_aae_object_deleted(MDLD, false)),
     ?assertMatch({true, undefined}, is_aae_object_deleted(MDLE, false)),
-    
+
     % Should be able to see is_deleted status straight from binary
     ?assertMatch({false, undefined}, is_aae_object_deleted(ObjBinA, false)),
     ?assertMatch({true, undefined}, is_aae_object_deleted(ObjBinB, false)),
