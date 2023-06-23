@@ -46,7 +46,7 @@
 -export([track_bucket/1, untrack_bucket/1]).
 -export([active_gets/0, active_puts/0]).
 -export([value/1]).
--export([uncovered_preflists/0]).
+-export([uncovered_preflists/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -545,9 +545,9 @@ create_or_update(Name, UpdateVal, Type) ->
     exometer:update_or_create(Name, UpdateVal, Type, []).
 
 %% @private
-uncovered_preflists() ->
+uncovered_preflists(CMin) ->
     riak_core_ring_util:uncovered_preflists(
-        riak_core_node_watcher:nodes(riak_kv)
+        riak_core_node_watcher:nodes(riak_kv), CMin
     ).
 
 %% @doc list of {Name, Type, Options, Aliases} for stats
@@ -965,7 +965,9 @@ stats() ->
            {ring_num_partitions, ring_num_partitions},
            {ring_ownership     , ring_ownership}]},
      {uncovered_preflists,
-        {function, riak_kv_stat, uncovered_preflists, [], match, value}, [], [{value, uncovered_preflists}]}
+        {function, riak_kv_stat, uncovered_preflists, [1], match, value}, [], [{value, uncovered_preflists}]},
+     {uncovered_preflists2,
+        {function, riak_kv_stat, uncovered_preflists, [2], match, value}, [], [{value, uncovered_preflists2}]}
      | read_repair_aggr_stats(Pfx)] ++ bc_stats(Pfx).
 
 read_repair_aggr_stats(Pfx) ->
