@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Riak: A lightweight, decentralized key-value store.
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% Riak: A lightweight, decentralized key-value store.
+
 -module(riak).
 -export([stop/0, stop/1]).
 -export([get_app_env/0, get_app_env/1,get_app_env/2]).
@@ -28,6 +28,8 @@
          local_client/0,local_client/1,
          join/1]).
 -export([code_hash/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -40,14 +42,14 @@ stop() -> stop("riak stop requested").
 stop(Reason) ->
     % we never do an application:stop because that makes it very hard
     %  to really halt the runtime, which is what we need here.
-    lager:notice("~p",[Reason]),
+    ?LOG_NOTICE("~p",[Reason]),
     init:stop().
-    
+
 %% @spec get_app_env() -> [{Key :: atom(), Value :: term()}]
 %% @doc Retrieve all values set in riak's configuration file.
 %%      Returns a list of Key/Value pairs.
-get_app_env() -> 
-    application:get_all_env(riak) ++ init:get_arguments().   
+get_app_env() ->
+    application:get_all_env(riak) ++ init:get_arguments().
 
 %% @spec get_app_env(Opt :: atom()) -> term()
 %% @doc The official way to get the values set in riak's configuration file.
@@ -84,7 +86,7 @@ local_client(ClientId) ->
 %% @spec client_connect(Node :: node())
 %%        -> {ok, Client :: riak_client()} | {error, timeout}
 %% @equiv client_connect(Node, undefined)
-client_connect(Node) -> 
+client_connect(Node) ->
     client_connect(Node, undefined).
 
 %% @spec client_connect(node(), binary()|undefined)
@@ -99,7 +101,7 @@ client_connect(Node, ClientId= <<_:32>>) ->
     % Make sure we can reach this node...
     case net_adm:ping(Node) of
         pang -> {error, {could_not_reach_node, Node}};
-        pong -> 
+        pong ->
             %% Check if the original client id based vclocks
             %% or the new vnode based vclocks should be used.
             %% N.B. all nodes must be upgraded to 1.0 before
@@ -155,7 +157,7 @@ client_test(Node) ->
             error
     end.
 
-join(Node) ->    
+join(Node) ->
     riak_core:join(Node).
 
 code_hash() ->
@@ -163,7 +165,7 @@ code_hash() ->
     AllMods = lists:sort(AllMods0),
     <<MD5Sum:128>> = erlang:md5_final(
                        lists:foldl(
-                         fun(D, C) -> erlang:md5_update(C, D) end, 
+                         fun(D, C) -> erlang:md5_update(C, D) end,
                          erlang:md5_init(),
                          [C || {_, C, _} <- [code:get_object_code(M) || M <- AllMods]]
                         )),

@@ -1,9 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_vnode_status_mgr: Manages persistence of vnode status data
-%% like vnodeid, vnode op counter etc
-%%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2015 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,6 +17,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc Manages persistence of vnode status data like vnodeid, vnode op counter etc.
 -module(riak_kv_vnode_status_mgr).
 
 -behaviour(gen_server).
@@ -33,7 +32,7 @@
 -endif.
 
 %% API
--export([start_link/3, 
+-export([start_link/3,
         get_vnodeid_and_counter/2,
         lease_counter/2,
         clear_vnodeid/1,
@@ -47,6 +46,8 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -define(SERVER, ?MODULE).
 %% only 32 bits per counter, when you hit that, get a new vnode id
@@ -326,7 +327,7 @@ get_status_item(Item, Status, Default) ->
 %% path to exists.
 -spec vnode_status_filename(non_neg_integer(), string()|undefined) -> file:filename().
 vnode_status_filename(Index, Path) ->
-    P_DataDir = 
+    P_DataDir =
         case Path of
             undefined ->
                 app_helper:get_env(riak_core, platform_data_dir);
@@ -365,23 +366,23 @@ read_vnode_status(File) ->
             %% doesn't exist? same as empty
             {ok, orddict:new()};
         {error, {_Offset, file_io_server, invalid_unicode}} ->
-            case override_consult(File) of 
+            case override_consult(File) of
                 {ok, [Status]} when is_list(Status) ->
                     {ok, orddict:from_list(Status)};
                 Er ->
                     %% "corruption" error, some other posix error, unreadable:
                     %% Log, and start anew
-                    lager:error("Failed to override_consult vnode-status file ~p ~p", [File, Er]),
+                    ?LOG_ERROR("Failed to override_consult vnode-status file ~p ~p", [File, Er]),
                     {ok, orddict:new()}
             end;
         Er ->
             %% "corruption" error, some other posix error, unreadable:
             %% Log, and start anew
-            lager:error("Failed to consult vnode-status file ~p ~p", [File, Er]),
+            ?LOG_ERROR("Failed to consult vnode-status file ~p ~p", [File, Er]),
             {ok, orddict:new()}
     catch C:T ->
             %% consult threw
-            lager:error("Failed to consult vnode-status file ~p ~p ~p", [File, C, T]),
+            ?LOG_ERROR("Failed to consult vnode-status file ~p ~p ~p", [File, C, T]),
             {ok, orddict:new()}
     end.
 

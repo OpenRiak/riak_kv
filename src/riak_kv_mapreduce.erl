@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_mapreduce: convenience functions for defining common map/reduce phases
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -46,6 +44,8 @@
          reduce_sum/2,
          reduce_plist_sum/2,
          reduce_count_inputs/2]).
+
+-include_lib("kernel/include/logger.hrl").
 
 %-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -123,7 +123,7 @@ map_object_value_list(RiakObject, _, _) ->
 %% map_object_value and map_object_value_list
 notfound_map_action(_NF, _KD, <<"filter_notfound">>)    -> [];
 notfound_map_action(NF, _KD, <<"include_notfound">>)    -> [NF];
-notfound_map_action(_NF, KD, <<"include_keydata">>)     -> [KD]; 
+notfound_map_action(_NF, KD, <<"include_keydata">>)     -> [KD];
 notfound_map_action(_NF, _KD, {struct,[{<<"sub">>,V}]}) -> V.
 
 %%
@@ -132,13 +132,13 @@ notfound_map_action(_NF, _KD, {struct,[{<<"sub">>,V}]}) -> V.
 
 %% @spec reduce_identity(boolean()) -> reduce_phase_spec()
 %% @doc Produces a spec for a reduce phase that simply returns
-%%      back [Bucket, Key] for each BKey it's handed.  
+%%      back [Bucket, Key] for each BKey it's handed.
 reduce_identity(Acc) ->
     {reduce, {modfun, riak_kv_mapreduce, reduce_identity}, none, Acc}.
 
 %% @spec reduce_identity([term()], term()) -> [term()]
 %% @doc map phase function for reduce_identity/1
-reduce_identity(List, _) -> 
+reduce_identity(List, _) ->
     F = fun({{Bucket, Key}, _}, Acc) ->
                 %% Handle BKeys with a extra data.
                 [[Bucket, Key]|Acc];
@@ -150,7 +150,7 @@ reduce_identity(List, _) ->
                 [[Bucket, Key]|Acc];
            (Other, _Acc) ->
                 %% Fail loudly on anything unexpected.
-                lager:error("Unhandled entry: ~p", [Other]),
+                ?LOG_ERROR("Unhandled entry: ~p", [Other]),
                 throw({unhandled_entry, Other})
         end,
     lists:foldl(F, [], List).

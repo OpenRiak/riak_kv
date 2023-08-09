@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_crdt: A general purpose bridge between a CRDT and riak_object
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc A general purpose bridge between a CRDT and riak_object
+
 -module(riak_kv_crdt).
 -export([update/3, merge/1, value/2, new/3,
          supported/1, to_mod/1, from_mod/1, from_mod/2,  mod_map/1]).
@@ -33,6 +33,8 @@
          is_crdt_object/1,
          is_crdt_supported/1,
          operation/3]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
@@ -267,10 +269,10 @@ log_merge_errors(Bucket, Key, CRDTs, Errors) ->
 log_errors(_, _, []) ->
     ok;
 log_errors(Bucket, Key, Errors) ->
-    lager:error("Error(s) deserializing CRDT at ~p ~p: ~p~n", [Bucket, Key, Errors]).
+    ?LOG_ERROR("Error(s) deserializing CRDT at ~p ~p: ~p~n", [Bucket, Key, Errors]).
 
 maybe_log_sibling_crdts(Bucket, Key, CRDTs) when length(CRDTs) > 1 ->
-    lager:error("Sibling CRDTs at ~p ~p: ~p~n",
+    ?LOG_ERROR("Sibling CRDTs at ~p ~p: ~p~n",
                 [Bucket, Key, orddict:fetch_keys(CRDTs)]);
 maybe_log_sibling_crdts(_, _, _) ->
     ok.

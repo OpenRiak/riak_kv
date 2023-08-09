@@ -69,6 +69,8 @@
          get_build_time/1,
          handle_corrupted_object/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), non_neg_integer()}.
 -type orddict() :: orddict:orddict().
@@ -281,7 +283,7 @@ init([Index, VNPid, Opts]) ->
         undefined ->
             case riak_kv_entropy_manager:enabled() of
                 true ->
-                    lager:warning("Neither riak_kv/anti_entropy_data_dir or "
+                    ?LOG_WARNING("Neither riak_kv/anti_entropy_data_dir or "
                                   "riak_core/platform_data_dir are defined. "
                                   "Disabling active anti-entropy."),
                     riak_kv_entropy_manager:disable();
@@ -315,7 +317,7 @@ init([Index, VNPid, Opts]) ->
             %% If vnode is empty, mark tree as built without performing fold
             case VNEmpty of
                 true ->
-                    lager:debug("Built empty AAE tree for ~p", [Index]),
+                    ?LOG_DEBUG("Built empty AAE tree for ~p", [Index]),
                     gen_server:cast(self(), build_finished);
                 _ ->
                     ok
@@ -346,7 +348,7 @@ handle_call(get_trees, _From, #state{trees=Trees}=State) ->
     {reply, Trees, State};
 
 handle_call({update_tree, Id, Callback}, From, State) ->
-    lager:debug("Updating tree: (vnode)=~p (preflist)=~p", [State#state.index, Id]),
+    ?LOG_DEBUG("Updating tree: (vnode)=~p (preflist)=~p", [State#state.index, Id]),
     apply_tree(Id,
         fun(Tree) ->
             NewTree = snapshot_and_async_update_tree(Tree, Id, From, Callback),
@@ -435,7 +437,7 @@ handle_cast(build_finished, State) ->
 
 handle_cast(expire, State) ->
     State2 = State#state{expired=true},
-    lager:info("Manually expired tree: ~p", [State#state.index]),
+    ?LOG_INFO("Manually expired tree: ~p", [State#state.index]),
     {noreply, State2};
 
 handle_cast({start_exchange_remote, FsmPid, Version, From, _IndexN}, State) ->
@@ -499,7 +501,7 @@ determine_data_root() ->
             case application:get_env(riak_core, platform_data_dir) of
                 {ok, PlatformRoot} ->
                     Root = filename:join(PlatformRoot, "anti_entropy"),
-                    lager:warning("Config riak_kv/anti_entropy_data_dir is "
+                    ?LOG_WARNING("Config riak_kv/anti_entropy_data_dir is "
                                   "missing. Defaulting to: ~p", [Root]),
                     application:set_env(riak_kv, anti_entropy_data_dir, Root),
                     Root;
@@ -539,7 +541,7 @@ check_upgrade_env() ->
         false ->
             false;
         Value ->
-            lager:error("Unsupported non-boolean value for environment variable force_hashtree_upgrade ~p",[Value]),
+            ?LOG_ERROR("Unsupported non-boolean value for environment variable force_hashtree_upgrade ~p",[Value]),
             false
     end.
 
@@ -613,7 +615,7 @@ fold_keys(Partition, HashtreePid, Index, HasIndexTree) ->
     Version = get_version(HashtreePid),
     FoldFun = fold_fun(HashtreePid, HasIndexTree),
     {Limit, Wait} = get_build_throttle(),
-    lager:info("Making fold request to reconstruct AAE tree idx=~p"
+    ?LOG_INFO("Making fold request to reconstruct AAE tree idx=~p"
                             ++ " with version ~w",
                 [Partition, Version]),
     Opts =
@@ -637,11 +639,11 @@ fold_keys(Partition, HashtreePid, Index, HasIndexTree) ->
 %% modulo the "build limit" size. If we get an int back, everything is ok
 handle_fold_keys_result({Result, {Limit, Delay}}, HashtreePid, Index)
                                                 when is_integer(Result) ->
-    lager:info("Finished AAE tree build idx=~p limit ~w delay ~w",
+    ?LOG_INFO("Finished AAE tree build idx=~p limit ~w delay ~w",
                     [Index, Limit, Delay]),
     gen_server:cast(HashtreePid, build_finished);
 handle_fold_keys_result(Result, HashtreePid, Index) ->
-    lager:error("Failed to build hashtree for idx=~p. Result was: ~p",
+    ?LOG_ERROR("Failed to build hashtree for idx=~p. Result was: ~p",
                     [Index, Result]),
     gen_server:cast(HashtreePid, build_failed).
 
@@ -654,7 +656,7 @@ maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
     ObjSize = byte_size(RObjBin),
     Acc2 = Acc + ObjSize,
     if (Limit =/= 0) andalso (Acc2 > Limit) ->
-            lager:debug("Throttling AAE build for ~b ms", [Wait]),
+            ?LOG_DEBUG("Throttling AAE build for ~b ms", [Wait]),
             timer:sleep(Wait),
             NewLimit = get_build_throttle(),
             {0, NewLimit};
@@ -708,7 +710,7 @@ fold_fun(HashtreePid, _HasIndexTree = true) ->
 -spec handle_corrupted_object(
     riak_object:bucket(), riak_object:key(), term(), term()) -> ok.
 handle_corrupted_object(Bucket, Key, Error, Reason) ->
-    lager:warning(
+    ?LOG_WARNING(
         "Unable to read B=~p K=~p due to ~p ~p during tree rebuild " ++
         "so will prompt read_repair - ignore warning during shutdown",
         [Bucket, Key, Error, Reason]),
@@ -770,17 +772,17 @@ do_new_tree(Id, State=#state{trees=Trees, path=Path}, MarkType) ->
 %% by the background manager which could manage tokens based on Type atom. Best guess...
 -spec do_get_lock(any(), version(), pid(), state()) -> {not_built | ok | already_locked | bad_version, state()}.
 do_get_lock(_, _, _, State) when State#state.built /= true ->
-    lager:debug("Not built: ~p :: ~p", [State#state.index, State#state.built]),
+    ?LOG_DEBUG("Not built: ~p :: ~p", [State#state.index, State#state.built]),
     {not_built, State};
 do_get_lock(_, _, _, State) when State#state.lock /= undefined ->
-    lager:debug("Already locked: ~p", [State#state.index]),
+    ?LOG_DEBUG("Already locked: ~p", [State#state.index]),
     {already_locked, State};
 do_get_lock(_Type, Version, Pid, State=#state{version=Version}) ->
     Ref = monitor(process, Pid),
     State2 = State#state{lock=Ref},
     {ok, State2};
 do_get_lock(_Type, ReqVer, _Pid, State=#state{version=Version, index=Index}) ->
-    lager:debug("Hashtree ~p lock attempted for version: ~p while local tree has version: ~p", [Index, ReqVer, Version]),
+    ?LOG_DEBUG("Hashtree ~p lock attempted for version: ~p while local tree has version: ~p", [Index, ReqVer, Version]),
     {bad_version, State}.
 
 -spec maybe_release_lock(reference(), state()) -> state().
@@ -818,7 +820,7 @@ apply_tree(Id, Fun, State=#state{trees=Trees}) ->
 
 -spec do_build_finished(state()) -> state().
 do_build_finished(State=#state{index=Index, built=_Pid, trees=Trees0}) ->
-    lager:debug("Finished build: ~p", [Index]),
+    ?LOG_DEBUG("Finished build: ~p", [Index]),
     Trees = orddict:map(fun(_Id, Tree) ->
                             hashtree:flush_buffer(Tree)
                         end, Trees0),
@@ -870,8 +872,8 @@ expand_item(Has2ITree, {object, BKey, RObj}, Version, Others) ->
         try
             hash_object(BKey, RObj, Version)
         catch Error:Reason ->
-            lager:warning("Unhashable object BKey=~p", [BKey]),
-            lager:warning("Hash failure due to ~w ~w", [Error, Reason]),
+            ?LOG_WARNING("Unhashable object BKey=~p", [BKey]),
+            ?LOG_WARNING("Hash failure due to ~w ~w", [Error, Reason]),
             Null = erlang:phash2(<<>>),
             term_to_binary(Null)
         end,
@@ -961,7 +963,7 @@ handle_unexpected_key(Id, Key, State=#state{index=Partition}) ->
             %% TODO: We should probably remove these warnings before final
             %%       release, as reducing N will result in a ton of log/console
             %%       spam.
-            %% lager:warning("Object ~p encountered during fold over partition "
+            %% ?LOG_WARNING("Object ~p encountered during fold over partition "
             %%               "~p, but key does not hash to an index handled by "
             %%               "this partition", [Key, Partition]),
             State;
@@ -974,14 +976,14 @@ handle_unexpected_key(Id, Key, State=#state{index=Partition}) ->
             %% N to 4, and the object now maps to preflist '{<index>, 4}' which
             %% may not have an existing hashtree if there were previously no
             %% objects with N=4.
-            lager:info("Partition/tree ~p/~p does not exist to hold object ~p",
+            ?LOG_INFO("Partition/tree ~p/~p does not exist to hold object ~p",
                        [Partition, Id, Key]),
             case State#state.built of
                 true ->
                     %% If the tree is already built, clear the tree to trigger
                     %% a rebuild that will re-distribute objects into the
                     %% proper hashtrees based on current N values.
-                    lager:info("Clearing tree to trigger future rebuild"),
+                    ?LOG_INFO("Clearing tree to trigger future rebuild"),
                     clear_tree(State);
                 _ ->
                     %% Initialize a new index_n tree to prevent future errors.
@@ -1009,7 +1011,7 @@ do_compare(Id, Remote, AccFun, Acc, From, State) ->
     case orddict:find(Id, State#state.trees) of
         error ->
             %% This case shouldn't happen, but might as well safely handle it.
-            lager:warning("Tried to compare nonexistent tree "
+            ?LOG_WARNING("Tried to compare nonexistent tree "
                           "(vnode)=~p (preflist)=~p", [State#state.index, Id]),
             gen_server:reply(From, []);
         {ok, Tree} ->
@@ -1061,7 +1063,7 @@ maybe_expire(State=#state{lock=undefined, built=true, expired=false}) ->
     %% Need to convert from millsec to microsec
     case (Expire =/= never) andalso (Diff > (Expire * 1000)) of
         true ->
-            lager:debug("Tree expired: ~p", [State#state.index]),
+            ?LOG_DEBUG("Tree expired: ~p", [State#state.index]),
             State#state{expired=true};
         false ->
             State
@@ -1071,12 +1073,12 @@ maybe_expire(State) ->
 
 -spec clear_tree(state()) -> state().
 clear_tree(State=#state{index=Index}) ->
-    lager:info("Clearing AAE tree: ~p", [Index]),
+    ?LOG_INFO("Clearing AAE tree: ~p", [Index]),
     IndexNs = responsible_preflists(State),
     State2 = destroy_trees(State),
-    lager:info("Completed destroy of AAE tree: ~p", [Index]),
+    ?LOG_INFO("Completed destroy of AAE tree: ~p", [Index]),
     State3 = init_trees(IndexNs, true, State2#state{trees=orddict:new()}),
-    lager:info("Completed init of AAE tree: ~p", [Index]),
+    ?LOG_INFO("Completed init of AAE tree: ~p", [Index]),
     State3#state{built=false, expired=false}.
 
 destroy_trees(State) ->
@@ -1112,12 +1114,12 @@ determine_build_or_rehash(State) ->
     end.
 
 build_or_rehash(HashtreePid, true, build, #state{index =Index, trees =Trees}) ->
-    lager:info("Starting AAE tree build: ~p", [Index]),
+    ?LOG_INFO("Starting AAE tree build: ~p", [Index]),
     fold_keys(Index, HashtreePid, Index, has_index_tree(Trees));
 build_or_rehash(HashtreePid, true, rehash, #state{index=Index, trees=Trees}) ->
-    lager:debug("Starting AAE tree rehash: ~p", [Index]),
+    ?LOG_DEBUG("Starting AAE tree rehash: ~p", [Index]),
     _ = [hashtree:rehash_tree(T) || {_,T} <- Trees],
-    lager:debug("Finished AAE tree rehash: ~p", [Index]),
+    ?LOG_DEBUG("Finished AAE tree rehash: ~p", [Index]),
     gen_server:cast(HashtreePid, build_finished);
 build_or_rehash(HashtreePid, false, _Type, _State) ->
     gen_server:cast(HashtreePid, build_failed).
@@ -1137,7 +1139,7 @@ maybe_rebuild(State=#state{lock=undefined, built=true, expired=true, index=Index
     case Locked of
         true ->
             State2 = clear_tree(State),
-            lager:info("Informing process to trigger rebuild of tree: ~p", [Index]),
+            ?LOG_INFO("Informing process to trigger rebuild of tree: ~p", [Index]),
             Pid ! {lock, Locked, State2},
             State2#state{built=Pid};
         _ ->
@@ -1164,7 +1166,7 @@ close_trees(State=#state{trees=Trees}, false) ->
                                     %% Not marking close cleanly to avoid the
                                     %% cost of a full rebuild on shutdown.
                                     full ->
-                                        lager:info("Deliberately marking KV hashtree ~p"
+                                        ?LOG_INFO("Deliberately marking KV hashtree ~p"
                                                    ++ " for full rebuild on next restart",
                                                    [IdxN]),
                                         hashtree:flush_buffer(Tree);
@@ -1173,7 +1175,7 @@ close_trees(State=#state{trees=Trees}, false) ->
                                         hashtree:mark_clean_close(IdxN, HT)
                                 end
                             catch _:Err ->
-                                    lager:warning("Failed to flush/update trees"
+                                    ?LOG_WARNING("Failed to flush/update trees"
                                                   ++ " during close | Error: ~p", [Err]),
                                     Tree
                             end,
@@ -1201,11 +1203,11 @@ get_all_locks(Type, Index, Pid) ->
                     false
             end;
         Other ->
-            lager:debug("Could not get lock: ~p", [Other]),
+            ?LOG_DEBUG("Could not get lock: ~p", [Other]),
             false
     catch exit:{timeout,_} ->
         riak_kv_entropy_manager:release_lock(Pid),
-        lager:debug("Could not get lock due to timeout."),
+        ?LOG_DEBUG("Could not get lock due to timeout."),
         false
     end.
 
@@ -1246,7 +1248,7 @@ snapshot_and_async_update_tree(Tree, Id, From, Callback) ->
             try maybe_callback(Callback)
             catch
                 _:E ->
-                    lager:error(
+                    ?LOG_ERROR(
                         "An error occurred in update callback: ~p.  "
                         "Ignoring error and proceeding with update.", [E])
             end,

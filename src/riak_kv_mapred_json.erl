@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_mapred_json: JSON parsing for mapreduce
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -354,7 +352,7 @@ jsonify_bkeys(Results, HasMRQuery) when HasMRQuery == true ->
 jsonify_bkeys(Results, HasMRQuery) when HasMRQuery == false ->
     jsonify_bkeys_1(Results, []).
 
-%% @doc Translate undefined to null, which mochijson will translate to JS null 
+%% @doc Translate undefined to null, which mochijson will translate to JS null
 maybe_null(undefined) ->
     null;
 maybe_null(V) ->
@@ -537,7 +535,7 @@ pipe_phase_index(I)          -> I.
 %% human-readable string
 -spec trunc_print(term()) -> binary().
 trunc_print(Term) ->
-    {Msg, _Len} = lager_trunc_io:print(Term, 500),
+    Msg = io_lib:format("~p", [Term], [{chars_limit, 500}]),
     iolist_to_binary(Msg).
 
 %% @doc Pull a field out of a proplist, and possibly transform it.

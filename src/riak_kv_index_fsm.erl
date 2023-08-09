@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_index_fsm: Manage secondary index queries.
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -50,6 +48,8 @@
 -export([use_ack_backpressure/0,
          req/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type from() :: {atom(), req_id(), pid()}.
 -type req_id() :: non_neg_integer().
 
@@ -59,7 +59,7 @@
 -type riak_kv_index_fsm_dict() :: dict().
 -endif.
 
--record(timings, 
+-record(timings,
             {start_time = os:timestamp() :: os:timestamp(),
                 max = 0 :: non_neg_integer(),
                 min = infinity :: non_neg_integer()|infinity,
@@ -112,8 +112,8 @@ init(From={_, _, _}, [Bucket, ItemFilter, Query, Timeout, MaxResults0, PgSort0])
     MaxResults =
         case is_integer(MaxResults0) of true -> MaxResults0; false -> all end,
         % Force MaxResults to only be the expected all/integer() - and not
-        % undefined 
-    Paginating = is_integer(MaxResults) andalso MaxResults > 0, 
+        % undefined
+    Paginating = is_integer(MaxResults) andalso MaxResults > 0,
     PgSort = case {Paginating, PgSort0} of
         {true, _} ->
             true;
@@ -274,7 +274,7 @@ update_timings(Timings) ->
             false ->
                 Timings#timings.slow_count
         end,
-    FastCount = 
+    FastCount =
         case MS < Timings#timings.fast_time of
             true ->
                 Timings#timings.fast_count + 1;
@@ -287,7 +287,7 @@ update_timings(Timings) ->
         count = Timings#timings.count + 1,
         sum = Timings#timings.sum + MS,
         slow_count = SlowCount,
-        fast_count = FastCount 
+        fast_count = FastCount
     }.
 
 -spec log_timings(timings(), riak_object:bucket(), non_neg_integer()) -> ok.
@@ -302,7 +302,7 @@ log_timings(Timings, Bucket, ResultCount) ->
 log_timings(_Timings, _Bucket, _ResultCount, false) ->
     ok;
 log_timings(Timings, Bucket, ResultCount, true) ->
-    lager:info("Index query on bucket=~p " ++
+    ?LOG_INFO("Index query on bucket=~p " ++
                 "max_vnodeq=~w min_vnodeq=~w sum_vnodeq=~w count_vnodeq=~w " ++
                 "slow_count_vnodeq=~w fast_count_vnodeq=~w result_count=~w",
                 [Bucket,

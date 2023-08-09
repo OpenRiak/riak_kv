@@ -50,6 +50,8 @@
             autocheck_suppress/0,
             autocheck_suppress/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SECONDS_IN_DAY, 86400).
 -define(INITIAL_TIMEOUT, 60000).
     % Wait a minute before the first allocation is considered,  Lot may be
@@ -325,7 +327,7 @@ init([]) ->
                         peer_queue_name = PeerQueueName,
                         check_window = CheckWindow},
 
-    lager:info("Initiated Tictac AAE Full-Sync Mgr with scope=~w", [Scope]),
+    ?LOG_INFO("Initiated Tictac AAE Full-Sync Mgr with scope=~w", [Scope]),
     {ok, State2, ?INITIAL_TIMEOUT}.
 
 handle_call(pause, _From, State) ->
@@ -402,7 +404,7 @@ handle_cast({reply_complete, ReqID, Result}, State) ->
                 % If the exchange ends with waiting all results, then consider
                 % this to be equivalent to a crash, and so requiring a full
                 % pause to backoff
-                lager:info("exchange=~w failed to complete in duration=~w s" ++
+                ?LOG_INFO("exchange=~w failed to complete in duration=~w s" ++
                                     " sync_state=unknown",
                                 [ReqID, Duration div 1000000]),
                 riak_kv_stat:update({ttaaefs, sync_fail, Duration}),
@@ -410,14 +412,14 @@ handle_cast({reply_complete, ReqID, Result}, State) ->
             {SyncState, 0} when SyncState == root_compare;
                                 SyncState == branch_compare ->
                 riak_kv_stat:update({ttaaefs, sync_sync, Duration}),
-                lager:info("exchange=~w complete result=~w in duration=~w s" ++
+                ?LOG_INFO("exchange=~w complete result=~w in duration=~w s" ++
                                     " sync_state=true",
                                 [ReqID, Result, Duration div 1000000]),
                 disable_tree_repairs(),
                 {?LOOP_TIMEOUT,
                     State#state{previous_success = LastExchangeStart}};
             _ ->
-                lager:info("exchange=~w complete result=~w in duration=~w s" ++
+                ?LOG_INFO("exchange=~w complete result=~w in duration=~w s" ++
                                     " sync_state=false",
                                 [ReqID, Result, Duration div 1000000]),
                 riak_kv_stat:update({ttaaefs, sync_nosync, Duration}),
@@ -532,7 +534,7 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
             none ->
                 case State#state.previous_success of
                     false ->
-                        lager:info("No range sync as no range set"),
+                        ?LOG_INFO("No range sync as no range set"),
                         none;
                     {PrevMega, PrevSecs, _PrevMS} ->
                         % Add to the high time, and arbitrary 5s, as the last
@@ -608,20 +610,20 @@ handle_cast({auto_check, ReqID, From, Now}, State) ->
             % discovered differences when the remote cluster is in advance
             % of this cluster.  This skips checks as previous discovery work
             % has gone to waste
-            lager:info(
+            ?LOG_INFO(
                 "Auto check prompts no_check reqid=~w as sink ahead",
                 [ReqID]),
             process_workitem(no_check, ReqID, From, Now);
         {none, false, true, _DN, _QN} ->
-            lager:info("Auto check prompts all_check reqid=~w", [ReqID]),
+            ?LOG_INFO("Auto check prompts all_check reqid=~w", [ReqID]),
             process_workitem(all_check, ReqID, From, Now);
         {none, false, false, _DN, _QN} ->
-            lager:info("Auto check prompts day_check reqid=~w", [ReqID]),
+            ?LOG_INFO("Auto check prompts day_check reqid=~w", [ReqID]),
             process_workitem(day_check, ReqID, From, Now);
         Clause ->
             % Whenever there is a range defined of the last check was
             % successful, a range check is the optimal way of proceeding
-            lager:info(
+            ?LOG_INFO(
                 "Auto check prompts range_check reqid=~w due to clause ~p",
                 [ReqID, Clause]),
             process_workitem(range_check, ReqID, From, Now)
@@ -635,14 +637,14 @@ handle_info(timeout, State) ->
     {Allocations, StartTime} =
         case State#state.node_info of
             undefined ->
-                lager:info(
+                ?LOG_INFO(
                     "Initiating schedule at startup SlotInfo ~p Schedule ~p",
                     [SlotInfo, State#state.schedule]),
                 {[], undefined};
             SlotInfo ->
                 {State#state.slice_allocations, State#state.slice_set_start};
             OldInfo ->
-                lager:info(
+                ?LOG_INFO(
                     "SlotInfo changed from ~p to ~p so resetting schedule",
                     [OldInfo, SlotInfo]),
                 {[], undefined}
@@ -653,9 +655,8 @@ handle_info(timeout, State) ->
                             StartTime,
                             SlotInfo,
                             State#state.slice_count),
-    lager:info(
-        "Scheduling work_item=~w in ~w seconds ~w items to run in schedule",
-        [WorkItem, Wait, length(RemainingSlices)]),
+    ?LOG_INFO("Scheduling work_item=~w in ~w seconds remaining=~w",
+                [WorkItem, Wait, length(RemainingSlices)]),
     erlang:send_after(Wait * 1000, self(), {work_item, WorkItem}),
     {noreply,
         State#state{
@@ -737,7 +738,7 @@ drop_next_autocheck() ->
 
 -spec trigger_tree_repairs() -> ok.
 trigger_tree_repairs() ->
-    lager:info(
+    ?LOG_INFO(
         "Setting node to repair trees as unsync'd all_check had no repairs"),
     application:set_env(riak_kv, aae_fetchclocks_repair, true).
 
@@ -861,7 +862,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                                         {scan_timeout, ?CRASH_TIMEOUT div 2},
                                         {purpose, WorkType}]),
 
-            lager:info("Starting ~w full-sync work_item=~w " ++
+            ?LOG_INFO("Starting ~w full-sync work_item=~w " ++
                                 "reqid=~w exchange id=~s pid=~w",
                             [Ref, WorkType, ReqID0, ExID, ExPid]),
             riak_kv_stat:update({ttaaefs, WorkType}),
@@ -940,7 +941,7 @@ init_client(http, IP, Port, _Cert) ->
         ok ->
             {RHC, rhc};
         {error, Error} ->
-            lager:warning("Cannot reach remote cluster ~p ~p with error ~p",
+            ?LOG_WARNING("Cannot reach remote cluster ~p ~p with error ~p",
                             [IP, Port, Error]),
             {no_client, rhc}
     end;
@@ -970,12 +971,12 @@ init_pbclient(IP, Port, Options) ->
         pong ->
             {Pid, riakc_pb_socket};
         {error, Reason} ->
-            lager:info("Cannot reach remote cluster ~p ~p as ~p",
+            ?LOG_INFO("Cannot reach remote cluster ~p ~p as ~p",
                             [IP, Port, Reason]),
             {no_client, riakc_pb_socket}
     catch
         _Exception:Reason ->
-            lager:warning("Cannot reach remote cluster ~p ~p exception ~p",
+            ?LOG_WARNING("Cannot reach remote cluster ~p ~p exception ~p",
                             [IP, Port, Reason]),
             {no_client, riakc_pb_socket}
     end.
@@ -1034,7 +1035,7 @@ remote_sender(fetch_root, Client, Mod, ReturnFun, NVal) ->
             {ok, {root, Root}} ->
                 ReturnFun(Root);
             {error, Error} ->
-                lager:warning("Error of ~w in root request", [Error]),
+                ?LOG_WARNING("Error of ~w in root request", [Error]),
                 ReturnFun({error, Error})
         end
     end;
@@ -1044,7 +1045,7 @@ remote_sender({fetch_branches, BranchIDs}, Client, Mod, ReturnFun, NVal) ->
             {ok, {branches, ListOfBranchResults}} ->
                 ReturnFun(ListOfBranchResults);
             {error, Error} ->
-                lager:warning("Error of ~w in branches request", [Error]),
+                ?LOG_WARNING("Error of ~w in branches request", [Error]),
                 ReturnFun({error, Error})
         end
     end;
@@ -1054,7 +1055,7 @@ remote_sender({fetch_clocks, SegmentIDs}, Client, Mod, ReturnFun, NVal) ->
             {ok, {keysclocks, KeysClocks}} ->
                 ReturnFun(lists:map(fun remote_decode/1, KeysClocks));
             {error, Error} ->
-                lager:warning("Error of ~w in clocks request", [Error]),
+                ?LOG_WARNING("Error of ~w in clocks request", [Error]),
                 ReturnFun({error, Error})
         end
     end;
@@ -1064,7 +1065,7 @@ remote_sender({fetch_clocks, SegmentIDs, MR}, Client, Mod, ReturnFun, NVal) ->
             {ok, {keysclocks, KeysClocks}} ->
                 ReturnFun(lists:map(fun remote_decode/1, KeysClocks));
             {error, Error} ->
-                lager:warning("Error of ~w in clocks request", [Error]),
+                ?LOG_WARNING("Error of ~w in clocks request", [Error]),
                 ReturnFun({error, Error})
         end
     end;
@@ -1076,7 +1077,7 @@ remote_sender({merge_tree_range, B, KR, TS, SF, MR, HM},
             {ok, {tree, Tree}} ->
                 ReturnFun(leveled_tictac:import_tree(Tree));
             {error, Error} ->
-                lager:warning("Error of ~w in tree request", [Error]),
+                ?LOG_WARNING("Error of ~w in tree request", [Error]),
                 ReturnFun({error, Error})
         end
     end;
@@ -1088,7 +1089,7 @@ remote_sender({fetch_clocks_range, B0, KR, SF, MR},
             {ok, {keysclocks, KeysClocks}} ->
                 ReturnFun(lists:map(fun remote_decode/1, KeysClocks));
             {error, Error} ->
-                lager:warning("Error of ~w in segment request", [Error]),
+                ?LOG_WARNING("Error of ~w in segment request", [Error]),
                 ReturnFun({error, Error})
         end
     end.
@@ -1166,11 +1167,11 @@ generate_repairfun(LocalRepairFun, RemoteRepairFun, MaxResults, LogInfo) ->
                 end
             end,
         {SrcRepair, SnkRepair} = lists:foldl(FoldFun, {[], []}, RepairList),
-        lager:info(
+        ?LOG_INFO(
             "AAE reqid=~w work_item=~w scope=~w shows sink ahead " ++
                 "for key_count=~w keys limited by max_results=~w",
             [ExchangeID, WorkItem, WorkScope, length(SnkRepair), MaxResults]),
-        lager:info(
+        ?LOG_INFO(
             "AAE reqid=~w work_item=~w scope=~w shows source ahead " ++
                 "for key_count=~w keys limited by max_results=~w",
             [ExchangeID, WorkItem, WorkScope, length(SrcRepair), MaxResults]),
@@ -1199,7 +1200,7 @@ determine_next_action(0, _Target, full, WorkItem, _RepairRanges) ->
     % other buckets where those checks could have been successful.
     % This action is in support of environments where bi-directional repair
     % is not enabled (i.e. the peer queue_name is set to disabled).
-    lager:info(
+    ?LOG_INFO(
         "Suppressing auto_checks as no repairs for work_item=~w",
         [WorkItem]),
     case WorkItem of
@@ -1210,7 +1211,7 @@ determine_next_action(0, _Target, full, WorkItem, _RepairRanges) ->
 determine_next_action(
     RepairCount, Target, _Scope, WorkItem, [{B, KC, LowDT, HighDT}])
         when RepairCount > Target ->
-    lager:info(
+    ?LOG_INFO(
         "Setting range to bucket=~p ~w ~w last_count=~w set by work_item=~w",
         [B, LowDT, HighDT, KC, WorkItem]),
     set_range(B, all, LowDT, HighDT);
@@ -1222,12 +1223,12 @@ determine_next_action(
         lists:unzip(lists:map(MapFun, RepairRanges)),
     LoDT = lists:min(LDL),
     HiDT = lists:max(HDL),
-    lager:info(
+    ?LOG_INFO(
         "Setting range to bucket=all ~w ~w last_count=~w set by work_item=~w",
         [LoDT, HiDT, RepairCount, WorkItem]),
     set_range(all, all, LoDT, HiDT);
 determine_next_action(RepairCount, _Target, _Scope, WorkItem, _RepairRanges) ->
-    lager:info(
+    ?LOG_INFO(
         "No range set for last_count=~w repairs by work_item=~w",
         [RepairCount, WorkItem]),
     ok.
@@ -1235,7 +1236,7 @@ determine_next_action(RepairCount, _Target, _Scope, WorkItem, _RepairRanges) ->
 maybe_log_repair(false, _) ->
     ok;
 maybe_log_repair(true, {B, K, SrcVC, SnkVC}) ->
-    lager:info(
+    ?LOG_INFO(
         "Repair B=~p K=~p SrcVC=~w SnkVC=~w",
         [B, K, SrcVC, SnkVC]).
 
@@ -1280,10 +1281,10 @@ summarise_repairs(ExchangeID, RepairList, WorkScope, WorkItem) ->
     PerBucketData = lists:foldl(FoldFun, [], RepairList),
     LogFun =
         fun({B, C, MinDT, MaxDT}) ->
-            lager:info(
-                "AAE exchange=~w work_item=~w type=~w repaired " ++
-                    "key_count=~w for bucket=~p with low date ~p high date ~p",
-                [ExchangeID, WorkScope, WorkItem, C, B, MinDT, MaxDT])
+            ?LOG_INFO("AAE exchange=~w work_item=~w type=~w repaired " ++
+                            "key_count=~w for " ++
+                            "bucket=~p with low date ~p high date ~p",
+                        [ExchangeID, WorkScope, WorkItem, C, B, MinDT, MaxDT])
         end,
     lists:foreach(LogFun, PerBucketData),
     PerBucketData.
@@ -1335,10 +1336,10 @@ take_next_workitem([NextAlloc|T], Wants,
         true ->
             {NextAction, ScheduleSeconds - NowSeconds, T, ScheduleStartTime};
         false ->
-            lager:info("Tictac AAE skipping action ~w as manager running "
+            ?LOG_INFO("Tictac AAE skipping action ~w as manager running "
                         ++ "~w seconds late",
                         [NextAction, NowSeconds - ScheduleSeconds]),
-            lager:info("Clearing any range due to skip to reduce load"),
+            ?LOG_INFO("Clearing any range due to skip to reduce load"),
             clear_range(),
             take_next_workitem(T, Wants,
                                 ScheduleStartTime, SlotInfo, SliceCount)

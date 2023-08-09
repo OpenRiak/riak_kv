@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_multi_prefix_backend: switching between multiple storage engines
-%%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -97,6 +95,8 @@
 
 -export([head/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -ifdef(TEST_IN_RIAK_KV).
 -include_lib("eunit/include/eunit.hrl").
@@ -158,7 +158,7 @@ start(Partition, Config) ->
             %% prefix_multi and cs_version = 20000. If storage
             %% calculation needed, then adding paths of riak_cs and
             %% riak_cs_multibag as we have been doing is required.
-            _ = lager:debug("~p starting as Riak CS ~p backend for partition ~p",
+            ?LOG_DEBUG("~p starting as Riak CS ~p backend for partition ~p",
                             [?MODULE, CSVersion, Partition]),
             ok = application:set_env(riak_kv, multi_backend_prefix_list,
                                      [{<<"0b:">>,be_blocks}]),
@@ -467,7 +467,7 @@ backend_fix_index({_, Mod, ModState}, Bucket, StorageKey, ForUpgrade) ->
         {reply, Reply, _UpModState} ->
             Reply;
         {error, Reason} ->
-           _ = lager:error("Failed to fix index for bucket ~p, key ~p, backend ~p: ~p",
+           ?LOG_ERROR("Failed to fix index for bucket ~p, key ~p, backend ~p: ~p",
                        [Bucket, StorageKey, Mod, Reason]),
             {0, 0, length(StorageKey)}
     end.

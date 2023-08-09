@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_bucket: bucket validation functions
-%%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -544,16 +542,16 @@ validate_update_consistent_props(Existing, New) ->
     case {NewConsistent, OldNVal, NewNVal} of
         {undefined, _, undefined} ->
             {Unvalidated, [], []};
-        {undefined, _N, _N} ->
+        {undefined, N, N} ->
             {Unvalidated, [{n_val, NewNVal}], []};
-        {true, _N, _N} ->
+        {true, N, N} ->
             {Unvalidated, [{n_val, NewNVal}, {consistent, true}], []};
-        {C, _N, _N} when C =/= undefined orelse
+        {C, N, N} when C =/= undefined orelse
                          C =/= true ->
             {Unvalidated, [{n_val, NewNVal}], [{consistent, CErr}]};
-        {undefined, _OldN, _NewN} ->
+        {undefined, _, _} ->
             {Unvalidated, [], [{n_val, NErr}]};
-        {true, _OldN, _NewN} ->
+        {true, _, _} ->
             {Unvalidated, [{consistent, true}], [{n_val, NErr}]};
         {_, _, _} ->
             {Unvalidated, [], [{n_val, NErr}, {consistent, CErr}]}

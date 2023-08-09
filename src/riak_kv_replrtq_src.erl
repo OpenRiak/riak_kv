@@ -87,6 +87,7 @@
 
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
 
 -define(RTQ_PRIORITY, 3).
     % Priority for queueing real-time replication of PUTs co-ordinated on this
@@ -407,7 +408,7 @@ handle_call({length_rtq, QueueName}, _From, State) ->
                             [?FLD_PRIORITY, ?AAE_PRIORITY, ?RTQ_PRIORITY]))},
                 State};
         false ->
-            lager:warning(
+            ?LOG_WARNING(
                 "Attempt to get length of undefined queue ~w",
                 [QueueName]),
             {reply, false, State}
@@ -507,7 +508,7 @@ handle_call({register_rtq, QueueName, QueueFilter}, _From, State) ->
     QFilter = State#state.queue_filtermap,
     case lists:keyfind(QueueName, 1, QFilter) of
         {QueueName, _, _} ->
-            lager:warning("Attempt to register queue already present ~w",
+            ?LOG_WARNING("Attempt to register queue already present ~w",
                             [QueueName]),
             {reply, false, State};
         false ->
@@ -565,7 +566,7 @@ handle_call({resume_rtq, QueueName}, _From, State) ->
 handle_call({clear_rtq, QueueName}, _From, State) ->
     case lists:keyfind(QueueName, 1, State#state.queue_filtermap) of
         false ->
-            lager:warning("Attempt to clear queue not present ~w",
+            ?LOG_WARNING("Attempt to clear queue not present ~w",
                             [QueueName]),
             {reply, ok, State};
         {QueueName, _, _} ->
@@ -675,7 +676,7 @@ handle_info(log_queue, State) ->
                 {0, 0, 0} ->
                     ok;
                 _ ->
-                    lager:info(
+                    ?LOG_INFO(
                         "QueueName=~w has queue sizes p1=~w p2=~w p3=~w",
                         [QueueName, P1L, P2L, P3L])
             end
@@ -780,13 +781,13 @@ tokenise_queuedefn(QueueDefnString) ->
                                 {buckettype, list_to_binary(Type)},
                                 active}|Acc];
                         Unexpected ->
-                            lager:warning(
+                            ?LOG_WARNING(
                                 "Unsupported queue definition ~w ignored",
                                 [Unexpected]),
                             Acc
                     end;
                 Unexpected ->
-                    lager:warning(
+                    ?LOG_WARNING(
                                 "Unsupported queue definition ~w ignored",
                                 [Unexpected]),
                     Acc

@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_index: central module for indexing.
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2014 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -42,6 +40,9 @@
          index_key_in_range/3,
          add_timeout_opt/2
         ]).
+
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -117,7 +118,7 @@ parse_object_hook(RObj) ->
             %% Any operation that occurs through the HTTP or PB
             %% interface is forced to resolve siblings and send back a
             %% single update.
-            lager:error("Siblings not allowed: ~p", [RObj]),
+            ?LOG_ERROR("Siblings not allowed: ~p", [RObj]),
             {fail, {siblings_not_allowed, RObj}}
     end.
 

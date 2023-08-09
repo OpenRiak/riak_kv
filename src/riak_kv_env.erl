@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_env: environmental utilities.
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2014 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,6 +15,8 @@
 %% KIND, either express or implied.  See the License for the
 %% specific language governing permissions and limitations
 %% under the License.
+%%
+%% -------------------------------------------------------------------
 
 %% @doc utility functions for interacting with the environment.
 
@@ -41,9 +41,10 @@
                        {"net.ipv4.tcp_window_scaling",          1, eq}
                       ]).
 
+-include_lib("kernel/include/logger.hrl").
 
 doc_env() ->
-    lager:info("Environment and OS variables:"),
+    ?LOG_INFO("Environment and OS variables:"),
     Ulimits = check_ulimits(),
     ErlLimits = check_erlang_limits(),
     OSLimits = case os:type() of
@@ -57,7 +58,7 @@ doc_env() ->
                        [{warn, "Unknown OS type, no platform specific info", []}]
                end,
     lists:map(fun({F, Fmt, Args}) ->
-                      lager:debug("Term: ~p", [{F, Fmt, Args}]),
+                      ?LOG_DEBUG("Term: ~p", [{F, Fmt, Args}]),
                       %% fake out lager a bit here
                       F1 = case F of
                                info -> info_msg;

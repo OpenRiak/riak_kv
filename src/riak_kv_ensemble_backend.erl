@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2014 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -36,6 +36,8 @@
 -export([handle_down/4]).
 
 -include_lib("riak_ensemble/include/riak_ensemble_types.hrl").
+
+-include_lib("kernel/include/logger.hrl").
 
 -define(STABLE_RING_LEVEL, 20).
 
@@ -174,7 +176,7 @@ handle_down(Ref, _Pid, Reason, #state{id=Id,
     {{kv, _PL, _N, Idx}, _} = Id,
     case Ref of
         VnodeRef ->
-            lager:warning("Vnode for Idx: ~p crashed with reason: ~p.",
+            ?LOG_WARNING("Vnode for Idx: ~p crashed with reason: ~p.",
                 [Idx, Reason]),
             %% There are some races here. The vnode may not have been restarted yet
             %% or the manager itself could be down.
@@ -184,7 +186,7 @@ handle_down(Ref, _Pid, Reason, #state{id=Id,
             VnodeRef2 = erlang:monitor(process, Vnode),
             {reset, State#state{vnode_ref=VnodeRef2}};
         ProxyRef ->
-            lager:warning("Vnode Proxy for Idx: ~p crashed with reason: ~p.",
+            ?LOG_WARNING("Vnode Proxy for Idx: ~p crashed with reason: ~p.",
                 [Idx, Reason]),
             ProxyRef2 = erlang:monitor(process, Proxy),
             {reset, State#state{proxy_ref=ProxyRef2}};
@@ -235,7 +237,7 @@ tick(_Epoch, _Seq, _Leader, Views, State=#state{id=Id}) ->
                         [] ->
                             State;
                         _ ->
-                            lager:info("Changes ~p prompted by ring update",
+                            ?LOG_INFO("Changes ~p prompted by ring update",
                                         [Changes]),
                             State2 = maybe_async_update(Changes, State),
                             State2

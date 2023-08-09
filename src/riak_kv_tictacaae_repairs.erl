@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_tictacaae_repairs: functions for tictac aae prompted repairs
+%% Copyright (c) 2021 Martin Sumner.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -23,6 +23,8 @@
 -module(riak_kv_tictacaae_repairs).
 
 -export([prompt_tictac_exchange/7, log_tictac_result/4]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -define(EXCHANGE_PAUSE_MS, 1000).
 -define(AAE_MAX_RESULTS, 128).
@@ -70,7 +72,7 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
                                     tictacaae_rangeboost,
                                     ?AAE_RANGE_BOOST)
         end,
-    MaxResults = 
+    MaxResults =
         case app_helper:get_env(riak_kv, tictacaae_maxresults) of
             MR when is_integer(MR) ->
                 MR * RangeBoost;
@@ -82,13 +84,13 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
             {transition_pause_ms, ExchangePause},
             {purpose, kv_aae},
             {max_results, MaxResults}],
-    
-    BlueList = 
+
+    BlueList =
         [{riak_kv_vnode:aae_send(LocalVnode), [IndexN]}],
-    PinkList = 
+    PinkList =
         [{riak_kv_vnode:aae_send(RemoteVnode), [IndexN]}],
     PromptRehash = Filter == none,
-    RepairFun = 
+    RepairFun =
         prompt_readrepair([LocalVnode, RemoteVnode],
                             IndexN,
                             MaxResults,
@@ -97,14 +99,14 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
                             os:timestamp()),
     {ok, _AAEPid, AAExid} =
         aae_exchange:start(full,
-                        BlueList, 
-                        PinkList, 
-                        RepairFun, 
+                        BlueList,
+                        PinkList,
+                        RepairFun,
                         ReplyFun,
                         Filter,
                         ExchangeOptions),
-    _ = 
-        lager:debug("Exchange prompted with exchange_id=~s between ~w and ~w",
+    _ =
+        ?LOG_DEBUG("Exchange prompted with exchange_id=~s between ~w and ~w",
                 [AAExid, LocalVnode, RemoteVnode]),
     ok.
 
@@ -138,7 +140,7 @@ log_tictac_result(ExchangeResult, FilterType, LoopCount, Index) ->
                     PositiveState == branch_compare ->
             ok;
         ExchangeState ->
-            lager:info("Tictac AAE exchange for partition=~w " ++
+            ?LOG_INFO("Tictac AAE exchange for partition=~w " ++
                         "pending_state=~w filter_type=~w loop_count=~w " ++
                         "potential_repairs=~w",
                         [Index,
@@ -153,7 +155,7 @@ log_tictac_result(ExchangeResult, FilterType, LoopCount, Index) ->
 %% ===================================================================
 
 expected_aae_state(ExchangeState) ->
-    lists:member(ExchangeState, 
+    lists:member(ExchangeState,
         [root_compare, branch_compare, clock_compare,
             error, timeout, not_supported]).
 
@@ -176,10 +178,10 @@ prompt_readrepair(VnodeList, IndexN, MaxResults,
                         Rehash,
                         app_helper:get_env(riak_kv, log_readrepair, false)).
 
-prompt_readrepair(VnodeList, IndexN, MaxResults, 
+prompt_readrepair(VnodeList, IndexN, MaxResults,
                     LoopCount, StartTime, Rehash, LogRepair) ->
     {ok, C} = riak:local_client(),
-    FetchFun = 
+    FetchFun =
         fun({{B, K}, {_BlueClock, _PinkClock}}) ->
             case riak_kv_util:consistent_object(B) of
                 true ->
@@ -188,21 +190,21 @@ prompt_readrepair(VnodeList, IndexN, MaxResults,
                     riak_client:get(B, K, C)
             end
         end,
-    LogFun = 
+    LogFun =
         fun({{B, K}, {BlueClock, PinkClock}}) ->
-            lager:info(
+            ?LOG_INFO(
                 "Prompted read repair Bucket=~p Key=~p Clocks ~w ~w",
                     [B, K, BlueClock, PinkClock])
         end,
     fun(RepairList) ->
         SW = os:timestamp(),
         RepairCount = length(RepairList),
-        lager:info("Repairing key_count=~w between ~w",
+        ?LOG_INFO("Repairing key_count=~w between ~w",
                     [RepairCount, VnodeList]),
         Pause =
             max(?MIN_REPAIRPAUSE_MS,
                 ?MIN_REPAIRTIME_MS div max(1, RepairCount)),
-        RehashFun = 
+        RehashFun =
             fun({{B, K}, {_BlueClock, _PinkClock}}) ->
                 timer:sleep(Pause),
                 riak_kv_vnode:rehash(VnodeList, B, K)
@@ -221,7 +223,7 @@ prompt_readrepair(VnodeList, IndexN, MaxResults,
                 ok
         end,
         EndTime = os:timestamp(),
-        lager:info("Repaired key_count=~w " ++ 
+        ?LOG_INFO("Repaired key_count=~w " ++
                         "in repair_time=~w ms with pause_time=~w ms " ++
                         "total process_time=~w ms",
                     [RepairCount,
@@ -232,10 +234,10 @@ prompt_readrepair(VnodeList, IndexN, MaxResults,
             LoopCount when LoopCount > 0 ->
                 case analyse_repairs(RepairList, MaxResults) of
                     {false, none} ->
-                        lager:info("Repair cycle type=false at LoopCount=~w",
+                        ?LOG_INFO("Repair cycle type=false at LoopCount=~w",
                                     [LoopCount]);
                     {FilterType, Filter} ->
-                        lager:info("Repair cycle type=~p at LoopCount=~w",
+                        ?LOG_INFO("Repair cycle type=~p at LoopCount=~w",
                                     [FilterType, LoopCount]),
                         [LocalVnode, RemoteVnode] = VnodeList,
                         ReplyFun =
@@ -252,9 +254,9 @@ prompt_readrepair(VnodeList, IndexN, MaxResults,
                             ReplyFun, Filter)
                 end;
             LoopCount ->
-                lager:info("Repair cycle type=complete at LoopCount=~w",
+                ?LOG_INFO("Repair cycle type=complete at LoopCount=~w",
                                 [LoopCount])
-        end              
+        end
     end.
 
 %% @doc
@@ -290,7 +292,7 @@ analyse_repairs(RepairList, MaxRepairs, EnableKeyRange, _) ->
                     [FirstKey|RestKeys] = lists:sort(KL),
                     LastKey = lists:last(RestKeys),
                     KeyRange =
-                        case EnableKeyRange of 
+                        case EnableKeyRange of
                             true -> {FirstKey, LastKey};
                             false -> all
                         end,
@@ -304,7 +306,7 @@ analyse_repairs(RepairList, MaxRepairs, EnableKeyRange, _) ->
                     MTL = lists:sort(lists:foldl(FoldFun, [], RepairList)),
                     case length(MTL) of
                         CandCount when CandCount > Threshold ->
-                            {modtime, 
+                            {modtime,
                                 {filter,
                                     all, all, large, all,
                                     get_modified_range(MTL),
@@ -316,7 +318,7 @@ analyse_repairs(RepairList, MaxRepairs, EnableKeyRange, _) ->
         [] ->
             {false, none}
     end.
-            
+
 
 -spec get_modified_range(list(calendar:datetime()))
                             -> {pos_integer(), pos_integer()}.
@@ -325,7 +327,7 @@ get_modified_range(ModifiedDateTimeList) ->
     HighDate = lists:last(RestDates),
     EpochTime =
         calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}}),
-    LowTS = 
+    LowTS =
         calendar:datetime_to_gregorian_seconds(FirstDate) - EpochTime,
     HighTS =
         calendar:datetime_to_gregorian_seconds(HighDate) - EpochTime,
@@ -342,8 +344,8 @@ get_modified_range(ModifiedDateTimeList) ->
 analyse_repair({{B, K}, {BlueClock, PinkClock}}, ByBucketAcc) ->
     BlueTime = last_modified(BlueClock),
     PinkTime = last_modified(PinkClock),
-    ModTime = 
-        if 
+    ModTime =
+        if
             BlueTime > PinkTime ->
                 BlueTime;
             PinkTime > BlueTime ->

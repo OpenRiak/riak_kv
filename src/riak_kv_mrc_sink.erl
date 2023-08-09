@@ -1,9 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_mrc_sink: A simple process to act as a Pipe sink for
-%% MapReduce queries
-%%
-%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2015 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -96,15 +93,18 @@
 
 -behaviour(gen_fsm).
 
--compile({nowarn_deprecated_function, 
+-compile({nowarn_deprecated_function,
             [{gen_fsm, start_link, 3},
                 {gen_fsm, send_event, 2},
                 {gen_fsm, sync_send_event, 2},
                 {gen_fsm, sync_send_event, 3},
                 {gen_fsm, reply, 2}]}).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-export([receiver/3]).
 -endif.
 
 -include_lib("riak_pipe/include/riak_pipe.hrl").
@@ -300,7 +300,7 @@ handle_info({'DOWN', _, process, Pid, Reason}, _,
     %% don't stop when the builder exits 'normal', because that's
     %% probably just the pipe shutting down normally - wait for the
     %% owner to ask for the last outputs
-    _ = lager:warning("Pipe builder down. Reason: ~p", [Reason]),
+    ?LOG_WARNING("Pipe builder down. Reason: ~p", [Reason]),
     {stop, normal, State};
 handle_info(_, StateName, State) ->
     {next_state, StateName, State}.
@@ -407,41 +407,57 @@ buffer_size_test_helper(Name, {FillName, FillFun}, Size, Options, AppEnv) ->
      fun() ->
             application:load(riak_kv),
             [ application:set_env(riak_kv, K, V) || {K, V} <- AppEnv ],
-            
-            %% start up our sink
-            {ok, Sink} = ?MODULE:start_link(self(), Options),
+
+            %% Start up our sink
             Ref = make_ref(),
-            Pipe = #pipe{builder=self(),
+            S = spawn(?MODULE, receiver, [Size, Ref, self()]),
+            {ok, Sink} = ?MODULE:start_link(S, Options),
+
+            Pipe = #pipe{builder=S,
                          sink=#fitting{pid=Sink, ref=Ref}},
             ?MODULE:use_pipe(Sink, Pipe),
 
-            %% fill its buffer
+            %% Fill the buffer
             [ ok = FillFun(
                      Sink,
                      #pipe_result{from=tester, ref=Ref, result=I})
               || I <- lists:seq(1, Size) ],
-            
-            %% ensure extra result will block
-            {'EXIT',{timeout,{gen_fsm,sync_send_event,_}}} =
-                (catch gen_fsm:sync_send_event(
-                         Sink,
-                         #pipe_result{from=tester, ref=Ref, result=Size+1},
-                         1000)),
-            
-            %% now drain what's there
-            ?MODULE:next(Sink),
 
-            %% make sure that all results were received, including
-            %% blocked one
+            %% Trigger call to ?MODULE:next/1 after sleep, with the sleep
+            %% required to show a delay in the response to the following
+            %% sync_send_event
+            Delay = 1000,
+            S ! {Sink, Delay},
+
+            %% Ensure extra result will block, as timer indicates it was not
+            %% released before sleep on receiver Pid has completed
+            {T, ok} =
+                timer:tc(gen_fsm, sync_send_event,
+                            [Sink, #pipe_result{from=tester,
+                                    ref=Ref,
+                                    result=Size+1}]),
+            %% Delay was at least half the sleep - should be very close to the
+            %% sleep, but half sleep to avoid intermittent failures due to very
+            %% short pauses
+            true = T > (Delay div 2) * 1000,
+
+            %% Get confirmation results recieved
             receive
-                #kv_mrc_sink{ref=Ref, results=[{tester,R}]} ->
-                    ?assertEqual(Size+1, length(R))
-            end,
-            %% make sure that the delayed ack was received
-            receive
-                {GenFsmRef, ok} when is_reference(GenFsmRef) ->
-                    ok
+                ok -> ok
             end
+
      end}.
+
+receiver(Size, Ref, ReplyPid) ->
+    receive
+        #kv_mrc_sink{ref=Ref, results=[{tester,R}]} ->
+            ?assertEqual(Size+1, length(R)),
+            ReplyPid ! ok;
+        {Sink, Delay} ->
+            timer:sleep(Delay),
+            ?MODULE:next(Sink),
+            receiver(Size, Ref, ReplyPid)
+    end.
+
 
 -endif.

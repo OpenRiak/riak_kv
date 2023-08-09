@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2011 Basho Technologies, Inc.
+%% Copyright (c) 2011-2015 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -142,7 +142,6 @@
 -include_lib("riak_pipe/include/riak_pipe_log.hrl").
 -include("riak_kv_mrc_sink.hrl").
 -include("riak_kv_index.hrl").
--include("stacktrace.hrl").
 
 -export_type([map_query_fun/0,
               reduce_query_fun/0,
@@ -446,7 +445,7 @@ map2pipe(FunSpec, Arg, Keep, I, QueryT) ->
                             chashfun=follow}];
         true ->
              []
-     end.              
+     end.
 
 %% @doc Examine query and application options to determine if
 %% prereduce is appropriate.
@@ -686,8 +685,8 @@ send_inputs(Pipe, {modfun, Mod, Fun, Arg} = Modfun, Timeout) ->
         Other ->
             Other
     catch
-        ?_exception_(X, Y, StackToken) ->
-            {Modfun, X, Y, ?_get_stacktrace_(StackToken)}
+        Class:Reason:Stacktrace ->
+            {Modfun, Class, Reason, Stacktrace}
     end.
 
 %% decide whether yokozuna or riak_search should be used for

@@ -1,4 +1,7 @@
 %% ----------------------------------------------------------------------------
+%%
+%% Copyright (c) 2017-2021 Martin Sumner.
+%%
 %% This file is provided to you under the Apache License, Version 2.0 (the
 %% "License"); you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -43,6 +46,8 @@
 
 -include("riak_kv_index.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_leveled_backend/0]).
@@ -71,7 +76,7 @@
 -define(PAUSE_TIME, 1).
     % The time in ms to pause if the leveled_bookie asks for backoff.
     % Pausing here blocks the vnode (whereas the pause response was defined
-    % originally so that one could signal to slowdown PUTs, whilst still 
+    % originally so that one could signal to slowdown PUTs, whilst still
     % accepting HEAD/GET/FOLD requests).  There is no neat way of doing this
     % so we will back everything off.
 
@@ -136,7 +141,7 @@ start(Partition, Config) ->
         {ok, DataDir} ->
             DBid = generate_partition_identity(Partition),
             FN = filename:join(DataDir, "recalc.lock"),
-            {ok, ReloadStrategy} = 
+            {ok, ReloadStrategy} =
                 case {LCR, filelib:is_file(FN)} of
                     {true, true} ->
                         {ok, recalc};
@@ -147,7 +152,7 @@ start(Partition, Config) ->
                     {false, true} ->
                         {ok, TS} = file:read_file(FN),
                         LockTS = calendar:now_to_datetime(binary_to_term(TS)),
-                        lager:error("Cannot start in retain mode " ++
+                        ?LOG_ERROR("Cannot start in retain mode " ++
                                         "due to recalc being set on ~w " ++
                                         "see FN ~s",
                                         [LockTS, FN]),
@@ -188,7 +193,7 @@ start(Partition, Config) ->
                         valid_hours = ValidHours,
                         backend_pause_ms = BackendPause}};
         {error, Reason} ->
-            lager:error("Failed to start leveled backend: ~p\n",
+            ?LOG_ERROR("Failed to start leveled backend: ~p\n",
                             [Reason]),
             {error, Reason}
     end.
@@ -270,10 +275,10 @@ delete(Bucket, Key, IndexSpecs, #state{bookie=Bookie}=State) ->
         ok ->
             {ok, State};
         pause ->
-            lager:warning("Backend ~w paused for ~w ms in response to delete",
+            ?LOG_WARNING("Backend ~w paused for ~w ms in response to delete",
                             [State#state.partition,
                                 State#state.backend_pause_ms]),
-            timer:sleep(State#state.backend_pause_ms),                 
+            timer:sleep(State#state.backend_pause_ms),
             {ok, State}
     end.
 
@@ -283,10 +288,10 @@ delete(Bucket, Key, IndexSpecs, #state{bookie=Bookie}=State) ->
                    [],
                    state()) -> {ok, any()} | {async, fun()}.
 fold_buckets(FoldBucketsFun, Acc, Opts, #state{bookie=Bookie}) ->
-    {async, Folder} = 
-        leveled_bookie:book_bucketlist(Bookie, 
-                                        ?RIAK_TAG, 
-                                        {FoldBucketsFun, Acc}, 
+    {async, Folder} =
+        leveled_bookie:book_bucketlist(Bookie,
+                                        ?RIAK_TAG,
+                                        {FoldBucketsFun, Acc},
                                         all),
     case lists:member(async_fold, Opts) of
         true ->
@@ -306,11 +311,11 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
     Bucket = lists:keyfind(bucket, 1, Opts),
     Index = lists:keyfind(index, 1, Opts),
 
-    %% All fold_keys queries are currently snapped prior to the fold, the 
-    %% delta with setting this option is just whether the response is 
+    %% All fold_keys queries are currently snapped prior to the fold, the
+    %% delta with setting this option is just whether the response is
     %% {queue, Folder} or {async, Folder} - allowing for the riak vnode to
     %% distributed to the constrained core node_worker_pool rather than being
-    %% directly run in the vnode_worker_pool (where it will almost certainly 
+    %% directly run in the vnode_worker_pool (where it will almost certainly
     %% be executed immediately).
     SnapPreFold = lists:member(snap_prefold, Opts),
 
@@ -327,14 +332,14 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
                             start_inclusive=StartInc,
                             term_regex=TermRegex} = riak_index:upgrade_query(Q),
 
-                StartKey = 
+                StartKey =
                     case StartInc of
                         true -> StartKey0;
                         false -> leveled_codec:next_key(StartKey0)
                     end,
                     % Note that this is used as the StartKey definition only in
                     % the index_query - where it is understood that the StartKey
-                    % If this is a $key index query, the start key is assumed 
+                    % If this is a $key index query, the start key is assumed
                     % to mean the start of the range, and so we want to use
                     % this start key inclusively (and so don't advance it to
                     % the next_key.
@@ -358,21 +363,21 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
                         leveled_bookie:book_indexfold(Bookie,
                                                         {QBucket, StartKey},
                                                         {FoldKeysFun, Acc},
-                                                        {Field, 
-                                                            StartTerm, 
+                                                        {Field,
+                                                            StartTerm,
                                                             EndTerm},
-                                                        {ReturnTerms, 
+                                                        {ReturnTerms,
                                                             TermRegex})
                 end;
             Bucket /= false ->
                 % Equivalent to $bucket query, but without the StartKey
                 {bucket, B} = Bucket,
-                leveled_bookie:book_keylist(Bookie, 
-                                            ?RIAK_TAG, B, 
+                leveled_bookie:book_keylist(Bookie,
+                                            ?RIAK_TAG, B,
                                             {FoldKeysFun, Acc});
             true ->
                 % All key query - don't constrain by bucket
-                leveled_bookie:book_keylist(Bookie, 
+                leveled_bookie:book_keylist(Bookie,
                                             ?RIAK_TAG,
                                             {FoldKeysFun, Acc})
         end,
@@ -395,13 +400,13 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
 fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
 
     {async, ObjectFolder} =
-        case {lists:keyfind(bucket, 1, Opts), 
+        case {lists:keyfind(bucket, 1, Opts),
                 lists:keyfind(index, 1, Opts)} of
             {_, {index,
                     FilterBucket,
                     Q=?KV_INDEX_Q{start_key=StartKey0,
                                     start_inclusive=StartInc}}} ->
-                StartKey = 
+                StartKey =
                     case StartInc of
                         true -> StartKey0;
                         false -> leveled_codec:next_key(StartKey0)
@@ -409,32 +414,32 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 % This is an undocumented thing - required by CS
                 % Copied as far as possible from eleveldb backend - as actual
                 % requirements not known
-                StndObjFold = 
+                StndObjFold =
                     case lists:keyfind(standard_object_fold, 1, Opts) of
                         {standard_object_fold, Bool} ->
                             Bool;
                         false ->
                             false
                     end,
-                
-                SpecialFoldFun = 
+
+                SpecialFoldFun =
                     fun(ObjB, ObjK, Obj, InnerAcc) ->
-                        case riak_index:object_key_in_range({ObjB, ObjK}, 
+                        case riak_index:object_key_in_range({ObjB, ObjK},
                                                             FilterBucket, Q) of
                             {true, _BK} ->
-                                case StndObjFold of   
+                                case StndObjFold of
                                     true ->
                                         FoldObjectsFun(ObjB,
                                                         ObjK,
-                                                        Obj, 
+                                                        Obj,
                                                         InnerAcc);
                                     false ->
-                                        % Assumption here is that if this is 
+                                        % Assumption here is that if this is
                                         % not flagged as a standard object fold
                                         % it is using a fold_keys_fun -
                                         % so the object is disguised as a key
                                         FoldObjectsFun(ObjB,
-                                                        {o, ObjK, Obj}, 
+                                                        {o, ObjK, Obj},
                                                         InnerAcc)
                                 end;
                             {skip, _BK} ->
@@ -460,29 +465,29 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 % and EndInclusive should be handled by the passed in fold
                 % function (by the riak_index range checker), so null is used
                 % for EndKey
-                leveled_bookie:book_objectfold(Bookie, 
+                leveled_bookie:book_objectfold(Bookie,
                                                 ?RIAK_TAG,
-                                                FilterBucket, 
+                                                FilterBucket,
                                                 {StartKey, EndKey},
-                                                {SpecialFoldFun, Acc}, 
+                                                {SpecialFoldFun, Acc},
                                                 false);
             {false, false} ->
                 % It is expected (but not proven) that sqn_order should be
                 % more efficient than key_order when folding over all objects
-                leveled_bookie:book_objectfold(Bookie, 
-                                                ?RIAK_TAG, 
+                leveled_bookie:book_objectfold(Bookie,
+                                                ?RIAK_TAG,
                                                 {FoldObjectsFun, Acc},
-                                                false, 
+                                                false,
                                                 sqn_order);
-            
+
             {{bucket, B}, false} ->
                 % The order of this will be key_order and not sqn_order as
                 % defined for fold_objects/4 when not constrained by bucket
-                leveled_bookie:book_objectfold(Bookie, 
+                leveled_bookie:book_objectfold(Bookie,
                                                 ?RIAK_TAG,
-                                                B, 
-                                                all, 
-                                                {FoldObjectsFun, Acc}, 
+                                                B,
+                                                all,
+                                                {FoldObjectsFun, Acc},
                                                 false)
         end,
     case lists:member(async_fold, Opts) of
@@ -513,47 +518,47 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 CP
         end,
     SnapPreFold = lists:member(snap_prefold, Opts),
-    SegmentList = 
-        case proplists:get_value(segment_accelerate, Opts) of 
+    SegmentList =
+        case proplists:get_value(segment_accelerate, Opts) of
             undefined ->
                 false;
             SL ->
-                SL 
+                SL
         end,
-    {async, HeadFolder} = 
-        case lists:keyfind(index, 1, Opts) of 
+    {async, HeadFolder} =
+        case lists:keyfind(index, 1, Opts) of
             {index, Bucket, IdxQuery} ->
                 % This is currently only $key
                 % For MapFold may be extended to allow for the range to be an
-                % index 
+                % index
                 <<"$key">> = IdxQuery#riak_kv_index_v3.filter_field,
-                KeyRange = 
+                KeyRange =
                     {IdxQuery#riak_kv_index_v3.start_term,
                         IdxQuery#riak_kv_index_v3.end_term},
-                leveled_bookie:book_headfold(Bookie, 
-                                                ?RIAK_TAG, 
+                leveled_bookie:book_headfold(Bookie,
+                                                ?RIAK_TAG,
                                                 {range, Bucket, KeyRange},
-                                                {FoldHeadsFun, Acc}, 
-                                                CheckPresence, 
-                                                SnapPreFold, 
+                                                {FoldHeadsFun, Acc},
+                                                CheckPresence,
+                                                SnapPreFold,
                                                 SegmentList);
             false ->
                 case proplists:get_value(bucket, Opts) of
                     undefined ->
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
-                                                        {FoldHeadsFun, Acc}, 
+                        leveled_bookie:book_headfold(Bookie,
+                                                        ?RIAK_TAG,
+                                                        {FoldHeadsFun, Acc},
                                                         CheckPresence,
                                                         SnapPreFold,
                                                         SegmentList);
                     B ->
                         % Equivalent to a $key query, but without the key range
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
+                        leveled_bookie:book_headfold(Bookie,
+                                                        ?RIAK_TAG,
                                                         {range, B, all},
-                                                        {FoldHeadsFun, Acc}, 
-                                                        CheckPresence, 
-                                                        SnapPreFold, 
+                                                        {FoldHeadsFun, Acc},
+                                                        CheckPresence,
+                                                        SnapPreFold,
                                                         SegmentList)
                 end
         end,
@@ -586,7 +591,7 @@ hot_backup(#state{bookie=Bookie, partition=Partition, db_path=DBP}, BackupRoot) 
     {ok, BackupDir} = get_data_dir(BackupRoot, integer_to_list(Partition)),
     case BackupDir == DBP of
         true ->
-            lager:warning("Attempt to backup to own path ~s", [BackupRoot]),
+            ?LOG_WARNING("Attempt to backup to own path ~s", [BackupRoot]),
             {error, invalid_path};
         false ->
             % Don't check anything else about the path, as an invalid path
@@ -626,7 +631,7 @@ callback(Ref, compact_journal, State) ->
              {ok, State}
     end;
 callback(Ref, UnexpectedCallback, State) ->
-    lager:info("Ignoring unexpected callback ~w with ref ~w " ++
+    ?LOG_INFO("Ignoring unexpected callback ~w with ref ~w " ++
                 "may be expected if multi-backend",
                 [UnexpectedCallback, Ref]),
     {ok, State}.
@@ -636,7 +641,7 @@ callback(Ref, UnexpectedCallback, State) ->
 %% ===================================================================
 
 %% @private
-%% Complete a PUT, with the sync option true/false depending on whether 
+%% Complete a PUT, with the sync option true/false depending on whether
 %% flush_put or put has been called
 -spec do_put(riak_object:bucket(),
                     riak_object:key(),
@@ -654,7 +659,7 @@ do_put(Bucket, Key, IndexSpecs, Val, Sync, #state{bookie=Bookie}=State) ->
         ok ->
             {ok, State};
         pause ->
-            lager:warning("Backend ~w paused for ~w ms in response to put",
+            ?LOG_WARNING("Backend ~w paused for ~w ms in response to put",
                             [State#state.partition,
                                 State#state.backend_pause_ms]),
             timer:sleep(State#state.backend_pause_ms),
@@ -669,7 +674,7 @@ get_data_dir(DataRoot, Partition) ->
         ok ->
             {ok, PartitionDir};
         {error, Reason} ->
-            lager:error("Failed to create leveled dir ~s: ~p",
+            ?LOG_ERROR("Failed to create leveled dir ~s: ~p",
                             [PartitionDir, Reason]),
             {error, Reason}
     end.
@@ -681,7 +686,7 @@ schedule_journalcompaction(Ref, PartitionID, PerDay, ValidHours) when is_referen
     Interval = leveled_iclerk:schedule_compaction(ValidHours,
                                                     PerDay,
                                                     os:timestamp()),
-    lager:info("Schedule compaction for interval ~w on partition ~w",
+    ?LOG_INFO("Schedule compaction for interval ~w on partition ~w",
                     [Interval, PartitionID]),
     riak_kv_backend:callback_after(Interval * 1000, % callback interval in ms
                                     Ref,

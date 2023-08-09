@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_eraser: Process for queueing and applying delete requests
+%% Copyright (c) 2019-2022 Martin Sumner.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -55,6 +55,8 @@
 -type job_id() :: pos_integer().
 
 -export_type([delete_reference/0, job_id/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 %%%============================================================================
 %%% API

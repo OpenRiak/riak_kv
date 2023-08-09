@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_replrtq_snk: coordination of full-sync replication
+%% Copyright (c) 2019-2022 Martin Sumner.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -47,12 +47,14 @@
             add_snkqueue/4,
             current_peers/1]).
 
--export([repl_fetcher/1, 
+-export([repl_fetcher/1,
             tokenise_peers/2,
             get_worker_counts/0,
             set_worker_counts/2,
             remote_client_fun/3,
             starting_delay/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -define(LOG_TIMER_SECONDS, 60).
 -define(ZERO_STATS,
@@ -208,7 +210,7 @@ add_snkqueue(QueueName, Peers, WorkerCount) ->
 %% number of workers overall
 -spec add_snkqueue(queue_name(), list(peer_info()),
                     pos_integer(), pos_integer()) -> ok.
-add_snkqueue(QueueName, Peers, WorkerCount, PerPeerLimit) 
+add_snkqueue(QueueName, Peers, WorkerCount, PerPeerLimit)
                                             when PerPeerLimit =< WorkerCount ->
     gen_server:call(?MODULE,
                     {add, QueueName, Peers, WorkerCount, PerPeerLimit}).
@@ -216,7 +218,7 @@ add_snkqueue(QueueName, Peers, WorkerCount, PerPeerLimit)
 
 %% @doc
 %% Return the current list of peers being used by this snk host, and the
-%% settings currently being used for this host and he workers per peer. 
+%% settings currently being used for this host and he workers per peer.
 %% Returns undefined if there are currently no peers defined.
 -spec current_peers(queue_name()) -> list(peer_info())|undefined.
 current_peers(QueueName) ->
@@ -433,7 +435,7 @@ handle_info({prompt_requeue, WorkItem}, State) ->
 
 terminate(_Reason, State) ->
     WorkItems = lists:map(fun(SW) -> element(3, SW) end, State#state.work),
-    CloseFun = 
+    CloseFun =
         fun(SinkWork) ->
             lists:foreach(
                 fun({{_QN, _Iter, _Peer}, _LocalC, RemoteFun, _RCF}) ->
@@ -556,7 +558,7 @@ map_peer_to_wi_fun({QueueName, Iteration, PeerInfo}) ->
 %% @doc
 %% Return a function which when called will enclose a remote_fun for sending
 %% requests with a reusable client (if required)
--spec remote_client_fun(http|pb, string(), pos_integer()) -> 
+-spec remote_client_fun(http|pb, string(), pos_integer()) ->
     fun(() -> remote_fun()).
 remote_client_fun(http, Host, Port) ->
     InitClientFun = client_start(http, Host, Port, []),
@@ -580,9 +582,9 @@ remote_client_fun(pb, Host, Port) ->
         app_helper:get_env(riak_kv, repl_cert_filename),
     KeyFilename =
         app_helper:get_env(riak_kv, repl_key_filename),
-    SecuritySitename = 
+    SecuritySitename =
         app_helper:get_env(riak_kv, repl_username),
-    Opts = 
+    Opts =
         case CaCertificateFilename of
             undefined ->
                 [{silence_terminate_crash, true}];
@@ -619,7 +621,7 @@ remote_client_fun(pb, Host, Port) ->
         end
     end.
 
--spec client_start(pb|http, string(), pos_integer(), list()) 
+-spec client_start(pb|http, string(), pos_integer(), list())
                     -> fun(() -> rhc:rhc()|pid()|no_pid).
 client_start(pb, Host, Port, Opts) ->
     fun() ->
@@ -627,7 +629,7 @@ client_start(pb, Host, Port, Opts) ->
             {ok, PBpid} ->
                 PBpid;
             _ ->
-                lager:info("No client initialised -" ++ " not reachable ~s ~w",
+                ?LOG_INFO("No client initialised -" ++ " not reachable ~s ~w",
                             [Host, Port]),
                 no_pid
         end
@@ -723,13 +725,13 @@ repl_fetcher(WorkItem) ->
                 ok = riak_kv_stat:update(ngrrepl_error),
                 done_work(UpdWorkItem, false, {error, error, no_client});
             {error, {conn_failed, {error, econnrefused}}} ->
-                lager:info("Snk worker connection refused to peer ~w", [Peer]),
+                ?LOG_INFO("Snk worker connection refused to peer ~w", [Peer]),
                 RemoteFun(close),
                 UpdWorkItem = setelement(3, WorkItem, RenewClientFun()),
                 ok = riak_kv_stat:update(ngrrepl_error),
                 done_work(UpdWorkItem, false, {error, error, econnrefused});
             {error, Bin} when is_binary(Bin) ->
-                lager:warning("Snk worker for peer ~w " ++
+                ?LOG_WARNING("Snk worker for peer ~w " ++
                                     "failed due to remote exception ~p",
                                 [Peer, binary_to_list(Bin)]),
                 RemoteFun(close),
@@ -739,7 +741,7 @@ repl_fetcher(WorkItem) ->
         end
     catch
         Type:Exception ->
-            lager:warning("Snk worker failed at Peer ~w due to ~w error ~w",
+            ?LOG_WARNING("Snk worker failed at Peer ~w due to ~w error ~w",
                             [Peer, Type, Exception]),
             RemoteFun(close),
             UpdWorkItem0 = setelement(3, WorkItem, RenewClientFun()),
@@ -787,7 +789,7 @@ add_failure({S, {failure, Failure}, FT, PT, RT, MT}) ->
 
 -spec add_repltime(queue_stats(),
                     {integer(), integer(), integer()}) -> queue_stats().
-add_repltime({S, 
+add_repltime({S,
                 F,
                 {replfetch_time, FT}, {replpush_time, PT}, {replmod_time, RT},
                 MT},
@@ -854,7 +856,7 @@ log_mapfun({QueueName, Iteration, SinkWork}) ->
         {replmod_time, RT},
         {modified_time, MTS, MTM, MTH, MTD, MTL}}
         = SinkWork#sink_work.queue_stats,
-    lager:info("Queue=~w success_count=~w error_count=~w" ++
+    ?LOG_INFO("Queue=~w success_count=~w error_count=~w" ++
                 " mean_fetchtime_ms=~s" ++
                 " mean_pushtime_ms=~s" ++
                 " mean_repltime_ms=~s" ++
@@ -868,7 +870,7 @@ log_mapfun({QueueName, Iteration, SinkWork}) ->
         end,
     PeerDelays =
         lists:foldl(FoldPeerInfoFun, "", SinkWork#sink_work.peer_list),
-    lager:info("Queue=~w has peer delays of~s", [QueueName, PeerDelays]),
+    ?LOG_INFO("Queue=~w has peer delays of~s", [QueueName, PeerDelays]),
     {QueueName, Iteration, SinkWork#sink_work{queue_stats = ?ZERO_STATS}}.
 
 -spec log_queue_addition(
@@ -876,7 +878,7 @@ log_mapfun({QueueName, Iteration, SinkWork}) ->
 log_queue_addition(_QN, [], _WC, _PPL) ->
     ok;
 log_queue_addition(QueueN, [Peer|OtherPeers], WorkerCount, PerPeerLimit) ->
-    lager:info("Queue=~w added peer ~p with worker_count=~w per_peer_limit=~w",
+    ?LOG_INFO("Queue=~w added peer ~p with worker_count=~w per_peer_limit=~w",
         [QueueN, Peer, WorkerCount, PerPeerLimit]),
     log_queue_addition(QueueN, OtherPeers, WorkerCount, PerPeerLimit).
 

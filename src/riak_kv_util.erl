@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_util: functions that are useful throughout Riak
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -52,6 +50,8 @@
         is_modfun_allowed/2,
         shuffle_list/1]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -include_lib("riak_kv_vnode.hrl").
 
@@ -224,7 +224,7 @@ get_write_once(Bucket) ->
 -spec report_hashtree_tokens() -> {non_neg_integer(), non_neg_integer()}.
 report_hashtree_tokens() ->
     OnlinePrimaries = riak_core_apl:active_owners(riak_kv),
-    ReportTokenFun = 
+    ReportTokenFun =
         fun({{P, N}, _T}, {Min, Max}) ->
             HT =
                 riak_core_vnode_master:sync_command({P, N},
@@ -240,7 +240,7 @@ report_hashtree_tokens() ->
 -spec reset_hashtree_tokens(non_neg_integer(), non_neg_integer()) -> ok.
 reset_hashtree_tokens(MinToken, MaxToken) when MaxToken >= MinToken ->
     OnlinePrimaries = riak_core_apl:active_owners(riak_kv),
-    ResetTokenFun = 
+    ResetTokenFun =
         fun({{P, N}, _T}) ->
             ok =
                 riak_core_vnode_master:sync_command({P, N},
@@ -327,7 +327,7 @@ fix_incorrect_index_entries(Opts) when is_list(Opts) ->
     MaxN = proplists:get_value(concurrency, Opts, 2),
     ForUpgrade = not proplists:get_value(downgrade, Opts, false),
     BatchSize = proplists:get_value(batch_size, Opts, 100),
-    lager:info("index reformat: starting with concurrency: ~p, batch size: ~p, for upgrade: ~p",
+    ?LOG_INFO("index reformat: starting with concurrency: ~p, batch size: ~p, for upgrade: ~p",
                [MaxN, BatchSize, ForUpgrade]),
     IdxList = [Idx || {riak_kv_vnode, Idx, _} <- riak_core_vnode_manager:all_vnodes()],
     FixOpts = [{batch_size, BatchSize}, {downgrade, not ForUpgrade}],
@@ -339,10 +339,10 @@ fix_incorrect_index_entries(Opts) when is_list(Opts) ->
     ErrorTotal = lists:sum(ErrorCounts),
     case ErrorTotal of
         0 ->
-            lager:info("index reformat: complete on all partitions. Fixed: ~p, Ignored: ~p",
+            ?LOG_INFO("index reformat: complete on all partitions. Fixed: ~p, Ignored: ~p",
                        [SuccessTotal, IgnoredTotal]);
         _ ->
-            lager:info("index reformat: encountered ~p errors reformatting keys. Please re-run",
+            ?LOG_INFO("index reformat: encountered ~p errors reformatting keys. Please re-run",
                        [ErrorTotal])
     end,
     {SuccessTotal, IgnoredTotal, ErrorTotal}.
@@ -353,7 +353,7 @@ fix_incorrect_index_entries(Idx, FixOpts) ->
 fix_incorrect_index_entries(Idx, FixFun, Acc0, FixOpts) ->
     Ref = make_ref(),
     ForUpgrade = not proplists:get_value(downgrade, FixOpts, false),
-    lager:info("index reformat: querying partition ~p for index entries to reformat", [Idx]),
+    ?LOG_INFO("index reformat: querying partition ~p for index entries to reformat", [Idx]),
     riak_core_vnode_master:command({Idx, node()},
                                    {get_index_entries, FixOpts},
                                    {raw, Ref, self()},
@@ -385,20 +385,20 @@ fix_incorrect_index_entry(Idx, ForUpgrade, BadKeys, {Success, Ignore, Error}) ->
 process_incorrect_index_entries(Ref, Idx, ForUpgrade, FixFun, {S, I, E} = Acc) ->
     receive
         {Ref, {error, Reason}} ->
-            lager:error("index reformat: error on partition ~p: ~p", [Idx, Reason]),
+            ?LOG_ERROR("index reformat: error on partition ~p: ~p", [Idx, Reason]),
             {S, I, E+1};
         {Ref, ignore} ->
-            lager:info("index reformat: ignoring partition ~p", [Idx]),
+            ?LOG_INFO("index reformat: ignoring partition ~p", [Idx]),
             ignore;
         {Ref, done} ->
-            lager:info("index reformat: finished with partition ~p, Fixed=~p, Ignored=~p, Errors=~p", [Idx, S, I, E]),
+            ?LOG_INFO("index reformat: finished with partition ~p, Fixed=~p, Ignored=~p, Errors=~p", [Idx, S, I, E]),
             Acc;
         {Ref, {Pid, BatchRef, Keys}} ->
             {NS, NI, NE} = NextAcc = FixFun(Idx, ForUpgrade, Keys, Acc),
             ReportN = 10000,
             case ((NS+NI+NE) div ReportN) /= ((S+I+E) div ReportN) of
                true ->
-                    lager:info("index reformat: reformatting partition ~p, Fixed=~p, Ignore=~p, Error=~p", [Idx, NS, NI, NE]);
+                    ?LOG_INFO("index reformat: reformatting partition ~p, Fixed=~p, Ignore=~p, Error=~p", [Idx, NS, NI, NE]);
                 false ->
                     ok
             end,
@@ -406,7 +406,7 @@ process_incorrect_index_entries(Ref, Idx, ForUpgrade, FixFun, {S, I, E} = Acc) -
             process_incorrect_index_entries(Ref, Idx, ForUpgrade, FixFun, NextAcc)
     after
         120000 ->
-            lager:error("index reformat: timed out waiting for response from partition ~p",
+            ?LOG_ERROR("index reformat: timed out waiting for response from partition ~p",
                         [Idx]),
             {S, I, E+1}
     end.
@@ -418,7 +418,7 @@ mark_indexes_reformatted(Idx, 0, ForUpgrade) ->
     riak_core_vnode_master:sync_command({Idx, node()},
                                         {fix_incorrect_index_entry, {done, ForUpgrade}},
                                         riak_kv_vnode_master),
-    lager:info("index reformat: marked partition ~p as fixed", [Idx]),
+    ?LOG_INFO("index reformat: marked partition ~p as fixed", [Idx]),
     ok;
 mark_indexes_reformatted(_Idx, _ErrorCount, _ForUpgrade) ->
     undefined.
