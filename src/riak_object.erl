@@ -1289,13 +1289,11 @@ from_binary(_B, _K, Obj = #r_object{}) ->
 %% Extract only sumarry infromation from the binary - the vector, the object 
 %% size and the sibling count
 summary_from_binary(<<131, _Rest/binary>>=ObjBin) ->
-    case binary_to_term(ObjBin) of 
+    case binary_to_term(ObjBin) of
         {proxy_object, HeadBin, ObjSize, _Fetcher} ->
             summary_from_binary(HeadBin, ObjSize);
-        T ->
-            {vclock(T), byte_size(ObjBin), value_count(T),
-                undefined, <<>>}
-            % Legacy object version will end up with dummy details
+        Objv0 ->
+            summary_from_binary(Objv0)
     end;
 summary_from_binary(ObjBin) when is_binary(ObjBin) ->
     summary_from_binary(ObjBin, byte_size(ObjBin));
