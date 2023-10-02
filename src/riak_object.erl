@@ -1286,7 +1286,7 @@ from_binary(_B, _K, Obj = #r_object{}) ->
         {vclock:vclock(), integer(), integer(),
             list(erlang:timestamp())|undefined, binary()}.
 %% @doc
-%% Extract only sumarry infromation from the binary - the vector, the object 
+%% Extract only summary information from the binary - the vector, the object 
 %% size and the sibling count
 summary_from_binary(<<?MAGIC, _Rest/binary>>=ObjBin) ->
     summary_from_binary(ObjBin, byte_size(ObjBin));
