@@ -408,7 +408,8 @@ handle_cast({reply_complete, ReqID, Result}, State) ->
                 riak_kv_stat:update({ttaaefs, sync_fail, Duration}),
                 {?CRASH_TIMEOUT, State#state{previous_success = false}};
             {SyncState, 0} when SyncState == root_compare;
-                                SyncState == branch_compare ->
+                                SyncState == branch_compare;
+                                SyncState == tree_compare ->
                 riak_kv_stat:update({ttaaefs, sync_sync, Duration}),
                 lager:info("exchange=~w complete result=~w in duration=~w s" ++
                                     " sync_state=true",
