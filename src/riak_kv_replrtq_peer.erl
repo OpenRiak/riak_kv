@@ -218,7 +218,7 @@ do_discovery(QueueName, PeerInfo, Type) ->
         {DiscoveredPeers, _} when is_list(CurrentPeers) ->
             lager:info(
                 "Type=~w discovery old_peers=~w new_peers=~w",
-                [Type, length(CurrentPeers), length(OldPeers)]),
+                [Type, length(CurrentPeers), length(DiscoveredPeers)]),
                 riak_kv_replrtq_snk:add_snkqueue(
                     QueueName, DiscoveredPeers, SnkWorkerCount, PerPeerLimit),
             true;
