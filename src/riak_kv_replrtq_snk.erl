@@ -769,7 +769,7 @@ repl_fetcher(WorkItem) ->
                 [Peer, Type, Exception]),
             case app_helper:get_env(riak_kv, log_snk_stacktrace, false) of
                 true ->
-                    ?lOG_WARNING("Snk worker failed due to ~p", [Stk]);
+                    ?LOG_WARNING("Snk worker failed due to ~p", [Stk]);
                 _ ->
                     ok
             end,
