@@ -147,7 +147,7 @@ handle_info({scheduled_discovery, QueueName}, State) ->
     _ = schedule_discovery(QueueName, self(), Delay),
     {noreply, State};
 handle_info({Ref, {error, HTTPClientError}}, State) when is_reference(Ref) ->
-    lager:info(
+    ?LOG_INFO(
         "Client error caught - error ~p returned after timeout",
         [HTTPClientError]),
     {noreply, State}.
@@ -201,7 +201,7 @@ do_discovery(QueueName, PeerInfo, Type) ->
                         end,
                         PeerList));
             {_, SnkResponse} ->
-                lager:info(
+                ?LOG_INFO(
                     "Peer Discovery disabled as snk status ~w", [SnkResponse]),
                 SnkResponse
         end,
