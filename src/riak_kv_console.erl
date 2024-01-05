@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -484,8 +485,10 @@ bucket_type_status([TypeStr]) ->
     Type = unicode:characters_to_binary(TypeStr, utf8, utf8),
     Return = bucket_type_print_status(Type, riak_core_bucket_type:status(Type)),
     bucket_type_print_props(bucket_type_raw_props(Type)),
-    Return.
-
+    case Return of
+        {error, _} -> {rpc_error, 1};
+        _ -> Return
+    end.
 
 bucket_type_raw_props(<<"default">>) ->
     riak_core_bucket_props:defaults();
