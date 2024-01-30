@@ -64,6 +64,7 @@
                         snap_prefold,
                         flush_put,
                         hot_backup,
+                        size,
                         leveled]).
 -define(API_VERSION, 1).
 -define(BUCKET_SDG, <<"MD">>).
@@ -613,6 +614,8 @@ status(_State) ->
     {fun(() -> {non_neg_integer(), objects}), dynamic}.
 data_size(#state{bookie=Bookie}) ->
     TictacTreeSize = 1024 * 1024,
+    SegmentCount = 64,
+    TreePortion = (32 * 1024) div SegmentCount,
     %% There are 1024 * 1024 hashes in the tree, but only the trailing 15 bits
     %% of each hash are of interest in the leveled backend. This means there
     %% are 32 * 1024 unique segments in the backend - so taking 32 unique
@@ -621,17 +624,17 @@ data_size(#state{bookie=Bookie}) ->
     %% key has been returned using the full segment - but we have no filter
     %% here.  So 1 segment is 1:(128 * 256) not 1:(1024 * 1024) 
     %% See leveled perf_SUITE tests
-    RandomSegment = rand:uniform(TictacTreeSize - 32) - 1,
+    RandomSegment = rand:uniform(TictacTreeSize - SegmentCount) - 1,
     F =
         fun() ->
             {async, DataSizeGuesser} =
                 leveled_bookie:book_headfold(
                     Bookie,
                     ?RIAK_TAG,
-                    {fun(_B, _K, _V, AccC) ->  AccC + 1024 end, 0},
+                    {fun(_B, _K, _V, AccC) ->  AccC + TreePortion end, 0},
                     false,
                     true,
-                    lists:seq(RandomSegment, RandomSegment + 31)
+                    lists:seq(RandomSegment, RandomSegment + SegmentCount - 1)
                 ),
             {DataSizeGuesser(), objects}
         end,
