@@ -37,7 +37,7 @@
                  {error, any()} |
                  {fetch, list()}.
 -type repair_reason() :: notfound | outofdate.
--type final_action() :: 
+-type final_action() ::
     nop |
     {read_repair,
         [{non_neg_integer(), repair_reason()}],
@@ -129,7 +129,7 @@ head_merge(GetCore) ->
 %% arrival at the head.
 -spec add_result(non_neg_integer(), result(), node(), getcore()) -> getcore().
 add_result(Idx, {ok, RObj}, Node, GetCore0) ->
-    GetCore = 
+    GetCore =
         case GetCore0#getcore.expected_fetchclock of
             false ->
                 GetCore0;
@@ -144,7 +144,7 @@ add_result(Idx, {ok, RObj}, Node, GetCore0) ->
                         GetCore0
                 end
         end,
-    {Dels, Result} = 
+    {Dels, Result} =
         case riak_kv_util:is_x_deleted(RObj) of
             true ->  {1, {ok, riak_object:spoof_getdeletedobject(RObj)}};
             false -> {0, {ok, RObj}}
@@ -262,7 +262,7 @@ response(
     %% Insufficient nodes confirmed
 response(#getcore{r = R, num_ok = NumOK, pr= PR, num_pok = NumPOK,
                     expected_fetchclock = ExpClock, head_merge = HM} = GetCore)
-        when 
+        when
             ((NumOK >= R andalso NumPOK >= PR)
                 orelse ExpClock == true)
             andalso HM == false ->
@@ -348,14 +348,14 @@ final_action(GetCore = #getcore{n = N, merged = Merged0, results = Results,
                                 allow_mult = AllowMult}) ->
     PredFun = fun({_Idx, Res}) -> isnot_head(Res) end,
     {FilteredResults, _ResultHEADs} = lists:partition(PredFun, Results),
-    Merged = 
+    Merged =
         case Merged0 of
             undefined ->
                 % We will only repair from a fetched object (not a head_only
-                % object).  It is possible that we may have, when n > r, 
-                % received a better HEAD response after r has been fulfilled, 
-                % and after the GET response was received. This will not now 
-                % reliably be read repaired.  We only read repair a superior 
+                % object).  It is possible that we may have, when n > r,
+                % received a better HEAD response after r has been fulfilled,
+                % and after the GET response was received. This will not now
+                % reliably be read repaired.  We only read repair a superior
                 % object discovered up to 'enough' and the receipt of the GET
                 % response.
                 merge(FilteredResults, AllowMult);
@@ -526,7 +526,7 @@ enough_expectedclock_test() ->
     V2 = <<"V2">>,
     V3 = <<"V3">>,
 
-    Obj0 = 
+    Obj0 =
         increment_vclock(
             riak_object:new(B, K, V,
                                 dict:from_list([{<<"X-Riak-Val-Encoding">>, 2},
@@ -536,23 +536,23 @@ enough_expectedclock_test() ->
         increment_vclock(
             riak_object:apply_updates(riak_object:update_value(Obj0, V0)),
             a),
-    
+
     Obj2 =
         increment_vclock(
             riak_object:apply_updates(riak_object:update_value(Obj1, V1)),
             b),
-    
+
     Obj3 =
         increment_vclock(
             riak_object:apply_updates(riak_object:update_value(Obj2, V2)),
             c),
-    
+
     Obj4 =
         increment_vclock(
             riak_object:apply_updates(riak_object:update_value(Obj3, V3)),
             a),
 
-    
+
     ExpectedClock = riak_object:vclock(Obj3),
 
     GC0 = #getcore{n= 3, r = 3, pr=0, ur=0,
@@ -565,15 +565,15 @@ enough_expectedclock_test() ->
     GC1 = add_result(3, {ok, Obj1}, node(), GC0),
     ?assertEqual(false, enough(GC1)),
     ?assertEqual({{error, {r_val_unsatisfied, 3, 1}}, GC1}, response(GC1)),
-    
+
     GC2A = add_result(1, {ok, Obj3}, node(), GC1),
     ?assertEqual(true, enough(GC2A)),
     ?assertEqual({ok, Obj3}, element(1, response(GC2A))),
-    
+
     GC2B = add_result(1, {ok, Obj4}, node(), GC1),
     ?assertEqual(true, enough(GC2B)),
     ?assertEqual({ok, Obj4}, element(1, response(GC2B))),
-    
+
     GC2C = add_result(1, {ok, Obj2}, node(), GC1),
     ?assertEqual(false, enough(GC2C)),
     ?assertEqual({{error, {r_val_unsatisfied, 3, 2}}, GC2C}, response(GC2C)),

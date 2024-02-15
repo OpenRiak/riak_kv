@@ -38,10 +38,10 @@
     | anti_entropy_delete.
 
 
-%% @doc Update a Riak object, given a reason and partition under which
-%%      the object is being indexed.  The object pair contains the new
-%%      and old objects, in the case where a read-before-write resulted
-%%      in an old object.
+%% Update a Riak object, given a reason and partition under which
+%% the object is being indexed.  The object pair contains the new
+%% and old objects, in the case where a read-before-write resulted
+%% in an old object.
 -callback update(
     object_pair(),
     update_reason(),
@@ -49,9 +49,9 @@
 ) ->
     ok.
 
-%% @doc Update a Riak object encoded as an erlang binary.  This function
-%%      is typically called from the write-once path, where there is no
-%%      old object to pass.
+%% Update a Riak object encoded as an erlang binary.  This function
+%% is typically called from the write-once path, where there is no
+%% old object to pass.
 -callback update_binary(
     riak_core_bucket:bucket(),
     riak_object:key(),
@@ -61,12 +61,12 @@
 ) ->
     ok.
 
-%% @doc Determine whether a bucket requires an existing object,
-%%      based on its properties.  If this function returns true,
-%%      this may result in a read-before-write in the vnode.
+%% Determine whether a bucket requires an existing object,
+%% based on its properties.  If this function returns true,
+%% this may result in a read-before-write in the vnode.
 -callback requires_existing_object(riak_kv_bucket:props()) ->
     boolean().
 
-%% @doc Determine whether handoff should start.
+%% Determine whether handoff should start.
 -callback should_handoff(handoff_dest()) ->
     boolean().

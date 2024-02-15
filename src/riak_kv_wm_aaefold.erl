@@ -943,7 +943,7 @@ setup_mocks() ->
 teardown_mocks(_) ->
     (catch meck:unload(wrq)).
 
-%% @private happy-path testing for the query types. NOTE: only happy
+%% happy-path testing for the query types. NOTE: only happy
 %% path
 prop_not_malformed() ->
     ?FORALL({Query, Filter}, gen_query(),

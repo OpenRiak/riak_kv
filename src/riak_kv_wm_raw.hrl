@@ -1,16 +1,23 @@
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
+%%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
 %% except in compliance with the License.  You may obtain
 %% a copy of the License at
-
+%%
 %%   http://www.apache.org/licenses/LICENSE-2.0
-
+%%
 %% Unless required by applicable law or agreed to in writing,
 %% software distributed under the License is distributed on an
 %% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 %% KIND, either express or implied.  See the License for the
 %% specific language governing permissions and limitations
 %% under the License.
+%%
+%% -------------------------------------------------------------------
 
 %% Constants used by the raw_http resources
 
@@ -20,11 +27,20 @@
 -define(MD_ENCODING, <<"content-encoding">>).
 -define(MD_VTAG,     <<"X-Riak-VTag">>).
 -define(MD_LINKS,    <<"Links">>).
--define(MD_LASTMOD,  <<"X-Riak-Last-Modified">>).
+-define(MD_LASTMOD,  <<"X-Riak-Last-Modified">>).   %% erlang:timestamp()
 -define(MD_USERMETA, <<"X-Riak-Meta">>).
 -define(MD_INDEX,    <<"index">>).
 -define(MD_DELETED,  <<"X-Riak-Deleted">>).
 -define(MD_VAL_ENCODING, <<"X-Riak-Val-Encoding">>).
+%% Provenance metadata - Copy/Move stores, Restore strips
+-define(MD_PROV_OP,         <<"X-Riak-Prov-Operation">>).
+-define(MD_PROV_OP_TIME,    <<"X-Riak-Prov-Op-Time">>).             %% erlang:timestamp()
+-define(MD_PROV_SRC_B,      <<"X-Riak-Prov-Src-Bucket">>).
+-define(MD_PROV_SRC_BT,     <<"X-Riak-Prov-Src-BucketType">>).
+-define(MD_PROV_SRC_K,      <<"X-Riak-Prov-Src-Key">>).
+-define(MD_PROV_SRC_LM,     <<"X-Riak-Prov-Src-Last-Modified">>).   %% erlang:timestamp()
+-define(MD_PROV_SRC_VC,     <<"X-Riak-Prov-Src-VClock">>).
+-define(MD_PROV_TOMB_VC,    <<"X-Riak-Prov-Tomb-VClock">>).
 
 %% Names of HTTP header fields
 -define(HEAD_CTYPE,           "Content-Type").
@@ -38,6 +54,7 @@
 -define(HEAD_TIMEOUT,         "X-Riak-Timeout").
 -define(HEAD_CRDT_CONTEXT,    "X-Riak-CRDT-Ctx").
 -define(HEAD_IF_NOT_MODIFIED, "X-Riak-If-Not-Modified").
+-define(HEAD_PROV_PREFIX,     "x-riak-prov-").
 
 %% Names of JSON fields in bucket properties
 -define(JSON_PROPS,   <<"props">>).

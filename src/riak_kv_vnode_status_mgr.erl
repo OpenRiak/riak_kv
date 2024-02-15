@@ -33,7 +33,7 @@
 -compile([export_all, nowarn_export_all]).
 -else.
 %% API
--export([start_link/3, 
+-export([start_link/3,
         get_vnodeid_and_counter/2,
         lease_counter/2,
         clear_vnodeid/1,
@@ -330,7 +330,7 @@ get_status_item(Item, Status, Default) ->
 %% path to exists.
 -spec vnode_status_filename(non_neg_integer(), string()|undefined) -> file:filename().
 vnode_status_filename(Index, Path) ->
-    P_DataDir = 
+    P_DataDir =
         case Path of
             undefined ->
                 app_helper:get_env(riak_core, platform_data_dir);
@@ -387,7 +387,7 @@ read_vnode_status(File) ->
             %% doesn't exist? same as empty
             {ok, orddict:new()};
         {error, {_Offset, file_io_server, invalid_unicode}} ->
-            case override_consult(File) of 
+            case override_consult(File) of
                 {ok, [Status]} when is_list(Status) ->
                     {ok, orddict:from_list(Status)};
                 Er ->
@@ -458,7 +458,7 @@ init_persistent() ->
     ok = persistent_term:put({?MODULE, last_vnode_epoch}, EpochAtomic).
 
 -ifdef(TEST).
-%% @private don't make testers suffer through the fsync time
+%% don't make testers suffer through the fsync time
 -spec write_vnode_status(status(), file:filename(), Version :: 1 | 2) -> ok.
 write_vnode_status(Status, File, Version) ->
     VersionedStatus = orddict:store(version, Version, Status),
@@ -560,7 +560,7 @@ vnode_status_test_() ->
 
 %% Properties
 
-%% @private any binary we write, we can read. (Try changing ~w. to
+%% any binary we write, we can read. (Try changing ~w. to
 %% ~p. in `write_vnode_status/3' for an example of _why_ this test).
 prop_any_bin_consult() ->
     ?SETUP(fun() ->
@@ -578,7 +578,7 @@ prop_any_bin_consult() ->
                         equals({ok, Status}, read_vnode_status(TestFile))
                    end)).
 
-%% @private regardless of the contents of the vnode status file, we
+%% regardless of the contents of the vnode status file, we
 %% always get a status result. If the file is valid, we get its
 %% contents, if not, we get a blank status, if there is no file we get
 %% a blank status.
@@ -618,7 +618,7 @@ gen_status_file(Type) ->
     TestFile = filename:join(TestPath, ?TEST_FILE),
     gen_status_file(TestFile, Type).
 
-%% @private generate the file on disk TBQH, this might be fine as a
+%% generate the file on disk TBQH, this might be fine as a
 %% straight up eunit tests, given how little random there really is
 %% here for quickcheck
 gen_status_file(TestFile, r16) ->

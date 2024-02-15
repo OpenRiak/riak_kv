@@ -3,7 +3,7 @@
 %%
 %% riak_put_fsm: coordination of Riak PUT requests
 %%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -24,6 +24,7 @@
 %% @doc coordination of Riak PUT requests
 %%
 -module(riak_kv_put_fsm).
+
 -behaviour(gen_fsm).
 
 -export([start/3,start/6,start/7]).
@@ -77,6 +78,10 @@
         %% Request additional details about request added as extra
         %% element at the end of result tuple
         {details, detail()} |
+        %% Return the object as written, default = false
+        returnbody | {returnbody, boolean()} |
+        %% Update 'last modified' metadata, default = true
+        {update_last_modified, boolean()} |
         %% Sync-on-write setting, backend, one(co-ordinating) or all
         {sync_on_write, atom()} |
         %% Put the value as-is, do not increment the vclocks
@@ -135,7 +140,7 @@
                 timing = [] :: [{atom(), {non_neg_integer(), non_neg_integer(),
                                           non_neg_integer()}}],
                 reply, % reply sent to client,
-                trace = false :: boolean(), 
+                trace = false :: boolean(),
                 tracked_bucket=false :: boolean(), %% track per bucket stats
                 bad_coordinators = [] :: [atom()],
                 coordinator_timeout :: integer()
@@ -418,9 +423,9 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                         {[], true};
                     _ ->
                         case Postcommit of
-                            [] -> 
+                            [] ->
                                 {[], false};
-                            _ -> 
+                            _ ->
                                 {[{returnbody,true}], false}
                         end
                 end,
@@ -470,7 +475,7 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
     end.
 
 apply_updates(RObj0, Options) ->
-    RObj1 = 
+    RObj1 =
         case get_option(update_last_modified, Options) of
             true ->
                 riak_object:update_last_modified(RObj0);
@@ -478,12 +483,12 @@ apply_updates(RObj0, Options) ->
                 RObj0
         end,
     riak_object:apply_updates(RObj1).
-    
+
 
 %% Run the precommit hooks
 precommit(timeout, State = #state{precommit = []}) ->
     execute(State);
-precommit(timeout, State = #state{precommit = [Hook | Rest], 
+precommit(timeout, State = #state{precommit = [Hook | Rest],
                                   robj = RObj,
                                   trace = Trace}) ->
     Result = decode_precommit(invoke_hook(Hook, RObj), Trace),
@@ -492,7 +497,7 @@ precommit(timeout, State = #state{precommit = [Hook | Rest],
             ?DTRACE(Trace, ?C_PUT_FSM_PRECOMMIT, [-1], []),
             process_reply({error, precommit_fail}, State);
         {fail, Reason} ->
-            ?DTRACE(Trace, ?C_PUT_FSM_PRECOMMIT, [-1], 
+            ?DTRACE(Trace, ?C_PUT_FSM_PRECOMMIT, [-1],
                     [dtrace_errstr(Reason)]),
             process_reply({error, {precommit_fail, Reason}}, State);
         Result ->
@@ -531,7 +536,7 @@ execute_local(StateData=#state{robj=RObj, req_id = ReqId, bkey=BKey,
                                trace = Trace,
                                starttime = StartTime}) ->
     StateData1 =
-        case Trace of 
+        case Trace of
             true ->
                 ?DTRACE(?C_PUT_FSM_EXECUTE_LOCAL, [], [atom2list(Node)]),
                 add_timing(execute_local, StateData);
@@ -588,7 +593,7 @@ execute_remote(StateData=#state{robj=RObj, req_id = ReqId,
                                 starttime = StartTime}) ->
     Preflist = [IndexNode || {IndexNode, _Type} <- Preflist2,
                              IndexNode /= CoordPLEntry],
-    StateData1 = 
+    StateData1 =
         case Trace of
             true ->
                 Ps = [[atom2list(Nd), $,, integer_to_list(Idx)] ||
@@ -646,8 +651,8 @@ postcommit(timeout, StateData = #state{postcommit = [Hook | Rest],
     new_state_timeout( postcommit, StateData#state{postcommit = Rest,
                                              trace = Trace,
                                              putcore = UpdPutCore});
-%% still process hooks even if request timed out  
-postcommit(request_timeout, StateData = #state{trace = Trace}) -> 
+%% still process hooks even if request timed out
+postcommit(request_timeout, StateData = #state{trace = Trace}) ->
     ?DTRACE(Trace, ?C_PUT_FSM_POSTCOMMIT, [-3], []),
     new_state_timeout(postcommit, StateData);
 postcommit(Reply, StateData = #state{putcore = PutCore,
@@ -670,7 +675,7 @@ finish(timeout, StateData = #state{timing = Timing, reply = Reply,
                                    tracked_bucket = StatTracked,
                                    options = Options}) ->
     case Reply of
-        {error, _} -> 
+        {error, _} ->
             ?DTRACE(Trace, ?C_PUT_FSM_FINISH, [-1], []),
             ok;
         _Ok ->
@@ -777,7 +782,7 @@ process_reply(Reply, StateData = #state{postcommit = PostCommit,
                     ApproxBytes = size(Bucket) + size(Key) +
                         lists:sum([size(V) || V <- Values]),
                     NumSibs = length(Values),
-                    ?DTRACE(?C_PUT_FSM_PROCESS_REPLY, 
+                    ?DTRACE(?C_PUT_FSM_PROCESS_REPLY,
                             [1, ApproxBytes, NumSibs], []);
                 _ ->
                     ok
@@ -852,7 +857,7 @@ invoke_hook(Mod0, Fun0, RObj) when Mod0 /= undefined, Fun0 /= undefined ->
 invoke_hook(_, _, _) ->
     {error, {invalid_hook_def, no_hook}}.
 
--spec decode_precommit(any(), boolean()) -> fail | {fail, any()} | 
+-spec decode_precommit(any(), boolean()) -> fail | {fail, any()} |
                                             riak_object:riak_object().
 decode_precommit({erlang, {Mod, Fun}, Result}, Trace) ->
     %% TODO: For DTrace things, we will err on the side of taking the
@@ -866,7 +871,7 @@ decode_precommit({erlang, {Mod, Fun}, Result}, Trace) ->
                         [Mod, Fun]),
             fail;
         {fail, Reason} ->
-            ?DTRACE(Trace, ?C_PUT_FSM_DECODE_PRECOMMIT, [-2], 
+            ?DTRACE(Trace, ?C_PUT_FSM_DECODE_PRECOMMIT, [-2],
                     [dtrace_errstr(Reason)]),
             ok = riak_kv_stat:update(precommit_fail),
             ?LOG_DEBUG("Pre-commit hook ~p:~p failed with reason ~p",
@@ -894,7 +899,7 @@ decode_precommit({erlang, {Mod, Fun}, Result}, Trace) ->
             end
     end;
 decode_precommit({error, Reason}, Trace) ->
-    ?DTRACE(Trace, ?C_PUT_FSM_DECODE_PRECOMMIT, [-8], 
+    ?DTRACE(Trace, ?C_PUT_FSM_DECODE_PRECOMMIT, [-8],
             [dtrace_errstr(Reason)]),
     ok = riak_kv_stat:update(precommit_fail),
     ?LOG_DEBUG("Problem invoking pre-commit hook: ~p", [Reason]),
@@ -969,11 +974,11 @@ client_reply(Reply, State = #state{from = {raw, ReqId, Pid},
                  [] ->
                      Reply;
                  Details ->
-                     add_client_info(Reply, Details, 
+                     add_client_info(Reply, Details,
                                      State#state{timing = Timing})
              end,
     Pid ! {ReqId, Reply2},
-    State#state{reply = Reply, 
+    State#state{reply = Reply,
                 timing = Timing}.
 
 add_client_info(Reply, Details, State) ->

@@ -1,8 +1,10 @@
 %% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
+%% riak_multi_backend: switching between multiple storage engines
+%%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2023-2025 Workday, Inc.
+%% Copyright (c) 2023-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -759,7 +761,7 @@ multi_backend_test_() ->
                fun() ->
                        %% Attempt to start the backend with a
                        %% nonexistent backend specified
-                       ?assertEqual({error, [{riak_kv_devnull_backend, undef}]},
+                       ?assertMatch({error, [{riak_kv_devnull_backend, {undef, [_|_]}}]},
                                     start(42, bad_backend_config()))
                end
               }
