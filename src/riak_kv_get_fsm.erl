@@ -50,8 +50,8 @@
                   vnodes.
 -type details() :: [detail()].
 
--type option() :: {r, pos_integer()} |         %% Minimum number of successful responses
-                  {pr, non_neg_integer()} |    %% Minimum number of primary vnodes participating
+-type option() :: {r, riak_client:rw_quorum()} | %% Minimum number of successful responses
+                  {pr, riak_client:pd_quorum()} | %% Minimum number of primary vnodes participating
                   {basic_quorum, boolean()} |  %% Whether to use basic quorum (return early
                                                %% in some failure cases.
                   {notfound_ok, boolean()}  |  %% Count notfound responses as successful.

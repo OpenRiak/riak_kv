@@ -2,7 +2,8 @@
 %%
 %% riak_app: application startup for Riak
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -36,6 +37,7 @@
                    {riak_kv_pb_mapred, 23, 24}, %% MapReduce requests
                    {riak_kv_pb_index, 25, 26},   %% Secondary index requests
                    {riak_kv_pb_bucket_key_apl, 33, 34}, %% (Active) Preflist requests
+                   {riak_kv_pb_object, 35, 36}, %% Object requests
                    {riak_kv_pb_csbucket, 40, 41}, %%  CS bucket folding support
                    {riak_kv_pb_counter, 50, 53}, %% counter requests
                    {riak_kv_pb_crdt, 80, 83}, %% CRDT requests
@@ -230,6 +232,10 @@ start(_Type, _StartArgs) ->
                                           [head, get],
                                           get),
 
+            riak_core_capability:register({riak_kv, clone_request},
+                                          [true, false],
+                                          false),
+
             %% is using the vnode proxy mailbox queue estimate as a
             %% soft-limit supported
             riak_core_capability:register({riak_kv, put_soft_limit},
@@ -363,7 +369,7 @@ wait_for_put_fsms(N) ->
                 0 ->
                     ?LOG_WARNING("Timed out waiting for put FSMs to flush"),
                     ok;
-                _ -> 
+                _ ->
                     ?LOG_INFO("Waiting for ~p put FSMs to complete", [Count]),
                     timer:sleep(1000),
                     wait_for_put_fsms(N-1)
