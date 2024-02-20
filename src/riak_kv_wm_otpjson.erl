@@ -78,13 +78,11 @@
 %% Encoding implementation
 %%
 
--if(OTP_RELEASE >= 26).
--type dynamic_int() :: dynamic().
--else.
--type dynamic_int() :: term().
+-if(?OTP_RELEASE < 26).
+-type dynamic() :: term().
 -endif.
 
--type encoder() :: fun((dynamic_int(), encoder()) -> iodata()).
+-type encoder() :: fun((dynamic(), encoder()) -> iodata()).
 
 -type simple_encode_value() ::
     integer()
@@ -129,15 +127,15 @@ encode(Term) -> encode(Term, fun do_encode/2).
 % Various `encode_*` functions in this module can be used
 % to help in constructing such callbacks.
 
--spec encode(dynamic_int(), encoder()) -> iodata().
+-spec encode(dynamic(), encoder()) -> iodata().
 encode(Term, Encoder) when is_function(Encoder, 2) ->
     Encoder(Term, Encoder).
 
--spec encode_value(dynamic_int(), encoder()) -> iodata().
+-spec encode_value(dynamic(), encoder()) -> iodata().
 encode_value(Value, Encode) ->
     do_encode(Value, Encode).
 
--spec do_encode(dynamic_int(), encoder()) -> iodata().
+-spec do_encode(dynamic(), encoder()) -> iodata().
 do_encode(Value, Encode) when is_atom(Value) ->
     encode_atom(Value, Encode);
 do_encode(Value, _Encode) when is_binary(Value) ->
@@ -163,7 +161,7 @@ encode_atom(Other, Encode) -> Encode(atom_to_binary(Other, utf8), Encode).
 encode_integer(Integer) -> integer_to_binary(Integer).
 
 -spec encode_float(float()) -> iodata().
--if(OTP_RELEASE >= 25).
+-if(?OTP_RELEASE >= 25).
 encode_float(Float) -> float_to_binary(Float, [short]).
 -else.
 % Results may be unpredictable for encioding floats
@@ -429,7 +427,7 @@ utf8s0() ->
         72,84,84,84,96,12,12,12,12,12,12,12,12,12,12,12
     }.
 
--if(OTP_RELEASE >= 24).
+-if(?OTP_RELEASE >= 24).
 invalid_byte(Bin, Skip) ->
     Byte = binary:at(Bin, Skip),
     error({invalid_byte, Byte}, none, error_info(Skip)).
@@ -454,13 +452,13 @@ invalid_byte(Bin, Skip) ->
 -define(is_0_to_9(X), X =:= $0; ?is_1_to_9(X)).
 -define(is_ws(X), X =:= $\s; X =:= $\t; X =:= $\r; X =:= $\n).
 
--type from_binary_fun() :: fun((binary()) -> dynamic_int()).
--type array_start_fun() :: fun((Acc :: dynamic_int()) -> ArrayAcc :: dynamic_int()).
--type array_push_fun() :: fun((Value :: dynamic_int(), Acc :: dynamic_int()) -> NewAcc :: dynamic_int()).
--type array_finish_fun() :: fun((ArrayAcc :: dynamic_int()) -> dynamic_int()).
--type object_start_fun() :: fun((Acc :: dynamic_int()) -> ObjectAcc :: dynamic_int()).
--type object_push_fun() :: fun((Key :: dynamic_int(), Value :: dynamic_int(), Acc :: dynamic_int()) -> NewAcc :: dynamic_int()).
--type object_finish_fun() :: fun((ObjectAcc :: dynamic_int()) -> dynamic_int()).
+-type from_binary_fun() :: fun((binary()) -> dynamic()).
+-type array_start_fun() :: fun((Acc :: dynamic()) -> ArrayAcc :: dynamic()).
+-type array_push_fun() :: fun((Value :: dynamic(), Acc :: dynamic()) -> NewAcc :: dynamic()).
+-type array_finish_fun() :: fun((ArrayAcc :: dynamic()) -> dynamic()).
+-type object_start_fun() :: fun((Acc :: dynamic()) -> ObjectAcc :: dynamic()).
+-type object_push_fun() :: fun((Key :: dynamic(), Value :: dynamic(), Acc :: dynamic()) -> NewAcc :: dynamic()).
+-type object_finish_fun() :: fun((ObjectAcc :: dynamic()) -> dynamic()).
 
 -type decoders() :: #{
     empty_array => term(),
@@ -492,7 +490,7 @@ invalid_byte(Bin, Skip) ->
     null = null :: term()
 }).
 
--type acc() :: dynamic_int().
+-type acc() :: dynamic().
 -type stack() :: [?ARRAY | ?OBJECT | binary() | acc()].
 -type decode() :: #decode{}.
 
@@ -544,8 +542,8 @@ decode(Binary) when is_binary(Binary) ->
 % json:decode(Data, ok, #{object_push => Push})
 % ```
 
--spec decode(binary(), dynamic_int(), decoders()) ->
-    {Result :: dynamic_int(), Acc :: dynamic_int(), binary()}.
+-spec decode(binary(), dynamic(), decoders()) ->
+    {Result :: dynamic(), Acc :: dynamic(), binary()}.
 decode(Binary, Acc, Decoders) when is_binary(Binary) ->
     Decode = maps:fold(fun parse_decoder/3, #decode{}, Decoders),
     value(Binary, Binary, 0, Acc, [], Decode).
@@ -690,7 +688,7 @@ number_exp_cont(Rest, Original, Skip, Acc, Stack, Decode, Len, Prefix, ExpLen) -
     Token = <<Prefix/binary, ".0e", Suffix/binary>>,
     float_decode(Rest, Original, Skip, Acc, Stack, Decode, Len + ExpLen, Token).
 
--spec string(binary(), binary(), integer(), acc(), stack(), decode(), integer()) -> dynamic_int().
+-spec string(binary(), binary(), integer(), acc(), stack(), decode(), integer()) -> dynamic().
 string(<<$", Rest/bits>>, Original, Skip0, Acc, Stack, Decode, Len) ->
     Value = binary_part(Original, Skip0, Len),
     Skip = Skip0 + Len + 1,
@@ -711,7 +709,7 @@ string(<<Char/utf8, Rest/bits>>, Original, Skip, Acc, Stack, Decode, Len) ->
 string(_, Original, Skip, _Acc, _Stack, _Decode, Len) ->
     unexpected(Original, Skip + Len).
 
--spec string(binary(), binary(), integer(), acc(), stack(), decode(), integer(), binary(), integer()) -> dynamic_int().
+-spec string(binary(), binary(), integer(), acc(), stack(), decode(), integer(), binary(), integer()) -> dynamic().
 string(<<$", Rest/bits>>, Original, Skip0, Acc, Stack, Decode, Len, SAcc, PLen) ->
     Part = binary_part(Original, Skip0 + Len, PLen),
     Value = <<SAcc/binary, Part/binary>>,
@@ -888,7 +886,7 @@ unexpected(Original, Skip) ->
     invalid_byte(Original, Skip).
 
 -spec unexpected_sequence(binary(), non_neg_integer()) -> no_return().
--if(OTP_RELEASE >= 24).
+-if(?OTP_RELEASE >= 24).
 unexpected_sequence(Value, Skip) ->
     error({unexpected_sequence, Value}, none, error_info(Skip)).
 -else.

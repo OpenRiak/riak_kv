@@ -73,10 +73,9 @@
     thoas_encode_results/3,
     otp_encode_results/2,
     otp_encode_results/3,
-    results_encode/2
+    results_encode/2,
+    keys_encode/2
 ]).
-
--compile({inline, [encode_object/1]}).
 
 -record(ctx, {
           client,       %% riak_client() - the store client
@@ -604,25 +603,25 @@ otp_encode_results(true, Results, Continuation) ->
     );
 otp_encode_results(false, Results, undefined) ->
     riak_kv_wm_otpjson:encode(
-        #{?Q_KEYS_BIN => lists:map(fun({_T, K}) -> K end, Results)}
+        #{?Q_KEYS_BIN => Results},
+        fun keys_encode/2
     );
 otp_encode_results(false, Results, Continuation) ->
     riak_kv_wm_otpjson:encode(
-        #{?Q_KEYS_BIN => lists:map(fun({_T, K}) -> K end, Results),
-            ?Q_2I_CONTINUATION_BIN => Continuation}
+        #{?Q_KEYS_BIN => Results,
+            ?Q_2I_CONTINUATION_BIN => Continuation},
+        fun keys_encode/2
     ).
 
-results_encode({Key, Value}, Encode) when is_binary(Key), is_binary(Value) ->
-    do_encode_pair(Key, Value, Encode);
+results_encode({Term, Key}, Encode) when is_binary(Term), is_binary(Key) ->
+    ["{", [Encode(Term, Encode), $: | Encode(Key, Encode)], "}"];
 results_encode(Result, Encode) ->
     riak_kv_wm_otpjson:encode_value(Result, Encode).
 
-do_encode_pair(Key, Value, Encode) when is_function(Encode, 2) ->
-    encode_object(
-        [[$,, Encode(Key, Encode), $: | Encode(Value, Encode)]]
-    ).
-
-encode_object([[_Comma | Entry] | Rest]) -> ["{", Entry, Rest, "}"].
+keys_encode({_Term, Key}, Encode) when is_binary(Key) ->
+    riak_kv_wm_otpjson:encode_value(Key, Encode);
+keys_encode(Object, Encode) ->
+    riak_kv_wm_otpjson:encode_value(Object, Encode).
 
 map_results(none, Results) ->
     Results;
