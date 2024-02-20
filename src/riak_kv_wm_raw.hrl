@@ -62,6 +62,7 @@
 -define(Q_PROPS, "props").
 -define(Q_BUCKETS, "buckets").
 -define(Q_KEYS,  "keys").
+-define(Q_KEYS_BIN, <<"keys">>).
 -define(Q_FALSE, "false").
 -define(Q_TRUE, "true").
 -define(Q_STREAM, "stream").
@@ -71,8 +72,10 @@
 -define(Q_2I_MAX_RESULTS, "max_results").
 -define(Q_2I_TERM_REGEX, "term_regex").
 -define(Q_2I_CONTINUATION, "continuation").
+-define(Q_2I_CONTINUATION_BIN, <<"continuation">>).
 -define(Q_2I_PAGINATION_SORT, "pagination_sort").
 -define(Q_RESULTS,  "results").
+-define(Q_RESULTS_BIN, <<"results">>).
 -define(Q_RETURNVALUE, "returnvalue").
 -define(Q_2I_MAPFOLD, "mapfold").
 -define(Q_MF_MAPFOLDMOD, "mapfoldmod").
