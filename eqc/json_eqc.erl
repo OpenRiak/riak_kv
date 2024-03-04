@@ -4,7 +4,7 @@
 -compile([export_all, nowarn_export_all]).
 
 prop_roundtrip() ->
-    in_parallel(?FORALL(Obj, object(), collect(Obj, equals(Obj, decode(encode(Obj)))))).
+    in_parallel(?FORALL(Obj, object(), equals(Obj, decode(encode(Obj))))).
 
 prop_escape_all() ->
     in_parallel(
