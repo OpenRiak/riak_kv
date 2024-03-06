@@ -47,6 +47,10 @@
 -define(UPDATE_TIMEOUT_SECONDS, 300).
 -define(AUTO_DISCOVERY_MAXIMUM_SECONDS, 900).
 -define(AUTO_DISCOVERY_MINIMUM_SECONDS, 60).
+-define(INITIAL_TIMEOUT, 60000).
+    % Wait a minute before the first allocation is considered,  Lot may be
+    % going on at a node immediately at startup
+
 
 -record(state, {discovery_peers = [] :: list(discovery_peer())}).
 
@@ -86,17 +90,7 @@ init([]) ->
             DefaultQueue = app_helper:get_env(riak_kv, replrtq_sinkqueue),
             SnkQueuePeerInfo =
                 riak_kv_replrtq_snk:tokenise_peers(DefaultQueue, SinkPeers),
-
-            MinDelay = 
-                application:get_env(riak_kv,
-                    replrtq_prompt_min_seconds,
-                    ?AUTO_DISCOVERY_MINIMUM_SECONDS),
-
-            lists:foreach(
-                fun({QueueName, _PeerInfo}) -> 
-                    _ = schedule_discovery(QueueName, self(), MinDelay)
-                end,
-                SnkQueuePeerInfo),
+            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
             {ok, #state{discovery_peers = SnkQueuePeerInfo}};
         false ->
             {ok, #state{}}
@@ -131,6 +125,32 @@ handle_cast({prompt_discovery, QueueName}, State) ->
     _ = do_discovery(QueueName, PeerInfo, regular),
     {noreply, State}.
 
+handle_info(deferred_start, State) ->
+    MinDelay = 
+        application:get_env(
+            riak_kv,
+            replrtq_prompt_min_seconds,
+            ?AUTO_DISCOVERY_MINIMUM_SECONDS),
+    case riak_kv_util:kv_ready() of
+        true ->
+            lists:foreach(
+                fun({QueueName, PeerInfo}) -> 
+                    _ = schedule_discovery(QueueName, self(), MinDelay),
+                    ?LOG_INFO(
+                        "Initiated real-time repl peer ~p for queue ~p",
+                        [PeerInfo, QueueName])
+                end,
+                State#state.discovery_peers),
+            {noreply, State};
+        false ->
+            ?LOG_INFO(
+                "Real-time repl peer discovery waiting ~w ms "
+                "to initialise as riak_kv not ready",
+                [MinDelay]
+            ),
+            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+            {noreply, State}
+    end;
 handle_info({scheduled_discovery, QueueName}, State) ->
     ok = prompt_discovery(QueueName),
     MinDelay = 
@@ -151,6 +171,7 @@ handle_info({Ref, {error, HTTPClientError}}, State) when is_reference(Ref) ->
         "Client error caught - error ~p returned after timeout",
         [HTTPClientError]),
     {noreply, State}.
+
 
 terminate(_Reason, _State) ->
     ok.

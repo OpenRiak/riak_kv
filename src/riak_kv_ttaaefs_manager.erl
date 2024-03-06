@@ -55,7 +55,7 @@
 -define(SECONDS_IN_DAY, 86400).
 -define(INITIAL_TIMEOUT, 60000).
     % Wait a minute before the first allocation is considered,  Lot may be
-    % going on at a node immeidately at startup
+    % going on at a node immediately at startup
 -define(LOOP_TIMEOUT, 15000).
     % Always wait at least 15s after completing an action before
     % prompting another
@@ -326,9 +326,8 @@ init([]) ->
                         queue_name = SrcQueueName,
                         peer_queue_name = PeerQueueName,
                         check_window = CheckWindow},
-    
-    ?LOG_INFO("Initiated Tictac AAE Full-Sync Mgr with scope=~w", [Scope]),
-    {ok, State2, ?INITIAL_TIMEOUT}.
+    erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+    {ok, State2}.
 
 handle_call(pause, _From, State) ->
     case State#state.is_paused of
@@ -633,7 +632,22 @@ handle_cast({auto_check, ReqID, From, Now}, State) ->
     end,
     {noreply, State}.
 
-
+handle_info(deferred_start, State) ->
+    case riak_kv_util:kv_ready() of
+        true ->
+            ?LOG_INFO(
+                "Initiated Tictac AAE Full-Sync Mgr with scope=~w",
+                [State#state.scope]),
+            handle_info(timeout, State);
+        false ->
+            ?LOG_INFO(
+                "Tictac AAE Full-Sync Mgr waiting ~w ms "
+                "to initialise as riak_kv not ready",
+                [?INITIAL_TIMEOUT]
+            ),
+            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+            {noreply, State}
+    end;
 handle_info(timeout, State) ->
     SlotInfoFun = State#state.slot_info_fun,
     SlotInfo = SlotInfoFun(),

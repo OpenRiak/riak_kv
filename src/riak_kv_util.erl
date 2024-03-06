@@ -50,7 +50,9 @@
         overload_reply/1,
         get_backend_config/3,
         is_modfun_allowed/2,
-        shuffle_list/1]).
+        shuffle_list/1,
+        kv_ready/0
+    ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -214,7 +216,9 @@ get_write_once(Bucket) ->
             Err
     end.
 
-
+-spec kv_ready() -> boolean().
+kv_ready() ->
+    lists:member(riak_kv, riak_core_node_watcher:services(node())).
 
 %% ===================================================================
 %% Hashtree token management functions
