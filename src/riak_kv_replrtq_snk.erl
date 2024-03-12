@@ -68,7 +68,6 @@
 -define(STARTING_DELAYMS, 8).
 -define(MAX_SUCCESS_DELAYMS, 1024).
 -define(ON_ERROR_DELAYMS, 65536).
--define(INITIAL_TIMEOUT_MS, 60000).
 -define(DEFAULT_WORKERCOUNT, 1).
 
 -record(sink_work, {queue_name :: queue_name(),
@@ -420,9 +419,10 @@ handle_info(deferred_start, State) ->
             ?LOG_INFO(
                 "Real-time repl sink waiting ~w ms "
                 "to initialise as riak_kv not ready",
-                [?INITIAL_TIMEOUT_MS]
+                [riak_kv_util:ngr_initial_timeout()]
             ),
-            erlang:send_after(?INITIAL_TIMEOUT_MS, self(), deferred_start)
+            erlang:send_after(
+                riak_kv_util:ngr_initial_timeout(), self(), deferred_start)
     end,
     {noreply, State};
 handle_info(log_stats, State) ->
@@ -464,7 +464,8 @@ handle_continue(initialise_work, State) ->
             {SnkQueueName, Iteration, SnkW}
         end,
     Work = lists:map(MapPeerInfoFun, SnkQueuePeerInfo),
-    erlang:send_after(?INITIAL_TIMEOUT_MS, self(), deferred_start),
+    erlang:send_after(
+        riak_kv_util:ngr_initial_timeout(), self(), deferred_start),
     {noreply, State#state{enabled = true, work = Work}}.
 
 terminate(_Reason, State) ->

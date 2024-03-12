@@ -47,9 +47,6 @@
 -define(UPDATE_TIMEOUT_SECONDS, 300).
 -define(AUTO_DISCOVERY_MAXIMUM_SECONDS, 900).
 -define(AUTO_DISCOVERY_MINIMUM_SECONDS, 60).
--define(INITIAL_TIMEOUT, 60000).
-    % Wait a minute before the first allocation is considered,  Lot may be
-    % going on at a node immediately at startup
 
 
 -record(state, {discovery_peers = [] :: list(discovery_peer())}).
@@ -90,7 +87,8 @@ init([]) ->
             DefaultQueue = app_helper:get_env(riak_kv, replrtq_sinkqueue),
             SnkQueuePeerInfo =
                 riak_kv_replrtq_snk:tokenise_peers(DefaultQueue, SinkPeers),
-            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+            erlang:send_after(
+                riak_kv_util:ngr_initial_timeout(), self(), deferred_start),
             {ok, #state{discovery_peers = SnkQueuePeerInfo}};
         false ->
             {ok, #state{}}
@@ -148,7 +146,8 @@ handle_info(deferred_start, State) ->
                 "to initialise as riak_kv not ready",
                 [MinDelay]
             ),
-            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+            erlang:send_after(
+                riak_kv_util:ngr_initial_timeout(), self(), deferred_start),
             {noreply, State}
     end;
 handle_info({scheduled_discovery, QueueName}, State) ->

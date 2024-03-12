@@ -51,7 +51,8 @@
         get_backend_config/3,
         is_modfun_allowed/2,
         shuffle_list/1,
-        kv_ready/0
+        kv_ready/0,
+        ngr_initial_timeout/0
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 
@@ -219,6 +220,13 @@ get_write_once(Bucket) ->
 -spec kv_ready() -> boolean().
 kv_ready() ->
     lists:member(riak_kv, riak_core_node_watcher:services(node())).
+
+%% @doc
+%% Replication services may wait a period on startup to ensure stability before
+%% commencing.  Default 60s.  Normally only modified in test.
+-spec ngr_initial_timeout() -> pos_integer().
+ngr_initial_timeout() ->
+    application:get_env(riak_kv, ngr_initial_timeout, 60000).
 
 %% ===================================================================
 %% Hashtree token management functions

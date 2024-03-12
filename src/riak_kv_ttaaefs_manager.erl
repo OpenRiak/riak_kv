@@ -53,9 +53,6 @@
 -include_lib("kernel/include/logger.hrl").
 
 -define(SECONDS_IN_DAY, 86400).
--define(INITIAL_TIMEOUT, 60000).
-    % Wait a minute before the first allocation is considered,  Lot may be
-    % going on at a node immediately at startup
 -define(LOOP_TIMEOUT, 15000).
     % Always wait at least 15s after completing an action before
     % prompting another
@@ -326,7 +323,8 @@ init([]) ->
                         queue_name = SrcQueueName,
                         peer_queue_name = PeerQueueName,
                         check_window = CheckWindow},
-    erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+    erlang:send_after(
+        riak_kv_util:ngr_initial_timeout(), self(), deferred_start),
     {ok, State2}.
 
 handle_call(pause, _From, State) ->
@@ -350,7 +348,7 @@ handle_call(pause, _From, State) ->
                     slice_allocations = [],
                     slice_set_start = undefined,
                     is_paused = true},
-                ?INITIAL_TIMEOUT}
+                riak_kv_util:ngr_initial_timeout()}
     end;
 handle_call(resume, _From, State) ->
     case State#state.is_paused of
@@ -363,16 +361,19 @@ handle_call(resume, _From, State) ->
                     is_paused = false,
                     slice_allocations = [],
                     slice_set_start = undefined},
-                ?INITIAL_TIMEOUT};
+                    riak_kv_util:ngr_initial_timeout()};
         false ->
-            {reply, {error, not_paused}, State, ?INITIAL_TIMEOUT}
+            {reply,
+                {error, not_paused},
+                State,
+                riak_kv_util:ngr_initial_timeout()}
     end;
 handle_call({set_sink, Protocol, PeerIP, PeerPort}, _From, State) ->
     State0 = 
         State#state{peer_ip = PeerIP,
                         peer_port = PeerPort,
                         peer_protocol = Protocol},
-    {reply, ok, State0, ?INITIAL_TIMEOUT};
+    {reply, ok, State0, riak_kv_util:ngr_initial_timeout()};
 handle_call({set_queuename, QueueName}, _From, State) ->
     {reply, ok, State#state{queue_name = QueueName}};
 handle_call({set_allsync, LocalNVal, RemoteNVal}, _From, State) ->
@@ -643,9 +644,10 @@ handle_info(deferred_start, State) ->
             ?LOG_INFO(
                 "Tictac AAE Full-Sync Mgr waiting ~w ms "
                 "to initialise as riak_kv not ready",
-                [?INITIAL_TIMEOUT]
+                [riak_kv_util:ngr_initial_timeout()]
             ),
-            erlang:send_after(?INITIAL_TIMEOUT, self(), deferred_start),
+            erlang:send_after(
+                riak_kv_util:ngr_initial_timeout(), self(), deferred_start),
             {noreply, State}
     end;
 handle_info(timeout, State) ->
