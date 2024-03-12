@@ -48,7 +48,11 @@
             clear_range/0,
             get_range/0,
             autocheck_suppress/0,
-            autocheck_suppress/1]).
+            autocheck_suppress/1,
+            maybe_repair_trees/2,
+            trigger_tree_repairs/0,
+            disable_tree_repairs/0
+        ]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -134,8 +138,9 @@
         calendar:datetime()}.
 -type slot_info_fun() ::
     fun(() -> node_info()).
+-type repair_id() :: {pid(), non_neg_integer()}.
 
--export_type([work_item/0]).
+-export_type([work_item/0, repair_id/0]).
 
 %%%============================================================================
 %%% API
@@ -742,18 +747,47 @@ drop_next_autocheck() ->
 
 -spec trigger_tree_repairs() -> ok.
 trigger_tree_repairs() ->
+    Cnt = get_repair_count(),
     ?LOG_INFO(
-        "Setting node to repair trees as unsync'd all_check had no repairs"),
-    application:set_env(riak_kv, aae_fetchclocks_repair, true).
+        "Setting node to repair trees as unsync'd all_check had no "
+        "repairs - count of triggered repairs for this node is ~w",
+        [Cnt]
+    ),
+    application:set_env(
+        riak_kv, aae_fetchclocks_repair, {true, {self(), Cnt}}),
+    application:set_env(
+        riak_kv, aae_fetchclocks_repair_count, Cnt).
 
 -spec disable_tree_repairs() -> ok.
 disable_tree_repairs() ->
-    case application:get_env(riak_kv, aae_fetchclocks_repair_force, false) of
-        true ->
-            ok;
-        false ->
-            application:set_env(riak_kv, aae_fetchclocks_repair, false)
+    application:set_env(riak_kv, aae_fetchclocks_repair, false).
+
+-spec get_repair_count() -> pos_integer().
+get_repair_count() ->
+    case application:get_env(riak_kv, aae_fetchclocks_repair_count, 0) of
+        N when is_integer(N) ->
+            N + 1;
+        _ ->
+            1
     end.
+
+-spec maybe_repair_trees(
+    repair_id()|undefined, boolean()) -> {boolean(), repair_id()|undefined}.
+maybe_repair_trees(LastRepairID, true) ->
+    %% If only a subset of partitions are to be queried on the vnode, then
+    %% don't repair.  Wait until all partitions are to be repaired so that
+    %% there is not a partial repair
+    {false, LastRepairID};
+maybe_repair_trees(LastRepairID, _Filtered) ->
+    case application:get_env(riak_kv, aae_fetchclocks_repair, false) of
+        {true, LastRepairID} ->
+            {false, LastRepairID};
+        {true, UpdRepairID} ->
+            {true, UpdRepairID};
+        _ ->
+            {false, LastRepairID}
+    end.
+
 
 %%%============================================================================
 %%% Internal functions

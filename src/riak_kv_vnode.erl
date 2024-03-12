@@ -165,7 +165,8 @@
                 update_hook :: update_hook(),
                 max_aae_queue_time :: non_neg_integer(),
                 enable_nextgenreplsrc = false :: boolean(),
-                sizelimit_nextgenreplsrc = 0 :: non_neg_integer()
+                sizelimit_nextgenreplsrc = 0 :: non_neg_integer(),
+                tree_repair_id :: undefined|riak_kv_ttaaefs_manager:repair_id()
                }).
 
 -type index_op() :: add | remove.
@@ -1719,17 +1720,19 @@ handle_aaefold({merge_branch_nval, Nval, BranchIDs},
     {noreply, State};
 handle_aaefold({fetch_clocks_nval, Nval, SegmentIDs}, 
                     InitAcc, Nval,
-                    IndexNs, _Filtered, ReturnFun, Cntrl, Sender,
+                    IndexNs, Filtered, ReturnFun, Cntrl, Sender,
                     State) ->
-    case app_helper:get_env(riak_kv, aae_fetchclocks_repair, false) of
+    {ToRepair, NewRepairID} =
+        riak_kv_ttaaefs_manager:maybe_repair_trees(
+            State#state.tree_repair_id, Filtered),
+    case ToRepair of
         true ->
             aae_controller:aae_fetchclocks(Cntrl, 
                                             IndexNs, 
                                             SegmentIDs, 
                                             ReturnFun, 
                                             fun preflistfun/2),
-            
-            {noreply, State};
+            {noreply, State#state{tree_repair_id = NewRepairID}};
         false ->
             %% Using fetch_clocks_range will mean that the AF3_QUEUE will be
             %% used for scheduling the work not the aae_runner.  Also, the 
