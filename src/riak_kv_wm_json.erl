@@ -19,16 +19,16 @@
 %% % @format
 %%
 -module(riak_kv_wm_json).
--moduledoc """
-A library for encoding and decoding JSON.
 
-This module implements EEP68.
-
-Both encoder and decoder fully conform to
-[RFC 8259](https://tools.ietf.org/html/rfc8259) and
-[ECMA 404](http://www.ecma-international.org/publications/standards/Ecma-404.htm)
-standards. The decoder is tested using [JSONTestSuite](https://github.com/nst/JSONTestSuite).
-""".
+%% @doc
+%% A library for encoding and decoding JSON.
+%%
+%% This module implements EEP68.
+%%
+%% Both encoder and decoder fully conform to
+%% [RFC 8259](https://tools.ietf.org/html/rfc8259) and
+%% [ECMA 404](http://www.ecma-international.org/publications/standards/Ecma-404.htm)
+%% standards. The decoder is tested using [JSONTestSuite](https://github.com/nst/JSONTestSuite).
 
 -dialyzer(no_improper_lists).
 
