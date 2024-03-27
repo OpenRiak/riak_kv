@@ -1497,11 +1497,14 @@ handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, State) ->
 
 handle_command({block_vnode, BlockRequest, BlockTimeMS}, Sender, State) ->
     riak_core_vnode:reply(Sender, {blocked, self()}),
+    SW = os:timestamp(),
     receive
         {release_vnode, BlockRequest} ->
+            LockedTime = timer:now_diff(os:timestamp(), SW),
             ?LOG_INFO(
-                "Vnode block released for ~w request ~w",
-                [Sender, BlockRequest]),
+                "Vnode block released for ~w request ~w after"
+                "block_time=~w microseconds",
+                [Sender, BlockRequest, LockedTime]),
             {noreply, State}
     after
         BlockTimeMS ->
@@ -2664,6 +2667,12 @@ handle_info({aae_pong, QueueTime}, State) ->
         false ->
             ok
     end,
+    {ok, State};
+handle_info({release_vnode, BlockRequest}, State) ->
+    ?LOG_WARNING(
+        "Vnode block release request ~w received outside of block",
+        [BlockRequest]
+    ),
     {ok, State};
 handle_info({Ref, ok}, State) ->
     ?LOG_INFO("Ignoring ok returned after timeout for Ref ~p", [Ref]),
