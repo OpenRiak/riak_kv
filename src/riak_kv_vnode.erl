@@ -441,7 +441,12 @@ queue_tictactreerebuild(AAECntrl, Partition, OnlyIfBroken, State) ->
             ?LOG_INFO("Starting tree rebuild for partition=~w", [Partition]),
             SW = os:timestamp(),
             BlockRequest = self(),
-            BlockTimeMS = ?INIT_REBUILD_BLOCKTIME,
+            BlockTimeMS =
+                application:get_env(
+                    riak_kv,
+                    tictacaae_rebuild_blocktime,
+                    ?INIT_REBUILD_BLOCKTIME
+                ),
             {blocked, VnodePid} =
                 riak_core_vnode_master:sync_command(
                     {Partition, node()},

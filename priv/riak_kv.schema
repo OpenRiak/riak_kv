@@ -147,7 +147,7 @@
   {commented, disabled}
 ]}.
 
-%% @doc Frequency to prompt exchange per vnode
+%% @doc Frequency to prompt exchange per vnode (milliseconds)
 %% The number of milliseconds which the vnode must wait between self-pokes to
 %% maybe prompt the next exchange. Default is 8 minutes - check all partitions
 %% when n=3 once every hour (in each direction).  A cycle of exchanges will
@@ -161,7 +161,7 @@
   hidden
 ]}.
 
-%% @doc Frequency to prompt rebuild check per vnode
+%% @doc Frequency to prompt rebuild check per vnode (milliseconds)
 %% The number of milliseconds which the vnode must wait between self-pokes to
 %% maybe prompt the next rebuild. Default is 60 minutes.
 %% When a node is being re-introduced to a cluster following a long delay, then
@@ -170,6 +170,20 @@
 {mapping, "tictacaae_rebuildtick", "riak_kv.tictacaae_rebuildtick", [
   {datatype, integer},
   {default, 3600000},
+  hidden
+]}.
+
+%% @doc Block vnode for tree rebuild (milliseconds)
+%% When rebuilding a vnode's tree cache, the vnode can be blocked while the
+%% snapshot is taken - to eliminate race conditions that might otherwise cause
+%% a segment to be miscalculated.  By default the vnode block is always
+%% released within 1000ms i.e. should a process crash or there be a delay in
+%% the expected release, the block will still be released after this delay, and
+%% the risk of miscalculation will be accepted in preference to having a longer
+%% block
+{mapping, "tictacaae_rebuild_blocktime", "riak_kv.tictacaae_rebuild_blocktime", [
+  {datatype, integer},
+  {default, 1000},
   hidden
 ]}.
 
