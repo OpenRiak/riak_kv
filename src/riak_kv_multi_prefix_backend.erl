@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2014-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -224,16 +225,16 @@ start_backend_fun(Partition) ->
                                    Module,
                                    Partition,
                                    ModConfig) of
-                    {Module, Reason} ->
+                    {Module, Error} ->
                         {Backends,
-                         [{Module, Reason} | Errors]};
+                         [{Module, Error} | Errors]};
                     Backend ->
                         {[Backend | Backends],
                          Errors}
                 end
-            catch _:Error ->
+            catch _:Reason:Stacktrace ->
                     {Backends,
-                     [{Module, Error} | Errors]}
+                     [{Module, {Reason, Stacktrace}} | Errors]}
             end
     end.
 
@@ -243,12 +244,12 @@ start_backend(Name, Module, Partition, Config) ->
         case Module:start(Partition, Config) of
             {ok, State} ->
                 {Name, Module, State};
-            {error, Reason} ->
-                {Module, Reason}
+            {error, Error} ->
+                {Module, Error}
         end
     catch
-        _:Reason1 ->
-             {Module, Reason1}
+        _:Reason:Stacktrace ->
+             {Module, {Reason, Stacktrace}}
     end.
 
 %% @doc Stop the backends

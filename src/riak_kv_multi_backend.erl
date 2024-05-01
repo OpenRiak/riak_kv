@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2023 Workday, Inc.
+%% Copyright (c) 2023-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -196,9 +196,9 @@ start_backend_fun(Partition) ->
                         {[Backend | Backends],
                          Errors}
                 end
-            catch _:Error ->
+            catch _:Error:Stacktrace ->
                     {Backends,
-                     [{Module, Error} | Errors]}
+                     [{Module, {Error, Stacktrace}} | Errors]}
             end
     end.
 
@@ -212,8 +212,8 @@ start_backend(Name, Module, Partition, Config) ->
                 {Module, Reason}
         end
     catch
-        _:Reason1 ->
-             {Module, Reason1}
+        _:Error:Stacktrace ->
+             {Module, {Error, Stacktrace}}
     end.
 
 %% @doc Stop the backends
