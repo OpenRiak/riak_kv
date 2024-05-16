@@ -40,7 +40,9 @@
          upgrade_query/1,
          object_key_in_range/3,
          index_key_in_range/3,
-         add_timeout_opt/2
+         add_timeout_opt/2,
+         compile_re/1,
+         is_valid_index/1
         ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -74,6 +76,8 @@
 % -type query_def() :: {ok, term()} | {error, term()} | {term(), {error, term()}}.
 % -export_type([query_def/0]).
 -type query_def() :: #riak_kv_index_v3{}|#riak_kv_index_v2{}.
+-type pcre_mp() :: {re_pattern, term(), term(), term(), term()}.
+
 -export_type([query_def/0]).
 
 -type last_result() :: {value(), key()} | key().
@@ -82,6 +86,16 @@
 -type continuation() :: binary() | undefined. %% encoded last_result().
 
 -type query_version() :: v1 | v2 | v3.
+
+-type index_query() :: ?KV_INDEX_Q{}.
+
+-spec compile_re(
+    undefined|iodata()) ->
+        {ok, pcre_mp()|undefined}|{error, {string(), non_neg_integer()}}.
+compile_re(undefined) ->
+    {ok, undefined};
+compile_re(Regex) ->
+    re:compile(Regex).
 
 mapred_index(Dest, Args) ->
     mapred_index(Dest, Args, ?TIMEOUT).
@@ -317,6 +331,15 @@ to_index_query(OldVersion, Args) ->
 to_index_query(Args) ->
     Version = riak_core_capability:get({riak_kv, secondary_index_version}, v1),
     to_index_query(Version, Args).
+
+-spec is_valid_index(index_query()) -> boolean().
+is_valid_index(
+        ?KV_INDEX_Q{start_term = Start, term_regex = Regex})
+        when is_integer(Start), Regex =/= undefined ->
+    false;
+is_valid_index(_Query) ->
+    true.
+
 
 %% @doc upgrade a V1 Query to a v2 Query
 make_query({eq, ?BUCKETFIELD, _Bucket}, Q) ->

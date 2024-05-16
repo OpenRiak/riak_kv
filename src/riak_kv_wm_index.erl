@@ -186,165 +186,192 @@ request_class(ReqData) ->
 %%      a known type.
 malformed_request(RD, Ctx) ->
     %% Pull the params...
-    Bucket = list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(bucket, RD))),
-    IndexField = list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(field, RD))),
+    Bucket =
+        list_to_binary(
+            riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(bucket, RD))),
+    IndexField =
+        list_to_binary(
+            riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(field, RD))),
     Args1 = wrq:path_tokens(RD),
-    Args2 = [list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, X)) || X <- Args1],
+    Args2 =
+        [list_to_binary(riak_kv_wm_utils:maybe_decode_uri(RD, X))
+            || X <- Args1],
     ReturnTerms0 = wrq:get_qs_value(?Q_2I_RETURNTERMS, "false", RD),
     ReturnTerms1 = normalize_boolean(string:to_lower(ReturnTerms0)),
     Continuation = wrq:get_qs_value(?Q_2I_CONTINUATION, RD),
     PgSort0 = wrq:get_qs_value(?Q_2I_PAGINATION_SORT, RD),
-    PgSort = case PgSort0 of
-        undefined -> undefined;
-        _ -> normalize_boolean(string:to_lower(PgSort0))
-    end,
+    PgSort =
+        case PgSort0 of
+            undefined ->
+                undefined;
+            _ ->
+                normalize_boolean(string:to_lower(PgSort0))
+        end,
     MaxVal = validate_max(wrq:get_qs_value(?Q_2I_MAX_RESULTS, RD)),
     TermRegex = wrq:get_qs_value(?Q_2I_TERM_REGEX, RD),
     Timeout0 =  wrq:get_qs_value("timeout", RD),
-    {Start, End} = case {IndexField, Args2} of
-                       {<<"$bucket">>, _} -> {undefined, undefined};
-                       {_, []} -> {undefined, undefined};
-                       {_, [S]} -> {S, S};
-                       {_, [S, E]} -> {S, E}
-                   end,
+    {Start, End} =
+        case {IndexField, Args2} of
+            {<<"$bucket">>, _} -> {undefined, undefined};
+            {_, []} -> {undefined, undefined};
+            {_, [S]} -> {S, S};
+            {_, [S, E]} -> {S, E}
+        end,
     IsEqualOp = length(Args1) == 1,
     InternalReturnTerms = not( IsEqualOp orelse IndexField == <<"$field">> ),
-    QRes = riak_index:to_index_query(
-             [
-                {field, IndexField}, {start_term, Start}, {end_term, End},
-                {return_terms, InternalReturnTerms},
-                {continuation, Continuation},
-                {term_regex, TermRegex}
-             ]
-             ++ [{max_results, MaxResults} || {true, MaxResults} <- [MaxVal]]
-            ),
-    ValRe = case TermRegex of
-        undefined ->
-            ok;
-        _ ->
-            re:compile(TermRegex)
-    end,
-
     Stream0 = wrq:get_qs_value("stream", "false", RD),
     Stream = normalize_boolean(string:to_lower(Stream0)),
-
-    case {PgSort, ReturnTerms1, validate_timeout(Timeout0), MaxVal,
-          QRes,
-          ValRe, Stream} of
-        {malformed, _, _, _, 
-                _, 
-                _, _} ->
-            {true,
-            wrq:set_resp_body(io_lib:format("Invalid ~p. ~p is not a boolean",
-                                             [?Q_2I_PAGINATION_SORT, PgSort0]),
-                               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, malformed, _, _, 
-                _, 
-                _, _} ->
-            {true,
-            wrq:set_resp_body(io_lib:format("Invalid ~p. ~p is not a boolean",
-                                             [?Q_2I_RETURNTERMS, ReturnTerms0]),
-                               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, _, _, _, 
-                {ok, ?KV_INDEX_Q{start_term=NormStart}}, 
-                {ok, _CompiledRe}, _}
-                when is_integer(NormStart) ->
-            {true,
-            wrq:set_resp_body("Can not use term regular expressions"
-                               " on integer queries",
-                               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, _, _, _, 
-                _, 
-                {error, ReError}, _} ->
-                {true,
-            wrq:set_resp_body(
-                    io_lib:format("Invalid term regular expression ~p : ~p",
-                                  [TermRegex, ReError]),
-                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, _, {true, Timeout}, {true, MaxResults}, 
-                {ok, Query}, 
-                _, _} ->
-            %% Request is valid.
-            ReturnTerms2 = riak_index:return_terms(ReturnTerms1, Query),
-            %% Special case: a continuation implies pagination sort
-            %% even if no max_results was given.
-            PgSortFinal = case Continuation of
-                              undefined -> PgSort;
-                              _ -> true
-                          end,
-            NewCtx = Ctx#ctx{
-                                bucket = Bucket,
-                                index_query = Query,
-                                max_results = MaxResults,
-                                return_terms = ReturnTerms2,
-                                timeout=Timeout,
-                                pagination_sort = PgSortFinal,
-                                streamed = Stream
-                      },
-            {false, RD, NewCtx};
-        {_, _, _, _, 
-                {error, Reason}, 
-                _, _} ->
+    case riak_index:compile_re(TermRegex) of
+        {error, ReError} ->
             {true,
                 wrq:set_resp_body(
-                io_lib:format("Invalid query: ~p~n", [Reason]),
-                wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, _, _, {false, BadVal},
-                _, 
-                _, _} ->
-            {true,
-            wrq:set_resp_body(io_lib:format("Invalid ~p. ~p is not a positive integer",
-                                             [?Q_2I_MAX_RESULTS, BadVal]),
-                               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-            Ctx};
-        {_, _, {error, Input}, _,
-                _, 
-                _, _} ->
-            {true, wrq:append_to_resp_body(io_lib:format("Bad timeout "
-                                                           "value ~p. Must be a non-negative integer~n",
-                                                           [Input]),
-                                             wrq:set_resp_header(?HEAD_CTYPE,
-                                                                 "text/plain", RD)), Ctx}
+                    io_lib:format(
+                        "Invalid term regular expression ~p : ~p",
+                        [TermRegex, ReError]
+                    ),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                Ctx};
+        {ok, CompiledRegex} ->
+            QueryResult =
+                riak_index:to_index_query(
+                    [{field, IndexField}, {start_term, Start}, {end_term, End},
+                        {max_results, MaxVal},
+                        {continuation, Continuation},
+                        {return_terms, InternalReturnTerms},
+                        {term_regex, CompiledRegex}
+                    ]
+               ),
+            case QueryResult of
+                {error, Reason} ->
+                    {true,
+                        wrq:set_resp_body(
+                            io_lib:format(
+                                "Invalid query: ~p~n", [Reason]),
+                                wrq:set_resp_header(
+                                    ?HEAD_CTYPE, "text/plain", RD)),
+                        Ctx};
+                {ok, Query} ->
+                    case riak_index:is_valid_index(Query) of
+                        false ->
+                            {true,
+                                wrq:set_resp_body(
+                                    "Can not use term regular expressions"
+                                    " on integer queries",
+                                    wrq:set_resp_header(
+                                        ?HEAD_CTYPE, "text/plain", RD)),
+                                Ctx};
+                        _ ->
+                            ValidationResult =
+                                validate_query(
+                                    PgSort,
+                                    ReturnTerms1,
+                                    validate_timeout(Timeout0),
+                                    MaxVal,
+                                    Stream,
+                                    RD
+                                ),
+                            case ValidationResult of
+                                ok ->
+                                    PgSortFinal =
+                                        case Continuation of
+                                            undefined ->
+                                                PgSort;
+                                            _ ->
+                                                true
+                                        end,
+                                    NewCtx =
+                                        Ctx#ctx{
+                                            bucket = Bucket,
+                                            index_query = Query,
+                                            max_results = MaxVal,
+                                            return_terms =
+                                                riak_index:return_terms(
+                                                    ReturnTerms1, Query),
+                                            timeout=Timeout0,
+                                            pagination_sort = PgSortFinal,
+                                            streamed = Stream
+                                        },
+                                    {false, RD, NewCtx};
+                                ErrorMessage ->
+                                    {true, ErrorMessage, Ctx}
+                            end
+                    end
+            end
     end.
 
+
+validate_query({malformed, BadPgSort}, _, _, _, _, RD) ->
+    wrq:set_resp_body(
+        io_lib:format(
+            "Invalid ~p. ~p is not a boolean",
+            [?Q_2I_PAGINATION_SORT, BadPgSort]),
+            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD));
+validate_query(_, {malformed, BadReturnTerms}, _, _, _, RD) ->
+    wrq:set_resp_body(
+        io_lib:format(
+            "Invalid ~p. ~p is not a boolean",
+            [?Q_2I_RETURNTERMS, BadReturnTerms]),
+            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD));
+validate_query(_, _, {malformed, BadN}, _, _, RD) ->
+    wrq:append_to_resp_body(
+        io_lib:format(
+            "Bad timeout "
+            "value ~p. Must be a non-negative integer~n",
+            [BadN]),
+            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD));
+validate_query(_, _, _, {malformed, BadMR}, _, RD) ->
+    wrq:set_resp_body(
+        io_lib:format(
+            "Invalid ~p. ~p is not a positive integer",
+            [?Q_2I_MAX_RESULTS, BadMR]),
+            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD));
+validate_query(_, _, _, _, {malformed, BadStreamReq}, RD) ->
+    wrq:set_resp_body(
+        io_lib:format(
+            "Invalid stream. ~p is not a boolean",
+            [BadStreamReq]),
+            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD));
+validate_query(_, _, _, _, _, _RD) ->
+    %% Request is valid.
+    ok.
+
+-spec validate_timeout(
+        undefined|string()) ->
+            non_neg_integer()|{malformed, string()}.
 validate_timeout(undefined) ->
-    {true, undefined};
+    undefined;
 validate_timeout(Str) ->
-    try
-        list_to_integer(Str) of
+    try list_to_integer(Str) of
         Int when Int >= 0 ->
-            {true, Int};
+            Int;
         Neg ->
-            {error, Neg}
+            {malformed, Neg}
     catch
         _:_ ->
-            {error, Str}
+            {malformed, Str}
     end.
 
+-spec validate_max(
+    undefined|string()) -> non_neg_integer()|all|{malformed, string()}.
 validate_max(undefined) ->
-    {true, all};
+    all;
 validate_max(N) when is_list(N) ->
-    try
-        list_to_integer(N) of
+    try list_to_integer(N) of
         Max when Max > 0  ->
-            {true, Max};
+            Max;
         ZeroOrLess ->
-            {false, ZeroOrLess}
+            {malformed, ZeroOrLess}
     catch _:_ ->
-            {false, N}
+        {malformed, N}
     end.
 
+-spec normalize_boolean(string()) -> boolean()|{malformed, string()}.
 normalize_boolean("false") ->
     false;
 normalize_boolean("true") ->
     true;
-normalize_boolean(_) ->
-    malformed.
+normalize_boolean(OtherString) ->
+    {malformed, OtherString}.
 
 -spec content_types_provided(#wm_reqdata{}, context()) ->
     {[{ContentType::string(), Producer::atom()}], #wm_reqdata{}, context()}.

@@ -71,31 +71,23 @@ validate_request(#rpbindexreq{qtype = range, range_min = Min, range_max = Max})
     when not is_binary(Min); not is_binary(Max) ->
     {error, {format, "Invalid range query: ~p -> ~p", [Min, Max]}};
 validate_request(#rpbindexreq{term_regex = TermRe} = Req) ->
-    {ValRe, ValErr} = ensure_compiled_re(TermRe),
-    case ValRe of
-        error ->
-            {error, {format, "Invalid term regular expression ~p : ~p", [TermRe, ValErr]}};
-        _ ->
-            validate_query(Req)
+    case riak_index:compile_re(TermRe) of
+        {error, ReError} ->
+            {error,
+                {format,
+                    "Invalid term regular expression ~p : ~p",
+                    [TermRe, ReError]}};
+        {ok, CompiledRegex} ->
+            {ok, Query} =
+                riak_index:to_index_query(query_params(Req, CompiledRegex)),
+            case riak_index:is_valid_index(Query) of
+                false ->
+                    {error, "Can not use term regular expression in integer query"};
+                _ ->
+                    Query
+            end
     end.
 
-validate_query(Req) ->
-    Query = riak_index:to_index_query(query_params(Req)),
-    case Query of
-        {ok, ?KV_INDEX_Q{start_term = Start, term_regex = Re}} when is_integer(Start)
-                                                                    andalso Re =/= undefined ->
-            {error, "Can not use term regular expression in integer query"};
-        _ ->
-            Query
-    end.
-
-ensure_compiled_re(TermRe) ->
-    case TermRe of
-        undefined ->
-            {undefined, undefined};
-        _ ->
-            re:compile(TermRe)
-    end.
 
 %% @doc process/2 callback. Handles an incoming request message.
 process(#rpbindexreq{stream = S} = Req, State) ->
@@ -126,7 +118,7 @@ validate_request_and_maybe_perform_query(Req, State) ->
 error_accept(Class, State) ->
     {error, riak_core_util:job_class_disabled_message(binary, Class), State}.
 
-maybe_perform_query({ok, Query}, Req=#rpbindexreq{stream=true}, State) ->
+maybe_perform_query(Query, Req=#rpbindexreq{stream=true}, State) ->
     #rpbindexreq{type=T, bucket=B, max_results=MaxResults, timeout=Timeout,
                  pagination_sort=PgSort0, continuation=Continuation} = Req,
     #state{client=Client} = State,
@@ -139,7 +131,7 @@ maybe_perform_query({ok, Query}, Req=#rpbindexreq{stream=true}, State) ->
         riak_client:stream_get_index(Bucket, Query, Opts, Client),
     ReturnTerms = riak_index:return_terms(Req#rpbindexreq.return_terms, Query),
     {reply, {stream, ReqId}, State#state{req_id=ReqId, req=Req#rpbindexreq{return_terms=ReturnTerms}}};
-maybe_perform_query({ok, Query}, Req, State) ->
+maybe_perform_query(Query, Req, State) ->
     #rpbindexreq{type=T, bucket=B, max_results=MaxResults,
                  return_terms=ReturnTerms0, timeout=Timeout,
                  pagination_sort=PgSort0, continuation=Continuation} = Req,
@@ -166,20 +158,33 @@ handle_query_results(ReturnTerms, MaxResults,  {ok, Results}, State) ->
     Resp = encode_results(ReturnTerms, Results, Cont),
     {reply, Resp, State}.
 
-query_params(#rpbindexreq{index=Index= <<"$bucket">>,
-                          term_regex=Re, max_results=MaxResults,
-                          continuation=Continuation}) ->
+query_params(
+        #rpbindexreq{
+            index=Index= <<"$bucket">>,
+            max_results=MaxResults,
+            continuation=Continuation},
+        Re) ->
     [{field, Index},
      {return_terms, false}, {term_regex, Re},
      {max_results, MaxResults}, {continuation, Continuation}];
-query_params(#rpbindexreq{qtype=eq, index=Index, key=Value,
-                          term_regex=Re, max_results=MaxResults,
-                          continuation=Continuation}) ->
+query_params(
+        #rpbindexreq{
+            qtype=eq,
+            index=Index,
+            key=Value,
+            max_results=MaxResults,
+            continuation=Continuation},
+        Re) ->
     [{field, Index}, {start_term, Value}, {end_term, Value}, {term_regex, Re},
      {max_results, MaxResults}, {return_terms, false}, {continuation, Continuation}];
-query_params(#rpbindexreq{index=Index, range_min=Min, range_max=Max,
-                          term_regex=Re, max_results=MaxResults,
-                          continuation=Continuation}) ->
+query_params(
+        #rpbindexreq{
+            index=Index,
+            range_min=Min,
+            range_max=Max,
+            max_results=MaxResults,
+            continuation=Continuation},
+        Re) ->
      [{field, Index}, {start_term, Min}, {end_term, Max},
       {term_regex, Re}, {max_results, MaxResults},
       {continuation, Continuation}].
