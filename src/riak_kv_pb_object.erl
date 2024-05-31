@@ -314,22 +314,23 @@ process(
                     riak_kv_token_session:session_request_retry({B, K}),
                 case TokenResult of
                     {true, Token} ->
-                        GetRsp =
-                            riak_kv_token_session:session_use(
-                                Token, get, [B, K, GetOpts]
-                            ),
-                        {CheckR, PutOpts} =
-                            conditional_check(
-                                GetRsp, {NotMod, PbVC}, NoneMatch),
-                        {CheckR, PutOpts, Token};
+                        Condition =
+                            case NotMod of
+                                undefined ->
+                                    {undefined, true, GetOpts};
+                                _ ->
+                                    InClock = erlify_rpbvc(PbVC),
+                                    {{true, InClock}, undefined, GetOpts}
+                            end,
+                        {ok, [{condition_check, Condition}], Token};
                     _ ->
                         ?LOG_WARNING(
                             "Fallback to weak check as no token available"
                         ),
                         {CheckR, PutOpts} =
-                            conditional_check(
+                            riak_kv_put_fsm:conditional_check(
                                 riak_client:get(B, K, GetOpts, C),
-                                {NotMod, PbVC},
+                                {NotMod, erlify_rpbvc(PbVC)},
                                 NoneMatch
                             ),
                         {CheckR, PutOpts, none}
@@ -339,9 +340,9 @@ process(
                     make_option(n_val, N_val) ++
                     make_option(sloppy_quorum, SloppyQuorum),
                 {CheckR, PutOpts} =
-                    conditional_check(
+                    riak_kv_put_fsm:conditional_check(
                         riak_client:get(B, K, GetOpts, C),
-                        {NotMod, PbVC},
+                        {NotMod, erlify_rpbvc(PbVC)},
                         NoneMatch
                     ),
                 {CheckR, PutOpts, none}
@@ -417,6 +418,12 @@ process(
                     {reply, PutResp, State};
                 {error, notfound} ->
                     {reply, #rpbputresp{}, State};
+                {error, CondRsp}
+                        when CondRsp == "match_found"; CondRsp == "modified" ->
+                    %% Conditional PUTs which fail at the PUT_FSM
+                    %% Otherwise formatting will be different from condition
+                    %% failing at the API
+                    {error, CondRsp, State};
                 {error, PutError} ->
                     {error, {format, PutError}, State}
             end
@@ -462,28 +469,6 @@ process_stream(_,_,State) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-
--spec conditional_check(
-    {ok, riak_object:riak_object()}|{error, term()},
-    {boolean(), undefined|binary()},
-    boolean()) -> {ok|{error, term()}, list()}. 
-conditional_check({ok, _}, _NotMod, NoneMatch) when NoneMatch ->
-    {{error, "match_found"}, []};
-conditional_check({ok, PreFetchO}, {NotMod, PbVC}, _NoneMatch) when NotMod ->
-    InClock = erlify_rpbvc(PbVC),
-    CurrClock = riak_object:vclock(PreFetchO),
-    case vclock:equal(InClock, CurrClock) of
-        true ->
-            {ok, [{if_not_modified, InClock}]};
-        _ ->
-            {{error, "modified"}, []}
-    end;
-conditional_check({error, notfound}, _NotMod, NoneMatch) when NoneMatch ->
-    {ok, [{if_none_match, true}]};
-conditional_check({error, notfound}, {NotMod, _}, _NoneMatch) when NotMod ->
-    {{error, "notfound"}, []};
-conditional_check({error, PreFetchError}, _NotMod, _NoneMatch) ->
-    {{error, {format, PreFetchError}}, []}.
 
 
 -spec encode_nextgenrepl_response(
