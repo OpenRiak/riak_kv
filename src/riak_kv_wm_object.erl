@@ -176,21 +176,18 @@
               riak,         %% local | {node(), atom()} - params for riak client
               doc,          %% {ok, riak_object()}|{error, term()} - the object found
               vtag,         %% string() - vtag the user asked for
-              bucketprops,  %% proplist() - properties of the bucket
               links,        %% [link()] - links of the object
               index_fields, %% [index_field()]
               method,       %% atom() - HTTP method for the request
               ctype,        %% string() - extracted content-type provided
               charset,      %% string() | undefined - extracted character set provided
               timeout,      %% integer() - passed-in timeout value in ms
-              security      %% security context
+              security,     %% security context
+              header_map    %% map of http headers interesting within this module
              }).
 
--ifdef(namespaced_types).
+
 -type riak_kv_wm_object_dict() :: dict:dict().
--else.
--type riak_kv_wm_object_dict() :: dict().
--endif.
 
 -include_lib("webmachine/include/webmachine.hrl").
 -include("riak_kv_wm_raw.hrl").
@@ -204,12 +201,77 @@
 
 -type link() :: {{Bucket::binary(), Key::binary()}, Tag::binary()}.
 
--define(DEFAULT_TIMEOUT, 60000).
 -define(V1_BUCKET_REGEX, "/([^/]+)>; ?rel=\"([^\"]+)\"").
 -define(V1_KEY_REGEX, "/([^/]+)/([^/]+)>; ?riaktag=\"([^\"]+)\"").
 -define(V2_BUCKET_REGEX, "</buckets/([^/]+)>; ?rel=\"([^\"]+)\"").
 -define(V2_KEY_REGEX,
             "</buckets/([^/]+)/keys/([^/]+)>; ?riaktag=\"([^\"]+)\"").
+
+-define(BINHEAD_CTYPE, <<"content-type">>).
+-define(BINHEAD_IF_NOT_MODIFIED, <<"x-riak-if-not-modified">>).
+-define(BINHEAD_NONE_MATCH, <<"if-none-match">>).
+-define(BINHEAD_MATCH, <<"if-match">>).
+-define(BINHEAD_UNMODIFIED_SINCE, <<"if-unmodified-since">>).
+-define(BINHEAD_ENCODING, <<"content-encoding">>).
+-define(BINHEAD_ACCEPT, <<"accept">>).
+-define(BINHEAD_LINK, <<"link">>).
+-define(BINHEAD_VCLOCK, <<"x-riak-vclock">>).
+-define(PREFIX_USERMETA, "x-riak-meta-").
+-define(PREFIX_INDEX, "x-riak-index-").
+
+-spec make_reqheader_map(request_data()) -> #{binary() => any()}.
+make_reqheader_map(RD) ->
+    lists:foldl(
+        fun({HeadKey, HeadVal}, AccMap) ->
+            accumulate_header_info(
+                list_to_binary(HeadKey),
+                HeadVal,
+                AccMap
+            )
+        end,
+        maps:new(),
+        mochiweb_headers:to_normalised_list(wrq:req_headers(RD))
+    ).
+
+accumulate_header_info(<<?PREFIX_INDEX, Field/binary>>, T, MapAcc) ->
+    maps:update_with(
+        ?PREFIX_INDEX,
+        fun(Indices) -> [{Field, T}|Indices] end,
+        [{Field, T}],
+        MapAcc
+    );
+accumulate_header_info(<<?PREFIX_USERMETA, Meta/binary>>, V, MapAcc) ->
+    maps:update_with(
+        ?PREFIX_USERMETA,
+        fun(Indices) ->
+            [{<<?PREFIX_USERMETA, Meta/binary>>, V}|Indices]
+        end,
+        [{<<?PREFIX_USERMETA, Meta/binary>>, V}],
+        MapAcc
+    );
+accumulate_header_info(?BINHEAD_ACCEPT, V, MapAcc) ->
+    maps:put(?BINHEAD_ACCEPT, V, MapAcc);
+accumulate_header_info(?BINHEAD_CTYPE, V, MapAcc) ->
+    maps:put(?BINHEAD_CTYPE, V, MapAcc);
+accumulate_header_info(?BINHEAD_ENCODING, V, MapAcc) ->
+    maps:put(?BINHEAD_ENCODING, V, MapAcc);
+accumulate_header_info(?BINHEAD_VCLOCK, VC, MapAcc) ->
+    maps:put(
+        ?BINHEAD_VCLOCK,
+        riak_object:decode_vclock(base64:decode(VC)),
+        MapAcc);
+accumulate_header_info(?BINHEAD_LINK, V, MapAcc) ->
+    maps:put(?BINHEAD_LINK, V, MapAcc);
+accumulate_header_info(?BINHEAD_IF_NOT_MODIFIED, V, MapAcc) ->
+    maps:put(?BINHEAD_IF_NOT_MODIFIED, V, MapAcc);
+accumulate_header_info(?BINHEAD_UNMODIFIED_SINCE, V, MapAcc) ->
+    maps:put(?BINHEAD_UNMODIFIED_SINCE, V, MapAcc);
+accumulate_header_info(?BINHEAD_MATCH, V, MapAcc) ->
+    maps:put(?BINHEAD_MATCH, V, MapAcc);
+accumulate_header_info(?BINHEAD_NONE_MATCH, V, MapAcc) ->
+    maps:put(?BINHEAD_NONE_MATCH, V, MapAcc);
+accumulate_header_info(_DiscardIdx, _Value, MapAcc) ->
+    MapAcc.
 
 -spec init(proplists:proplist()) -> {ok, context()}.
 %% @doc Initialize this resource.  This function extracts the
@@ -248,6 +310,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
                         list_to_binary(
                             riak_kv_wm_utils:maybe_decode_uri(RD, K))
                 end,
+            HeaderMap = make_reqheader_map(RD),
             {true,
                 RD,
                 Ctx#ctx{
@@ -255,6 +318,7 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
                     client=C,
                     bucket=Bucket,
                     key=Key,
+                    header_map = HeaderMap,
                     vtag=wrq:get_qs_value(?Q_VTAG, RD)}};
         Error ->
             {false,
@@ -401,7 +465,7 @@ malformed_request([H|T], RD, Ctx) ->
 %% PUT/POST.
 %% This should probably result in a 415 using the known_content_type callback
 malformed_content_type(RD, Ctx) ->
-    case wrq:get_req_header(?HEAD_CTYPE, RD) of
+    case maps:get(?BINHEAD_CTYPE, Ctx#ctx.header_map, undefined) of
         undefined ->
             {true, missing_content_type(RD), Ctx};
         RawCType ->
@@ -445,49 +509,54 @@ malformed_rw_params(RD, Ctx) ->
     Res =
     lists:foldl(fun malformed_rw_param/2,
                 {false, RD, Ctx},
-                [{#ctx.r, "r", "default"},
-                 {#ctx.w, "w", "default"},
-                 {#ctx.dw, "dw", "default"},
-                 {#ctx.rw, "rw", "default"},
-                 {#ctx.pw, "pw", "default"},
-                 {#ctx.node_confirms, "node_confirms", "default"},
-                 {#ctx.pr, "pr", "default"}]),
+                [{#ctx.r, "r", default},
+                 {#ctx.w, "w", default},
+                 {#ctx.dw, "dw", default},
+                 {#ctx.rw, "rw", default},
+                 {#ctx.pw, "pw", default},
+                 {#ctx.node_confirms, "node_confirms", default},
+                 {#ctx.pr, "pr", default}]),
     Res2 =
     lists:foldl(fun malformed_custom_param/2,
                  Res,
                  [{#ctx.sync_on_write,
                      "sync_on_write",
-                     "default",
+                     default,
                      [default, backend, one, all]}]),
     lists:foldl(fun malformed_boolean_param/2,
                 Res2,
-                [{#ctx.basic_quorum, "basic_quorum", "default"},
-                 {#ctx.notfound_ok, "notfound_ok", "default"},
-                 {#ctx.asis, "asis", "false"}]).
+                [{#ctx.basic_quorum, "basic_quorum", default},
+                 {#ctx.notfound_ok, "notfound_ok", default},
+                 {#ctx.asis, "asis", false}]).
 
--spec malformed_rw_param({Idx::integer(), Name::string(), Default::string()},
+-spec malformed_rw_param({Idx::integer(), Name::string(), Default::atom()},
                          {boolean(), #wm_reqdata{}, context()}) ->
     {boolean(), #wm_reqdata{}, context()}.
 %% @doc Check that a specific r, w, dw, or rw query param is a
 %%      string-encoded integer.  Store its result in context() if it
 %%      is, or print an error message in #wm_reqdata{} if it is not.
 malformed_rw_param({Idx, Name, Default}, {Result, RD, Ctx}) ->
-    case catch normalize_rw_param(wrq:get_qs_value(Name, Default, RD)) of
-        P when (is_atom(P) orelse is_integer(P)) ->
-            {Result, RD, setelement(Idx, Ctx, P)};
-        _ ->
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format("~s query parameter must be an integer or "
-                   "one of the following words: 'one', 'quorum' or 'all'~n",
-                             [Name]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            case catch normalize_rw_param(ExtractedString) of
+                P when (is_atom(P) orelse is_integer(P)) ->
+                    {Result, RD, setelement(Idx, Ctx, P)};
+                _ ->
+                    {true,
+                    wrq:append_to_resp_body(
+                    io_lib:format("~s query parameter must be an integer or "
+                        "one of the following words: 'one', 'quorum' or 'all'~n",
+                                    [Name]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
 -spec malformed_custom_param({Idx::integer(),
                                     Name::string(),
-                                    Default::string(),
+                                    Default::atom(),
                                     AllowedValues::[atom()]},
                                 {boolean(), #wm_reqdata{}, context()}) ->
    {boolean(), #wm_reqdata{}, context()}.
@@ -495,46 +564,48 @@ malformed_rw_param({Idx, Name, Default}, {Result, RD, Ctx}) ->
 %% Store its result in context() if it is, or print an error message
 %% in #wm_reqdata{} if it is not.
 malformed_custom_param({Idx, Name, Default, AllowedValues}, {Result, RD, Ctx}) ->
-    AllowedValueTuples = [{V} || V <- AllowedValues],
-    Option=
-        lists:keyfind(
-            list_to_atom(
-                string:to_lower(
-                    wrq:get_qs_value(Name, Default, RD))),
-                1,
-                AllowedValueTuples),
-    case Option of
-        false ->
-            ErrorText =
-                "~s query parameter must be one of the following words: ~p~n",
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format(ErrorText, [Name, AllowedValues]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx};
-        _ ->
-            {Value} = Option,
-            {Result, RD, setelement(Idx, Ctx, Value)}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            UsableValue = list_to_atom(string:lowercase(ExtractedString)),
+            case lists:member(UsableValue, AllowedValues) of
+                true ->
+                    {Result, RD, setelement(Idx, Ctx, UsableValue)};
+                false ->
+                    ErrorText =
+                        "~s query parameter must be one of the following words: ~p~n",
+                    {true,
+                    wrq:append_to_resp_body(
+                    io_lib:format(ErrorText, [Name, AllowedValues]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
 %% @doc Check that a specific query param is a
 %%      string-encoded boolean.  Store its result in context() if it
 %%      is, or print an error message in #wm_reqdata{} if it is not.
 malformed_boolean_param({Idx, Name, Default}, {Result, RD, Ctx}) ->
-    case string:to_lower(wrq:get_qs_value(Name, Default, RD)) of
-        "true" ->
-            {Result, RD, setelement(Idx, Ctx, true)};
-        "false" ->
-            {Result, RD, setelement(Idx, Ctx, false)};
-        "default" ->
-            {Result, RD, setelement(Idx, Ctx, default)};
-        _ ->
-            {true,
-            wrq:append_to_resp_body(
-              io_lib:format("~s query parameter must be true or false~n",
-                            [Name]),
-              wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            case string:lowercase(ExtractedString) of
+                "true" ->
+                    {Result, RD, setelement(Idx, Ctx, true)};
+                "false" ->
+                    {Result, RD, setelement(Idx, Ctx, false)};
+                "default" ->
+                    {Result, RD, setelement(Idx, Ctx, default)};
+                _ ->
+                    {true,
+                    wrq:append_to_resp_body(
+                    io_lib:format("~s query parameter must be true or false~n",
+                                    [Name]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
 normalize_rw_param("backend") -> backend;
@@ -552,7 +623,7 @@ normalize_rw_param(V) -> list_to_integer(V).
 %%      A link header should be of the form:
 %%        &lt;/Prefix/Bucket/Key&gt;; riaktag="Tag",...
 malformed_link_headers(RD, Ctx) ->
-    case catch get_link_heads(RD, Ctx) of
+    case catch get_link_heads(Ctx) of
         Links when is_list(Links) ->
             {false, RD, Ctx#ctx{links=Links}};
         _Error when Ctx#ctx.api_version == 1->
@@ -581,7 +652,7 @@ malformed_link_headers(RD, Ctx) ->
 %%      An index field should be of the form "index_fieldname_type"
 malformed_index_headers(RD, Ctx) ->
     %% Get a list of index_headers...
-    IndexFields1 = extract_index_fields(RD),
+    IndexFields1 = extract_index_fields(Ctx),
 
     %% Validate the fields. If validation passes, then the index
     %% headers are correctly formed.
@@ -596,34 +667,20 @@ malformed_index_headers(RD, Ctx) ->
              Ctx}
     end.
 
--spec extract_index_fields(#wm_reqdata{}) -> proplists:proplist().
+-spec extract_index_fields(context()) -> proplists:proplist().
 %% @doc Extract fields from headers prefixed by "x-riak-index-" in the
 %%      client's PUT request, to be indexed at write time.
-extract_index_fields(RD) ->
-    PrefixSize = length(?HEAD_INDEX_PREFIX),
-    {ok, RE} = re:compile(",\\s"),
-    F =
-        fun({K,V}, Acc) ->
-            KList = riak_kv_wm_utils:any_to_list(K),
-            case lists:prefix(?HEAD_INDEX_PREFIX, string:to_lower(KList)) of
-                true ->
-                    %% Isolate the name of the index field.
-                    IndexField =
-                        list_to_binary(
-                            element(2, lists:split(PrefixSize, KList))),
-
-                    %% HACK ALERT: Split values on comma. The HTTP
-                    %% spec allows for comma separated tokens
-                    %% where the tokens can be quoted strings. We
-                    %% don't currently support quoted strings.
-                    %% (http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html)
-                    Values = re:split(V, RE, [{return, binary}]),
-                    [{IndexField, X} || X <- Values] ++ Acc;
-                false ->
-                    Acc
-            end
-        end,
-    lists:foldl(F, [], mochiweb_headers:to_list(wrq:req_headers(RD))).
+extract_index_fields(Ctx) ->
+    RE = get_compiled_index_regex(),
+    lists:flatten(
+        lists:map(
+            fun({Field, Term}) ->
+                Values = re:split(Term, RE, [{return, binary}]),
+                [{Field, X} || X <- Values]
+            end,
+            maps:get(?PREFIX_INDEX, Ctx#ctx.header_map, [])
+        )
+    ).
 
 -spec content_types_provided(#wm_reqdata{}, context()) ->
     {[{ContentType::string(), Producer::atom()}], #wm_reqdata{}, context()}.
@@ -723,7 +780,7 @@ encodings_provided(RD, Ctx0) ->
 %%      of a key-level PUT request will be accepted by this resource.
 %%      (A key-level put *must* include a Content-Type header.)
 content_types_accepted(RD, Ctx) ->
-    case wrq:get_req_header(?HEAD_CTYPE, RD) of
+    case maps:get(?BINHEAD_CTYPE, Ctx#ctx.header_map, undefined) of
         undefined ->
             %% user must specify content type of the data
             {[], RD, Ctx};
@@ -758,7 +815,7 @@ resource_exists(RD, Ctx0) ->
     ToFetch =
         case Method of
             UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
-                conditional_headers_present(RD) == true;
+                conditional_headers_present(Ctx0) == true;
             _ ->
                 true
         end,
@@ -800,7 +857,9 @@ resource_exists(RD, Ctx0) ->
 -spec is_conflict(request_data(), context()) ->
         {boolean(), request_data(), context()}.
 is_conflict(RD, Ctx) ->
-    case {Ctx#ctx.method, wrq:get_req_header(?HEAD_IF_NOT_MODIFIED, RD)} of
+    NotModified =
+        maps:get(?BINHEAD_IF_NOT_MODIFIED, Ctx#ctx.header_map, undefined),
+    case {Ctx#ctx.method, NotModified} of
         {_ , undefined} ->
             {false, RD, Ctx};
         {UpdM, NotModifiedClock} when UpdM =:= 'PUT'; UpdM =:= 'POST' ->
@@ -819,16 +878,12 @@ is_conflict(RD, Ctx) ->
             {false, RD, Ctx}
     end.
 
--spec conditional_headers_present(request_data()) -> boolean().
-conditional_headers_present(RD) ->
-    NoneMatch =
-        (wrq:get_req_header("If-None-Match", RD) =/= undefined),
-    Match =
-        (wrq:get_req_header("If-Match", RD) =/= undefined),
-    UnModifiedSince =
-        (wrq:get_req_header("If-Unmodified-Since", RD) =/= undefined),
-    NotModified =
-        (wrq:get_req_header(?HEAD_IF_NOT_MODIFIED, RD) =/= undefined),
+-spec conditional_headers_present(context()) -> boolean().
+conditional_headers_present(Ctx) ->
+    NoneMatch = maps:is_key(?BINHEAD_NONE_MATCH, Ctx#ctx.header_map),
+    Match = maps:is_key(?BINHEAD_MATCH, Ctx#ctx.header_map),
+    UnModifiedSince = maps:is_key(?BINHEAD_UNMODIFIED_SINCE, Ctx#ctx.header_map),
+    NotModified = maps:is_key(?BINHEAD_IF_NOT_MODIFIED, Ctx#ctx.header_map),
     (NoneMatch or Match or UnModifiedSince or NotModified).
 
 
@@ -875,8 +930,12 @@ accept_doc_body(
             links=L, ctype=CType, charset=Charset,
             index_fields=IF}) ->
     Doc0 = riak_object:new(riak_kv_wm_utils:maybe_bucket_type(T,B), K, <<>>),
-    VclockDoc = riak_object:set_vclock(Doc0, decode_vclock_header(RD)),
-    UserMeta = extract_user_meta(RD),
+    VclockDoc =
+        riak_object:set_vclock(
+            Doc0,
+            maps:get(?BINHEAD_VCLOCK, Ctx#ctx.header_map, vclock:fresh())
+        ),
+    UserMeta = maps:get(?PREFIX_USERMETA, Ctx#ctx.header_map, []),
     CTypeMD = dict:store(?MD_CTYPE, CType, dict:new()),
     CharsetMD =
         if Charset /= undefined ->
@@ -885,7 +944,7 @@ accept_doc_body(
                 CTypeMD
         end,
     EncMD =
-        case wrq:get_req_header(?HEAD_ENCODING, RD) of
+        case maps:get(?BINHEAD_ENCODING, Ctx#ctx.header_map, undefined) of
             undefined -> CharsetMD;
             E -> dict:store(?MD_ENCODING, E, CharsetMD)
         end,
@@ -902,7 +961,7 @@ accept_doc_body(
             _ -> []
         end,
     Options = make_options(Options0, Ctx),
-    NoneMatch = (wrq:get_req_header("If-None-Match", RD) =/= undefined),
+    NoneMatch = maps:is_key(?BINHEAD_NONE_MATCH, Ctx#ctx.header_map),
     Options2 = case riak_kv_util:consistent_object(B) and NoneMatch of
                    true ->
                        [{if_none_match, true}|Options];
@@ -929,7 +988,7 @@ send_returnbody(RD, DocCtx, _HasSiblings = false) ->
 %% Handle the sibling case. Send either the sibling message body, or a
 %% multipart body, depending on what the client accepts.
 send_returnbody(RD, DocCtx, _HasSiblings = true) ->
-    AcceptHdr = wrq:get_req_header("Accept", RD),
+    AcceptHdr = maps:get(?BINHEAD_ACCEPT, DocCtx#ctx.header_map, undefined),
     PossibleTypes = ["multipart/mixed", "text/plain"],
     case webmachine_util:choose_media_type(PossibleTypes, AcceptHdr) of
         "multipart/mixed"  ->
@@ -957,17 +1016,6 @@ add_conditional_headers(RD, Ctx) ->
             httpd_util:rfc1123_date(
                 calendar:universal_time_to_local_time(LM)), RD4),
     {RD5,Ctx3}.
-
--spec extract_user_meta(#wm_reqdata{}) -> proplists:proplist().
-%% @doc Extract headers prefixed by X-Riak-Meta- in the client's PUT request
-%%      to be returned by subsequent GET requests.
-extract_user_meta(RD) ->
-    lists:filter(fun({K,_V}) ->
-                    lists:prefix(
-                        ?HEAD_USERMETA_PREFIX,
-                        string:to_lower(riak_kv_wm_utils:any_to_list(K)))
-                end,
-                mochiweb_headers:to_list(wrq:req_headers(RD))).
 
 -spec multiple_choices(#wm_reqdata{}, context()) ->
           {boolean(), #wm_reqdata{}, context()}.
@@ -1136,16 +1184,6 @@ encode_vclock_header(RD, #ctx{doc={error, {deleted, VClock}}}) ->
     wrq:set_resp_header(
         ?HEAD_VCLOCK, binary_to_list(base64:encode(BinVClock)), RD).
 
--spec decode_vclock_header(#wm_reqdata{}) -> vclock:vclock().
-%% @doc Translate the X-Riak-Vclock header value from the request into
-%%      its Erlang representation.  If no vclock header exists, a fresh
-%%      vclock is returned.
-decode_vclock_header(RD) ->
-    case wrq:get_req_header(?HEAD_VCLOCK, RD) of
-        undefined -> vclock:fresh();
-             Head -> riak_object:decode_vclock(base64:decode(Head))
-    end.
-
 -spec ensure_doc(context()) -> context().
 %% @doc Ensure that the 'doc' field of the context() has been filled
 %%      with the result of a riak_client:get request.  This is a
@@ -1177,11 +1215,10 @@ delete_resource(RD, Ctx=#ctx{bucket_type=T, bucket=B, key=K, client=C}) ->
     Options = make_options([], Ctx),
     BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
     Result =
-        case wrq:get_req_header(?HEAD_VCLOCK, RD) of
+        case maps:get(?BINHEAD_VCLOCK, Ctx#ctx.header_map, undefined) of
             undefined ->
                 riak_client:delete(BT, K, Options, C);
-            _ ->
-                VC = decode_vclock_header(RD),
+            VC ->
                 riak_client:delete_vclock(BT, K, VC, Options, C)
         end,
     case Result of
@@ -1245,18 +1282,18 @@ normalize_last_modified(MD) ->
             httpd_util:convert_request_date(Rfc1123)
     end.
 
--spec get_link_heads(#wm_reqdata{}, context()) -> [link()].
+-spec get_link_heads(context()) -> [link()].
 %% @doc Extract the list of links from the Link request header.
 %%      This function will die if an invalid link header format
 %%      is found.
-get_link_heads(RD, Ctx) ->
+get_link_heads(Ctx) ->
     APIVersion = Ctx#ctx.api_version,
     Prefix = Ctx#ctx.prefix,
     Bucket = Ctx#ctx.bucket,
 
     %% Get a list of link headers...
-    LinkHeaders1 =
-        case wrq:get_req_header(?HEAD_LINK, RD) of
+    LinkHeaders =
+        case maps:get(?BINHEAD_LINK, Ctx#ctx.header_map, undefined) of
             undefined -> [];
             Heads -> string:tokens(Heads, ",")
         end,
@@ -1264,21 +1301,14 @@ get_link_heads(RD, Ctx) ->
     %% Decode the link headers. Throw an exception if we can't
     %% properly parse any of the headers...
     {BucketLinks, KeyLinks} =
-        case APIVersion of
-            1 ->
-                {ok, BucketRegex} =
-                    re:compile("</" ++ Prefix ++ ?V1_BUCKET_REGEX),
-                {ok, KeyRegex} =
-                    re:compile("</" ++ Prefix ++ ?V1_KEY_REGEX),
-                extract_links(LinkHeaders1, BucketRegex, KeyRegex);
-            %% @todo Handle links in API Version 3?
-            Two when Two >= 2 ->
-                {ok, BucketRegex} =
-                    re:compile(?V2_BUCKET_REGEX),
-                {ok, KeyRegex} =
-                    re:compile(?V2_KEY_REGEX),
-                extract_links(LinkHeaders1, BucketRegex, KeyRegex)
-        end,
+    case LinkHeaders of
+        [] ->
+            {[], []};
+        LinkHeaders ->
+            {KeyRegex, BucketRegex} =
+                get_compiled_link_regex(APIVersion, Prefix),
+            extract_links(LinkHeaders, BucketRegex, KeyRegex)
+    end,
 
     %% Validate that the only bucket header is pointing to the parent
     %% bucket...
@@ -1287,7 +1317,7 @@ get_link_heads(RD, Ctx) ->
         true ->
             KeyLinks;
         false ->
-            throw({invalid_link_headers, LinkHeaders1})
+            throw({invalid_link_headers, LinkHeaders})
     end.
 
 %% Run each LinkHeader string() through the BucketRegex and
@@ -1316,6 +1346,50 @@ extract_links_1([LinkHeader|Rest], BucketRegex, KeyRegex, BucketAcc, KeyAcc) ->
     end;
 extract_links_1([], _BucketRegex, _KeyRegex, BucketAcc, KeyAcc) ->
     {BucketAcc, KeyAcc}.
+
+-type mp() :: {re_pattern, _, _, _, _}.
+
+-spec get_compiled_link_regex(non_neg_integer(), string()) -> {mp(), mp()}.
+get_compiled_link_regex(1, Prefix) ->
+    case persistent_term:get(compiled_link_regex_v1, undefined) of
+        undefined ->
+            {ok, KeyRegex} = re:compile("</" ++ Prefix ++ ?V1_KEY_REGEX),
+            {ok, BucketRegex} = re:compile("</" ++ Prefix ++ ?V1_BUCKET_REGEX),
+            persistent_term:put(
+                compiled_link_regex_v1,
+                {KeyRegex, BucketRegex}
+            ),
+            {KeyRegex, BucketRegex};
+        PreCompiledExpressions ->
+            PreCompiledExpressions
+    end;
+get_compiled_link_regex(Two, _Prefix) when Two >= 2 ->
+    case persistent_term:get(compiled_link_regex_v2, undefined) of
+        undefined ->
+            {ok, KeyRegex} = re:compile(?V2_KEY_REGEX),
+            {ok, BucketRegex} = re:compile(?V2_BUCKET_REGEX),
+            persistent_term:put(
+                compiled_link_regex_v2,
+                {KeyRegex, BucketRegex}
+            ),
+            {KeyRegex, BucketRegex};
+        PreCompiledExpressions ->
+            PreCompiledExpressions
+    end.
+
+-spec get_compiled_index_regex() -> mp().
+get_compiled_index_regex() ->
+    case persistent_term:get(compiled_index_regex, undefined) of
+        undefined ->
+            {ok, IndexRegex} = re:compile(",\\s"),
+            persistent_term:put(
+                compiled_index_regex,
+                IndexRegex
+            ),
+            IndexRegex;
+        PreCompiledIndexRegex ->
+            PreCompiledIndexRegex
+    end.
 
 -spec get_ctype(riak_kv_wm_object_dict(), term()) -> string().
 %% @doc Work out the content type for this object - use the metadata if provided

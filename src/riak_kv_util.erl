@@ -52,7 +52,8 @@
         is_modfun_allowed/2,
         shuffle_list/1,
         kv_ready/0,
-        ngr_initial_timeout/0
+        ngr_initial_timeout/0,
+        profile_riak/1
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 
@@ -519,6 +520,26 @@ shuffle_list(L) ->
     lists:map(fun({_R, X0}) -> X0 end,
         lists:keysort(1, lists:map(fun(X) -> {rand:uniform(), X} end, L))).
 
+-spec profile_riak(pos_integer()) -> analyzed|failed.
+profile_riak(ProfileTime) ->
+    eprof:start(),
+    case eprof:start_profiling(erlang:processes()) of
+        profiling ->
+            timer:sleep(ProfileTime),
+            case eprof:stop_profiling() of
+                profiling_stopped ->
+                    eprof:analyze(
+                        total, [{filter, [{time, float(10 * ProfileTime)}]}]
+                    ),
+                    stopped = eprof:stop(),
+                    analyzed;
+                _ ->
+                    stopped = eprof:stop(),
+                    failed_running
+            end;
+        _ ->
+            failed_starting
+    end.
 
 %% ===================================================================
 %% EUnit tests
