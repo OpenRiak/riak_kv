@@ -1241,12 +1241,18 @@ nextgenrepl_decode(<<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
                         0:32/integer, BL:32/integer, B:BL/binary,
                         KL:32/integer, K:KL/binary,
                         ObjBin/binary>>) ->
-    nextgenrepl_decode(B, K, C == 1, R == 1, ObjBin);
+    nextgenrepl_decode(binary:copy(B), binary:copy(K), C == 1, R == 1, ObjBin);
 nextgenrepl_decode(<<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
                         TL:32/integer, T:TL/binary, BL:32/integer, B:BL/binary,
                         KL:32/integer, K:KL/binary,
                         ObjBin/binary>>) ->
-    nextgenrepl_decode({T, B}, K, C == 1, R == 1, ObjBin).
+    nextgenrepl_decode(
+        {binary:copy(T), binary:copy(B)},
+        binary:copy(K),
+        C == 1,
+        R == 1,
+        ObjBin
+    ).
 
 nextgenrepl_decode(B, K, _, true, MetaBin) ->
     <<Mega:32/integer, Secs:32/integer, Micro:32/integer, TClockBin/binary>> =
