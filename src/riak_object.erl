@@ -1237,22 +1237,35 @@ nextgenrepl_binarykey(B, K) ->
 
 %% @doc Deocde for nextgenrepl
 -spec nextgenrepl_decode(binary()) -> riak_object()|repl_ref().
-nextgenrepl_decode(<<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
-                        0:32/integer, BL:32/integer, B:BL/binary,
-                        KL:32/integer, K:KL/binary,
-                        ObjBin/binary>>) ->
-    nextgenrepl_decode(binary:copy(B), binary:copy(K), C == 1, R == 1, ObjBin);
-nextgenrepl_decode(<<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
-                        TL:32/integer, T:TL/binary, BL:32/integer, B:BL/binary,
-                        KL:32/integer, K:KL/binary,
-                        ObjBin/binary>>) ->
+nextgenrepl_decode(
+        <<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
+        0:32/integer,
+        BL:32/integer, B:BL/binary, KL:32/integer, K:KL/binary,
+        ObjBin/binary>>) ->
     nextgenrepl_decode(
-        {binary:copy(T), binary:copy(B)},
-        binary:copy(K),
+        maybe_copy(B, BL),
+        maybe_copy(K, KL),
+        C == 1,
+        R == 1,
+        ObjBin
+    );
+nextgenrepl_decode(
+        <<1:4/integer, C:1/integer, R:1/integer, _:2/integer,
+        TL:32/integer, T:TL/binary,
+        BL:32/integer, B:BL/binary, KL:32/integer, K:KL/binary,
+        ObjBin/binary>>) ->
+    nextgenrepl_decode(
+        {maybe_copy(T, TL), maybe_copy(B, BL)},
+        maybe_copy(K, KL),
         C == 1,
         R == 1,
         ObjBin
     ).
+
+maybe_copy(B, BL) when BL > 64 ->
+    binary:copy(B);
+maybe_copy(B, _BL) ->
+    B. 
 
 nextgenrepl_decode(B, K, _, true, MetaBin) ->
     <<Mega:32/integer, Secs:32/integer, Micro:32/integer, TClockBin/binary>> =
