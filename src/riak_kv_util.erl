@@ -56,6 +56,16 @@
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 
+-export([
+    profile_riak/1,
+    top_n_binary_total_memory/1,
+    summarise_binary_memory_by_initial_call/1,
+    top_n_process_total_memory/1,
+    summarise_process_memory_by_initial_call/1,
+    get_initial_call/1
+]
+).
+
 -include_lib("kernel/include/logger.hrl").
 
 -include_lib("riak_kv_vnode.hrl").
@@ -521,8 +531,194 @@ shuffle_list(L) ->
 
 
 %% ===================================================================
+%% Troubleshooting functions
+%% ===================================================================
+
+%% Note that recon is also available
+%% https://ferd.github.io/recon/overview.html
+%% Useful functions
+%% recon_alloc:fragementation(current) - current state of fragmentation by
+%% allocator, with worse allocators higher in the list
+%% recon:bin_leak(N) - Top N processes with binary references cleared by GC
+
+
+%% @doc top_n_binary_memory/2
+%% Look at all processes on the node, and return them by Top N of total binary
+%% memory size.  Returns sorted results {P, IC, Count, Sum} - where P is the
+%% pid of the process, IC is the initial call that started the process, Count
+%% is the number of references, and Sum is the total amout of memory.
+top_n_binary_total_memory(N) ->
+    BinSums =
+        lists:map(
+            fun(P) ->
+                case process_info(P, binary) of
+                    {binary, BinList} ->
+                        {P,
+                            length(BinList),
+                            lists:sum(
+                                lists:map(
+                                    fun(BR) -> element(2, BR) end,
+                                    BinList
+                                )
+                            )
+                        };
+                    _ ->
+                        {P, 0, 0}
+                    end
+                end,
+                erlang:processes()
+            ),
+    lists:map(
+        fun({P, BC, BS}) ->
+            {P, get_initial_call(P), BC, BS}
+        end,
+        lists:sublist(lists:reverse(lists:keysort(3, BinSums)), N)
+    ).
+
+%% @doc top_n_binary_memory/2
+%% Look at all processes on the node, and return them by Top N of total process
+%% memory size.
+top_n_process_total_memory(N) ->
+    MemoryMap =
+        lists:map(
+            fun(P) ->
+                case process_info(P, memory) of
+                    {memory, MemSz} ->
+                        {P, MemSz};
+                    _ ->
+                        {P, 0}
+                end
+            end,
+            erlang:processes()
+        ),
+    lists:map(
+        fun({P, MS}) ->
+            {P, get_initial_call(P), MS}
+        end,
+        lists:sublist(lists:reverse(lists:keysort(2, MemoryMap)), N)
+    ).
+
+%% @doc summarise_binary_memory_by_initial_call/1
+%% Takes the output of a call to top_n_binary_total_memory, and summarises by
+%% initial call - returning, for each initial call the count of PIDs with that
+%% initial call, the total memory and a map of reference counts to total memory
+summarise_binary_memory_by_initial_call(N) when is_integer(N) ->
+    summarise_binary_memory_by_initial_call(top_n_binary_total_memory(N));
+summarise_binary_memory_by_initial_call(TopN) when is_list(TopN) ->
+    InitialCallMap =
+        lists:foldl(
+            fun({P, PIC, _BC, _BS}, Acc) ->
+                case process_info(P, binary) of
+                    {binary, BinList} ->
+                        {PidCnt, SzAzz, RCMap} =
+                            lists:foldl(
+                                fun({_Ref, Sz, RC}, {PidAcc, SzAcc, MapAcc}) ->
+                                    {InnerAccCt, InnerAccSz} =
+                                        maps:get(RC, MapAcc, {0, 0}),
+                                    {PidAcc,
+                                        SzAcc + Sz,
+                                        maps:put(
+                                            RC,
+                                            {InnerAccCt + 1, InnerAccSz + Sz},
+                                            MapAcc
+                                        )
+                                    }
+                                end,
+                                maps:get(PIC, Acc, {1, 0, maps:new()}),
+                                BinList
+                            ),
+                        maps:put(PIC, {PidCnt, SzAzz, RCMap}, Acc);
+                    _ ->
+                        Acc
+                end
+            end,
+            maps:new(),
+            TopN
+        ),
+    lists:reverse(
+        lists:keysort(
+            3,
+            lists:map(
+                fun({PIC, {Cnt, Sz, RCMap}}) -> {PIC, Cnt, Sz, RCMap} end,
+                maps:to_list(InitialCallMap)
+            )
+        )
+    ).
+
+%% @doc summarise_process_memory_by_initial_call/1
+%% Takes the output of a call to top_n_process_total_memory, and summarises by
+%% initial call - returning, for each initial call the count of PIDs with that
+%% initial call, and the total process memory
+summarise_process_memory_by_initial_call(N) when is_integer(N) ->
+    summarise_process_memory_by_initial_call(top_n_process_total_memory(N));
+summarise_process_memory_by_initial_call(TopN) when is_list(TopN) ->
+    MemoryMap =
+        lists:foldl(
+            fun({_P, IC, MemSz}, Acc) ->
+                {AccCnt, AccSz} = maps:get(IC, Acc, {0, 0}),
+                maps:put(
+                    IC,
+                    {AccCnt + 1, AccSz + MemSz},
+                    Acc
+                )
+            end,
+            maps:new(),
+            TopN
+        ),
+    lists:reverse(
+        lists:keysort(
+            3,
+            lists:map(
+                fun({PIC, {Cnt, Sz}}) -> {PIC, Cnt, Sz} end,
+                maps:to_list(MemoryMap)
+            )
+        )
+    ).
+
+%% @doc profile_riak/1
+%% Run eprof for ProfileTime milliseconds.  Will have an impact, so normally
+%% best to restrict ProfileTime to 100ms.  May fail on systems under heavy load
+-spec profile_riak(pos_integer()) -> analyzed|failed.
+profile_riak(ProfileTime) ->
+    eprof:start(),
+    case eprof:start_profiling(erlang:processes()) of
+        profiling ->
+            timer:sleep(ProfileTime),
+            case eprof:stop_profiling() of
+                profiling_stopped ->
+                    eprof:analyze(
+                        total, [{filter, [{time, float(10 * ProfileTime)}]}]
+                    ),
+                    stopped = eprof:stop(),
+                    analyzed;
+                _ ->
+                    stopped = eprof:stop(),
+                    failed_running
+            end;
+        _ ->
+            failed_starting
+    end.
+
+%% @doc get_initial_Call/1
+%% To be used in map functions - reliably either returns the initial call from
+%% process dictionary, or undefined
+get_initial_call(P) ->
+    case process_info(P, dictionary) of
+        {dictionary, DKV} ->
+            case lists:keyfind('$initial_call', 1, DKV) of
+                false ->
+                    undefined;
+                {'$initial_call', Call} ->
+                    Call
+            end;
+        _ ->
+            undefined
+    end.
+    
+%% ===================================================================
 %% EUnit tests
 %% ===================================================================
+
 -ifdef(TEST).
 
 normalize_test() ->
