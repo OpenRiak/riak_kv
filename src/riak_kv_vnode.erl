@@ -2973,7 +2973,7 @@ determine_requires_get(CacheClock, RObj, IsSearchable) ->
     end,
     RequiresGet.
 
-%% @Doc in the case that this a co-ordinating put, prepare the object.
+%% @doc in the case that this a co-ordinating put, prepare the object.
 %% NOTE: this is called _only_ when the local object is `notfound'
 -spec maybe_update_vclock(Coord::boolean(),
                           IncomingObject:: riak_object:riak_object(),
@@ -4606,7 +4606,7 @@ blocking_teardown() ->
     application:unset_env(riak_core, platform_data_dir),
     (catch file:delete(?DATA_DIR ++ "/kv_vnode/0")).
 
-%% @private test the vnode and vnode mgr interaction NOTE: sets up and
+%% test the vnode and vnode mgr interaction NOTE: sets up and
 %% tearsdown inside the test, the mgr needs the pid of the test
 %% process to send messages. @TODO(rdb) find a better way
 blocking_test_() ->
@@ -4645,7 +4645,7 @@ blocking_test_() ->
      }
     }.
 
-%% @private tests that the counter rolls over to 1 when a new vnode id
+%% tests that the counter rolls over to 1 when a new vnode id
 %% is assigned
 rollover_test_() ->
     {setup, fun() -> (catch file:delete("undefined/kv_vnode/0")) end,

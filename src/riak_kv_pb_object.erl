@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2012-2013 Basho Technologies, Inc.
-%% Copyright (c) 2020-2022 Workday, Inc.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.
+%% Copyright (c) 2020-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -28,6 +28,7 @@
 %%  9 - RpbGetReq
 %% 11 - RpbPutReq
 %% 13 - RpbDelReq
+%% 35 - RpbCloneReq
 %% 202 - RpbFetchReq
 %% 204 - RpbPushReq
 %% </pre>
@@ -40,6 +41,7 @@
 %% 10 - RpbGetResp
 %% 12 - RpbPutResp - 0 length
 %% 14 - RpbDelResp
+%% 36 - RpbCloneResp
 %% 203 - RpbFetchResp
 %% 205 - RpbPushResp
 %% </pre>
@@ -47,8 +49,9 @@
 %% <p>The semantics are unchanged from their original
 %% implementations.</p>
 %% @end
-
 -module(riak_kv_pb_object).
+
+-include_lib("kernel/include/logger.hrl").
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
@@ -89,13 +92,13 @@ decode(Code, Bin) ->
     case Msg of
         #rpbgetreq{} ->
             {ok, Msg, {"riak_kv.get", bucket_type(Msg#rpbgetreq.type,
-                                                        Msg#rpbgetreq.bucket)}};
+                                                  Msg#rpbgetreq.bucket)}};
         #rpbputreq{} ->
             {ok, Msg, {"riak_kv.put", bucket_type(Msg#rpbputreq.type,
-                                                        Msg#rpbputreq.bucket)}};
+                                                  Msg#rpbputreq.bucket)}};
         #rpbdelreq{} ->
             {ok, Msg, {"riak_kv.delete", bucket_type(Msg#rpbdelreq.type,
-                                                           Msg#rpbdelreq.bucket)}};
+                                                     Msg#rpbdelreq.bucket)}};
         _ ->
             {ok, Msg}
     end.
@@ -402,7 +405,8 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
         {error, Reason} ->
             {error, {format, Reason}, State}
     end;
-
+process(#rpbclonereq{} = Req, State) ->
+    process_clone(Req, State);
 process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
                    r=R0, w=W0, pr=PR0, pw=PW0, dw=DW0, rw=RW0,
                    timeout=Timeout, n_val=N_val, sloppy_quorum=SloppyQuorum},
@@ -434,6 +438,88 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
             {reply, rpbdelresp, State};
         {error, Reason} ->
             {error, {format, Reason}, State}
+    end.
+
+process_clone(#rpbclonereq{src_bucket = <<>>}, State) ->
+    {error, "Src bucket cannot be zero-length", State};
+process_clone(#rpbclonereq{src_key = <<>>}, State) ->
+    {error, "Src key cannot be zero-length", State};
+process_clone(#rpbclonereq{src_bucket_type = <<>>}, State) ->
+    {error, "Src bucket type cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_bucket = <<>>}, State) ->
+    {error, "Dst bucket cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_key = <<>>}, State) ->
+    {error, "Dst key cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_bucket_type = <<>>}, State) ->
+    {error, "Dst bucket type cannot be zero-length", State};
+process_clone(#rpbclonereq{
+        src_bucket = SrcB, src_bucket_type = SrcT, src_key = SrcK,
+        src_vclock = SrcVC,
+        dst_bucket = DstB, dst_bucket_type = DstT, dst_key = DstK } = Req,
+        #state{client = Client} = State ) ->
+    SrcBucket = maybe_bucket_type(SrcT, SrcB),
+    DstBucket = maybe_bucket_type(DstT, DstB),
+    SrcVClock = case SrcVC of
+        undefined ->
+            undefined;
+        _ ->
+            riak_object:decode_vclock(SrcVC)
+    end,
+    CloneOpts = make_options(Req),
+    case CloneOpts of
+        #{del_src := true} ->
+            riak_kv_stat:update(pb_move_request);
+        _ ->
+            riak_kv_stat:update(pb_copy_request)
+    end,
+    %% Create response record populated with the encoded result object
+    %% and key, if generated.
+    %% Not used on error, but being optimistic simplifies the code.
+    ObjectResponse = fun(RObj) ->
+        Contents = riak_object:get_contents(RObj),
+        EncContent = riak_pb_kv_codec:encode_contents(Contents),
+        EncVClock = pbify_rpbvc(riak_object:vclock(RObj)),
+        case DstK of
+            undefined ->
+                #rpbcloneresp{
+                    content = EncContent, vclock = EncVClock,
+                    key = riak_object:key(RObj)
+                };
+            _ ->
+                #rpbcloneresp{content = EncContent, vclock = EncVClock}
+        end
+    end,
+    case riak_client:clone(SrcBucket, SrcK,
+            SrcVClock, DstBucket, DstK, CloneOpts, Client) of
+        {ok, RObj} ->
+            {reply, ObjectResponse(RObj), State};
+        {ok, RObj, [_|_] = Details} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                details = riak_pb_codec:encode_rich_pairs(Details)},
+            {reply, Resp1, State};
+        {ok, RObj, DelFail} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                del_fail = riak_pb_codec:encode_etf_binary(DelFail)},
+            {reply, Resp1, State};
+        {ok, RObj, DelFail, Details} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                del_fail = riak_pb_codec:encode_etf_binary(DelFail),
+                details = riak_pb_codec:encode_rich_pairs(Details)
+            },
+            {reply, Resp1, State};
+        {error, Reason, Details} ->
+            Resp = #rpbcloneresp{
+                error = riak_pb_codec:encode_etf_binary(Reason),
+                details = riak_pb_codec:encode_rich_pairs(Details)
+            },
+            {reply, Resp, State};
+        {error, Reason} ->
+            Resp = #rpbcloneresp{
+                error = riak_pb_codec:encode_etf_binary(Reason)},
+            {reply, Resp, State}
     end.
 
 %% @doc process_stream/3 callback. This service does not create any
@@ -486,18 +572,96 @@ update_pbvc(O0, PbVc) ->
     Vclock = erlify_rpbvc(PbVc),
     riak_object:set_vclock(O0, Vclock).
 
-make_options(List) ->
-    lists:flatmap(fun({K,V}) -> make_option(K,V) end, List).
+
+%%make_options(undefined) ->
+%%    [];
+%%make_options([]) ->
+%%    [];
+make_options([_|_] = List) ->
+    lists:flatmap(fun make_option/1, List);
+make_options(#rpbclonereq{
+        dst_prov_meta = PM, return_body = Body, delete_src = Del,
+        r = R, pr = PR, w = W, pw = PW, dw = DW, rw = RW,
+        n_val = NVal, timeout = TO, recv_timeout = RTO,
+        basic_quorum = BQ, sloppy_quorum = SQ, notfound_ok = NFOK,
+        asis = AsIs, sync_on_write = Sync, details = Details }) ->
+    PbOpts = #{
+        r               =>  R,
+        pr              =>  PR,
+        w               =>  W,
+        pw              =>  PW,
+        dw              =>  DW,
+        rw              =>  RW,
+        n_val           =>  NVal,
+        basic_quorum    =>  BQ,
+        sloppy_quorum   =>  SQ,
+        notfound_ok     =>  NFOK,
+        asis            =>  AsIs,
+        sync_on_write   =>  Sync,
+        timeout         =>  TO,
+        recv_timeout    =>  RTO,
+        del_src         =>  Del,
+        provmeta        =>  PM,     %% key change to clone/7 opts
+        returnbody      =>  Body,   %% key change to clone/7 opts
+        details         =>  Details
+    },
+    maps:fold(fun make_clone_option/3, #{}, PbOpts).
+
+-spec make_clone_option(Key :: atom(), Val :: term(), Acc :: map()) -> map().
+%% Handles all Keys spec'd in riak_client:clone_options()
+make_clone_option(_Key, undefined, Acc) ->
+    Acc;
+%% Integers
+make_clone_option(n_val = Key, Val, Acc) when Val > 0 ->
+    Acc#{Key => Val};
+%% Timeouts
+make_clone_option(Key, Val, Acc) when Key =:= timeout ; Key =:= recv_timeout ->
+    Acc#{Key => riak_pb_codec:decode_timeout(Val)};
+%% Booleans
+make_clone_option(Key, Val, Acc) when
+        Key =:= basic_quorum ; Key =:= sloppy_quorum ; Key =:= notfound_ok ;
+        Key =:= asis ; Key =:= del_src ; Key =:= returnbody ->
+    case riak_pb_codec:decode_bool(Val) of
+        true ->
+            Acc#{Key => true};
+        _ ->
+            Acc
+    end;
+%% Quorum > 0
+make_clone_option(Key, Val, Acc) when
+        (Key =:= r orelse Key =:= w orelse Key =:= rw) andalso Val > 0 ->
+    Acc#{Key => decode_quorum(Val)};
+%% Quorum >= 0
+make_clone_option(Key, Val, Acc) when Key =:= pr ; Key =:= pw ; Key =:= dw ->
+    Acc#{Key => decode_quorum(Val)};
+%% Enum atoms
+make_clone_option(sync_on_write = Key, Val, Acc) when erlang:byte_size(Val) > 0 ->
+    Acc#{Key => riak_pb_codec:to_atom(Val)};
+make_clone_option(provmeta = Key, <<"store">>, Acc) ->
+    Acc#{Key => store};
+make_clone_option(provmeta = Key, <<"strip">>, Acc) ->
+    Acc#{Key => strip};
+%% Detail list
+make_clone_option(details, [], Acc) ->
+    Acc;
+make_clone_option(details = Key, [_|_] = Val, Acc) ->
+    Acc#{Key => lists:map(fun riak_pb_codec:to_atom/1, Val)};
+%% Anything else is an error
+make_clone_option(Key, Val, _Acc) ->
+    erlang:error(badarg, [Key, Val]).
 
 %% return a key/value tuple that we can ++ to other options so long as the
 %% value is not default or undefined -- those values are pulled from the
 %% bucket by the get/put FSMs.
-make_option(_, undefined) ->
-    [];
-make_option(_, default) ->
-    [];
 make_option(K, V) ->
-    [{K, V}].
+    make_option({K, V}).
+
+make_option({_, undefined}) ->
+    [];
+make_option({_, default}) ->
+    [];
+make_option(Opt) ->
+    [Opt].
 
 %% Convert a vector clock to erlang
 erlify_rpbvc(undefined) ->

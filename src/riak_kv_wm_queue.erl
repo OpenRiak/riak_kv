@@ -40,7 +40,7 @@
 %% Body should be a JSON in the format returned from
 %% riak_kv_clusteraae_fsm:json_encode_results(fetch_clocks_range, KeysNClocks).
 %%
-%% ```
+%% '''
 
 -module(riak_kv_wm_queue).
 
@@ -89,7 +89,7 @@ init(Props) ->
 -spec service_available(#wm_reqdata{}, context()) ->
     {boolean(), #wm_reqdata{}, context()}.
 %% @doc Determine whether or not a connection to Riak
-%%      can be established. 
+%%      can be established.
 service_available(RD, Ctx=#ctx{riak=RiakProps}) ->
     ClientID = riak_kv_wm_utils:get_client_id(RD),
     case riak_kv_wm_utils:get_riak_client(RiakProps, ClientID) of
@@ -155,7 +155,7 @@ malformed_request(RD, Ctx) ->
                                 Ctx};
                         KeyClockList ->
                             {false,
-                                RD, 
+                                RD,
                                 Ctx#ctx{queuename = QueueName,
                                         get_type = post,
                                         keyclocklist = KeyClockList}}
@@ -175,7 +175,7 @@ malformed_keyclocklist(ReqBody) ->
     %% the whole request is considered malformed
     case mochijson2:decode(ReqBody) of
         {struct, [{<<"keys-clocks">>, KCL}]} ->
-            KeyClockList = 
+            KeyClockList =
                 lists:foldl(fun decode_bucketkeyclock/2, [], KCL),
             case {length(KeyClockList), length(KCL)} of
                 {N, N} ->
@@ -206,13 +206,13 @@ content_types_provided(RD, Ctx) when Ctx#ctx.get_type =:= post ->
     {true, #wm_reqdata{}, context()}.
 %% @doc Pass-through for key-level requests to allow POST to function
 %%      as PUT for clients that do not support PUT.
-process_post(RD, Ctx) -> 
+process_post(RD, Ctx) ->
     QueueName = Ctx#ctx.queuename,
-    KeyClockList = 
+    KeyClockList =
         lists:map(fun({B, K, C}) -> {B, K, C, to_fetch} end,
                     lists:reverse(Ctx#ctx.keyclocklist)),
     ok = riak_kv_replrtq_src:replrtq_ttaaefs(QueueName, KeyClockList),
-    R = 
+    R =
         case riak_kv_replrtq_src:length_rtq(QueueName) of
             {QueueName, {FL, FSL, RTL}} ->
                 io_lib:format("Queue ~w: ~w ~w ~w", [QueueName, FL, FSL, RTL]);
@@ -252,7 +252,7 @@ produce_membership_request(RD, Ctx) ->
 
 
 decode_bucketkeyclock({struct, BKC}, Acc) ->
-    B = 
+    B =
         case lists:keyfind(<<"bucket">>, 1, BKC) of
             {<<"bucket">>, Bucket} when is_binary(Bucket) ->
                 case lists:keyfind(<<"bucket-type">>, 1, BKC) of
@@ -354,11 +354,11 @@ encode_riakobject(RObj) ->
     ToCompress = app_helper:get_env(riak_kv, replrtq_compressonwire, false),
     FullObjBin = riak_object:nextgenrepl_encode(repl_v1, RObj, ToCompress),
     CRC = erlang:crc32(FullObjBin),
-    <<CRC:32/integer, FullObjBin/binary>>. 
+    <<CRC:32/integer, FullObjBin/binary>>.
 
 -spec make_binarykey(riak_object:bucket(), riak_object:key()) -> binary().
 %% @doc
-%% Convert Bucket and Key into a single binary 
+%% Convert Bucket and Key into a single binary
 make_binarykey({Type, Bucket}, Key)
                     when is_binary(Type), is_binary(Bucket), is_binary(Key) ->
     <<Type/binary, Bucket/binary, Key/binary>>;
@@ -394,7 +394,7 @@ malformed_clock_test() ->
     Q = q1_ttaaefs,
     ?assertMatch(Q, existing_atom("q1_ttaaefs")),
     ?assertMatch(false, existing_atom("q1_xxx_ttaaefs")),
-    VC = 
+    VC =
         base64:encode(
             riak_object:encode_vclock(
                 vclock:increment(a, vclock:fresh()))),

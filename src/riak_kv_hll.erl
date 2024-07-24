@@ -1,13 +1,7 @@
 %% -*- coding: utf-8 -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_hll: Datatype to approximate/estimate number of distinct
-%%              elements in a set. Best to read "HyperLogLog in
-%%              Practice: Algorithmic Engineering of a State of the
-%%              Art Cardinality Estimation Algorithm" from Google, of
-%%              which many of the libs reference.
-%%
-%% Copyright (c) 2016 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -24,6 +18,12 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc Datatype to approximate/estimate number of distinct elements in a set.
+%%
+%% Best to read "HyperLogLog in Practice: Algorithmic Engineering of a State
+%% of the Art Cardinality Estimation Algorithm" from Google, of which many of
+%% the libs reference.
 
 -module(riak_kv_hll).
 
@@ -250,9 +250,9 @@ uvector(N, Gen) ->
         ?LET(Value,?SUCHTHAT(V,Gen, not lists:member(V,Values)),
              [Value|Values])).
 
-%% @doc EQC generator of unique vectors... HLL++ preforms better at larger
-%%      cardinalities since we're eqc'ing a check within some probabilistic
-%%      range
+%% EQC generator of unique vectors... HLL++ preforms better at larger
+%% cardinalities since we're eqc'ing a check within some probabilistic
+%% range
 gen_op() ->
     oneof([{add, bin_int()},
            ?LAZY({add_all, non_empty(uvector(100, bin_int()))})]).
@@ -283,7 +283,7 @@ eqc_state_value({_Cnt, Dict}) ->
                   Dict),
     sets:size(S).
 
-%% @doc Standard Error is σ ≈ 1.04/√m, where m is the # of registers.
+%% Standard Error is σ ≈ 1.04/√m, where m is the # of registers.
 %% Deviations are related to margin of error away from the actual cardinality
 %% of percentils.
 %% σ = 65%, 2σ=95%, 3σ=99%
@@ -292,10 +292,10 @@ margin_of_error(P, Deviations) ->
     Sigma = 1.04 / math:sqrt(M),
     Sigma*Deviations.
 
-%% @doc Check if Estimated Card from HllSet is within an acceptable
-%%      margin of error determined by m-registers and 3 deviations of
-%%      the standard error. Use a window of +1 to account for rounding
-%%      and extremely small cardinalities.
+%% Check if Estimated Card from HllSet is within an acceptable
+%% margin of error determined by m-registers and 3 deviations of
+%% the standard error. Use a window of +1 to account for rounding
+%% and extremely small cardinalities.
 within_error_check(Card, HllSet, HllVal) ->
     case Card > 0 of
         true ->

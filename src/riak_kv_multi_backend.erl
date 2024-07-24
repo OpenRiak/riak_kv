@@ -774,7 +774,7 @@ multi_backend_test_() ->
                fun() ->
                        %% Attempt to start the backend with a
                        %% nonexistent backend specified
-                       ?assertEqual({error, [{riak_kv_devnull_backend, undef}]},
+                       ?assertMatch({error, [{riak_kv_devnull_backend, {undef, [_|_]}}]},
                                     start(42, bad_backend_config()))
                end
               }

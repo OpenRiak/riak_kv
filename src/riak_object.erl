@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2023-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -99,7 +100,7 @@
 -export([summary_from_binary/1, aae_from_object_binary/1,
             get_metadata_from_aae_binary/1, aae_fold_metabin/2,
             is_aae_object_deleted/2]).
--export([set_contents/2, set_vclock/2]). %% INTERNAL, only for riak_*
+-export([set_contents/2, set_vclock/2, clone/3]). %% INTERNAL, only for riak_*
 -export([is_robject/1, is_head/1]).
 -export([update_last_modified/1, update_last_modified/2, get_last_modified/1]).
 -export([strict_descendant/2, new_actor_epoch/2]).
@@ -152,6 +153,32 @@ new_int(B, K, V, MD) ->
                               contents=Contents,vclock=vclock:fresh()}
             end
     end.
+
+-spec clone(Obj :: riak_object(), ToBucket :: bucket(), ToKey :: key())
+        -> {ok, riak_object()} | {error, term()}.
+%% @private INTERNAL USE ONLY!
+%% Clones the source object with a new name.
+clone(#r_object{bucket = NewB, key = NewK}, NewB, NewK) ->
+    {error, name_unchanged};
+clone(#r_object{} = Obj, {T, B} = NewB, NewK)
+        when erlang:is_binary(NewK) andalso erlang:byte_size(NewK) > 0
+        andalso erlang:is_binary(T) andalso erlang:byte_size(T) > 0
+        andalso erlang:is_binary(B) andalso erlang:byte_size(B) > 0 ->
+    clone_int(Obj, NewB, NewK);
+clone(#r_object{} = Obj, NewB, NewK)
+        when erlang:is_binary(NewK) andalso erlang:byte_size(NewK) > 0
+        andalso erlang:is_binary(NewB) andalso erlang:byte_size(NewB) > 0 ->
+    clone_int(Obj, NewB, NewK);
+clone(Obj, NewB, NewK) ->
+    erlang:error(badarg, [Obj, NewB, NewK]).
+
+-spec clone_int(Obj :: riak_object(), ToBucket :: bucket(), ToKey :: key())
+        -> {ok, riak_object()} | {error, term()}.
+%% @hidden Bucket is binary/binaries, key is binary, all non-empty
+clone_int(#r_object{}, _NewB, NewK) when erlang:byte_size(NewK) > ?MAX_KEY_SIZE ->
+    {error, key_too_large};
+clone_int(#r_object{} = Obj, NewB, NewK) ->
+    {ok, Obj#r_object{bucket = NewB, key = NewK}}.
 
 -spec is_robject(any()) -> boolean()|proxy.
 %% Is this a recognised riak object

@@ -188,7 +188,7 @@ is_crdt(RObj) ->
 
 %% @doc Check if bucket_type is set for Riak datatypes and check the
 %%      Riak object || or its values** contain a special Riak
-%%      datatype tag -> <<69>>.
+%%      datatype `tag -> <<69>>'.
 %%
 %%      **We look at values instead of value because if there are siblings
 %%        for reasons (before a crdt merge) in, eg. the Yokozuna usecase,

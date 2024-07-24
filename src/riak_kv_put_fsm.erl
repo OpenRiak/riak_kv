@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2019-2022 Workday, Inc.
+%% Copyright (c) 2019-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -69,6 +69,10 @@
         %% Request additional details about request added as extra
         %% element at the end of result tuple
         {details, detail()} |
+        %% Return the object as written, default = false
+        returnbody | {returnbody, boolean()} |
+        %% Update 'last modified' metadata, default = true
+        {update_last_modified, boolean()} |
         %% Sync-on-write setting, backend, one(co-ordinating) or all
         {sync_on_write, atom()} |
         %% Put the value as-is, do not increment the vclocks

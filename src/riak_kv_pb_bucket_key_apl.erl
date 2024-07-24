@@ -1,8 +1,5 @@
 %% --------------------------------------------------------------------------
 %%
-%% riak_kv_pb_bucket_key_apl: Expose Core active preflist functionality to
-%%                            Protocol Buffers
-%%
 %% Copyright (c) 2015 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
@@ -21,7 +18,7 @@
 %%
 %% --------------------------------------------------------------------------
 
-%% @doc <p>The Bucket-Key Preflist (Primaries & Fallbacks) PB service
+%% @doc <p>The Bucket-Key Preflist (Primaries &amp; Fallbacks) PB service
 %% for Riak Core. This service covers the following request messages in the
 %% original protocol:</p>
 %%

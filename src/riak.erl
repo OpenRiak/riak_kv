@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -69,12 +70,13 @@ get_app_env(Opt, Default) ->
         end
     end.
 
-%% @spec local_client() -> {ok, Client :: riak_client()}
+-spec local_client() -> {ok, Client :: riak_client:riak_client()}.
 %% @equiv local_client(undefined)
 local_client() ->
     local_client(undefined).
 
-%% @spec local_client(binary()|undefined) -> {ok, Client :: riak_client()}
+-spec local_client(ClientId :: riak_client:client_id())
+        -> {ok, Client :: riak_client:riak_client()}.
 %% @doc When you want a client for use on a running Riak node.
 %%      ClientId should be a 32-bit binary.  If it is not, a
 %%      32-bit binary will be created from ClientId by phash2/1.
@@ -83,14 +85,14 @@ local_client() ->
 local_client(ClientId) ->
     client_connect(node(), ClientId).
 
-%% @spec client_connect(Node :: node())
-%%        -> {ok, Client :: riak_client()} | {error, timeout}
+-spec client_connect(Node :: node())
+        -> {ok, Client :: riak_client:riak_client()} | {error, timeout}.
 %% @equiv client_connect(Node, undefined)
 client_connect(Node) ->
     client_connect(Node, undefined).
 
-%% @spec client_connect(node(), binary()|undefined)
-%%         -> {ok, Client :: riak_client} | {error, timeout}
+-spec client_connect(Node :: node(), ClientId :: riak_client:client_id())
+        -> {ok, riak_client:riak_client()} | {error, term()}.
 %% @doc The usual way to get a client.  Timeout often means either a bad
 %%      cookie or a poorly-connected distributed erlang network.
 %%      ClientId should be a 32-bit binary.  If it is not, a
@@ -130,6 +132,8 @@ vnode_vclocks(Node) ->
             Result
     end.
 
+%% Dialyzer doesn't seem to consider external change of connectivity to Node.
+-dialyzer({no_match, client_test/1}).
 %%
 %% @doc Validate that a specified node is accessible and functional.
 %%

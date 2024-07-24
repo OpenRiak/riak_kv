@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2011-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -422,7 +423,7 @@ validate_create_consistent_props(Invalid, New) ->
 %% [{datatype, fun datatype/2, fun error_dt_create/1},
 %%  {allow_mult, fun allow_mult/3, "Bad Bad Bad"]
 %%
-%% @see dt_props_check/0 for properties we handle currently,
+%% See dt_props_check/0 for properties we handle currently,
 %%      function-aritys/inputs/outputs.
 %%
 %% And, our accumulator is a tuple consiting of our *New*, unvalidated,
@@ -561,7 +562,7 @@ validate_update_consistent_props(Existing, New) ->
 %% which are not allowed, then call validate_dt_props/2 for the
 %% dt-property fold over.
 %%
-%% @see validate_create_dt_props/1 for more comments and information.
+%% See validate_create_dt_props/1 for more comments and information.
 %%
 %% This function is treated much like the *create-version*, but we know
 %% have Existing properties to handle along with our *Newer*, unvalidated
@@ -1278,7 +1279,7 @@ immutable_consistent(_Consistent, OldN, NewN, Bad) when OldN =:= NewN orelse
 immutable_consistent(_Consistent, _OldN, _NewN, Bad) ->
     has_consistent(Bad) andalso has_n_val(Bad).
 
-%% @private only called when the existing bucket type is immutable All
+%% only called when the existing bucket type is immutable All
 %% that has to be true is that the bucket type is still write_once
 immutable_write_once(true, New, NewProps, Bad) when New == true orelse New == undefined ->
     not has_write_once(Bad) andalso undefined_props([datatype, {consistent, true}], NewProps, Bad);
@@ -1287,7 +1288,7 @@ immutable_write_once(true, _New, NewProps, Bad) ->
 immutable_write_once(_Existing, true, _NewProps, Bad) ->
     has_write_once(Bad).
 
-%% @private every prop in Names that is present in Props, must be in
+%% every prop in Names that is present in Props, must be in
 %% Errors.
 undefined_props(Names, Props, Errors) ->
     lists:all(fun({Name, Value}) ->

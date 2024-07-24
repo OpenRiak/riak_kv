@@ -1,5 +1,6 @@
 %% -------------------------------------------------------------------
-%% Copyright (c) 2015 Basho Technologies, Inc. All Rights Reserved.
+%%
+%% Copyright (c) 2015-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,7 +21,7 @@
 
 -behaviour(gen_server).
 
--compile({nowarn_deprecated_function, 
+-compile({nowarn_deprecated_function,
             [{gen_fsm, send_event, 2}]}).
 
 
@@ -75,7 +76,7 @@ workers() ->
 start_link(Name) ->
     gen_server:start_link({local, Name}, ?MODULE, [], []).
 
-%% @spec put(RObj :: riak_object:riak_object(), riak_object:options(), riak_object:riak_client()) ->
+%% @spec put(RObj :: riak_object:riak_object(), riak_object:options()) ->
 %%        ok |
 %%       {error, timeout} |
 %%       {error, term()}

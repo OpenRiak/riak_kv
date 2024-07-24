@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2018-2023 Workday, Inc.
+%% Copyright (c) 2018-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -71,7 +71,7 @@ unregister_vnode_stats(Index) ->
     unregister_per_index(heads, Index),
     unregister_per_index(puts, Index).
 
-%% @spec get_stats() -> proplist()
+-spec get_stats() -> proplists:proplist().
 %% @doc Get the current aggregation of stats.
 get_stats() ->
     riak_kv_wm_stats:get_stats().
@@ -402,6 +402,10 @@ do_update(pb_put_request) ->
     exometer:update([?PFX, ?APP, pb_put_request], 1);
 do_update(pb_get_request) ->
     exometer:update([?PFX, ?APP, pb_get_request], 1);
+do_update(pb_copy_request) ->
+    exometer:update([?PFX, ?APP, pb_copy_request], 1);
+do_update(pb_move_request) ->
+    exometer:update([?PFX, ?APP, pb_move_request], 1);
 do_update(pb_delete_request) ->
     exometer:update([?PFX, ?APP, pb_delete_request], 1);
 do_update(tombstone_put) ->
@@ -796,6 +800,8 @@ stats() ->
                                                {99    , node_put_fsm_map_time_99},
                                                {max   , node_put_fsm_map_time_100}]},
      {pb_put_request, counter, [], [{value,node_pb_put_requests_total}]},
+     {pb_copy_request, counter, [], [{value,node_pb_copy_requests_total}]},
+     {pb_move_request, counter, [], [{value,node_pb_move_requests_total}]},
      {pb_get_request, counter, [], [{value,node_pb_get_requests_total}]},
      {pb_delete_request, counter, [], [{value,node_pb_delete_requests_total}]},
      {[node, puts, ngrrepl_empty], spiral, [], [{one, ngrrepl_empty},

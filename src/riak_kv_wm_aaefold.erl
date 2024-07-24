@@ -1,5 +1,7 @@
 %% -------------------------------------------------------------------
 %%
+%% Copyright (c) 2018 Russell Brown.
+%%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
 %% except in compliance with the License.  You may obtain
@@ -914,7 +916,7 @@ setup_mocks() ->
 teardown_mocks(_) ->
     (catch meck:unload(wrq)).
 
-%% @private happy-path testing for the query types. NOTE: only happy
+%% happy-path testing for the query types. NOTE: only happy
 %% path
 prop_not_malformed() ->
     ?FORALL({Query, Filter}, gen_query(),

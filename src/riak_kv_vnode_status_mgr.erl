@@ -417,7 +417,7 @@ consult_stream(Fd, Line, Acc) ->
     end.
 
 -ifdef(TEST).
-%% @private don't make testers suffer through the fsync time
+%% don't make testers suffer through the fsync time
 -spec write_vnode_status(status(), file:filename(), Version :: 1 | 2) -> ok.
 write_vnode_status(Status, File, Version) ->
     VersionedStatus = orddict:store(version, Version, Status),
@@ -558,7 +558,7 @@ vnode_status_test_() ->
 
 %% Properties
 
-%% @private any binary we write, we can read. (Try changing ~w. to
+%% any binary we write, we can read. (Try changing ~w. to
 %% ~p. in `write_vnode_status/3' for an example of _why_ this test).
 prop_any_bin_consult() ->
     ?SETUP(fun() ->
@@ -574,7 +574,7 @@ prop_any_bin_consult() ->
                         equals({ok, Status}, read_vnode_status(TestFile))
                    end)).
 
-%% @private regardless of the contents of the vnode status file, we
+%% regardless of the contents of the vnode status file, we
 %% always get a status result. If the file is valid, we get its
 %% contents, if not, we get a blank status, if there is no file we get
 %% a blank status.
@@ -610,7 +610,7 @@ prop_any_file_status() ->
 gen_status_file(Type) ->
     gen_status_file(riak_kv_test_util:get_test_dir(?TEST_FILE), Type).
 
-%% @private generate the file on disk TBQH, this might be fine as a
+%% generate the file on disk TBQH, this might be fine as a
 %% straight up eunit tests, given how little random there really is
 %% here for quickcheck
 gen_status_file(TestFile, r16) ->
