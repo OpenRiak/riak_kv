@@ -195,8 +195,9 @@ process(
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             {reply, #rpbgetresp{}, State};
-        {error, Reason} ->
-            {error, {format,Reason}, State}
+        {error, Reason} = Resp ->
+            update_error_stat(gets, Resp),
+            {error, {format, Reason}, State}
     end;
 
 process(#rpbfetchreq{queuename = QueueName, encoding = EncodingBin},
@@ -472,6 +473,7 @@ process(
                     %% failing at the API
                     {error, CondRsp, State};
                 {error, PutError} ->
+                    update_error_stat(puts, PutRsp),
                     {error, {format, PutError}, State}
             end
     end;
@@ -504,8 +506,95 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
             {reply, rpbdelresp, State};
         {error, notfound} ->  %% delete succeeds if already deleted
             {reply, rpbdelresp, State};
-        {error, Reason} ->
+        {error, Reason} = Resp ->
+            update_error_stat(deletes, Resp),
             {error, {format, Reason}, State}
+    end.
+
+process_clone(#rpbclonereq{src_bucket = <<>>}, State) ->
+    {error, "Src bucket cannot be zero-length", State};
+process_clone(#rpbclonereq{src_key = <<>>}, State) ->
+    {error, "Src key cannot be zero-length", State};
+process_clone(#rpbclonereq{src_bucket_type = <<>>}, State) ->
+    {error, "Src bucket type cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_bucket = <<>>}, State) ->
+    {error, "Dst bucket cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_key = <<>>}, State) ->
+    {error, "Dst key cannot be zero-length", State};
+process_clone(#rpbclonereq{dst_bucket_type = <<>>}, State) ->
+    {error, "Dst bucket type cannot be zero-length", State};
+process_clone(#rpbclonereq{
+        src_bucket = SrcB, src_bucket_type = SrcT, src_key = SrcK,
+        src_vclock = SrcVC,
+        dst_bucket = DstB, dst_bucket_type = DstT, dst_key = DstK } = Req,
+        #state{client = Client} = State ) ->
+    SrcBucket = maybe_bucket_type(SrcT, SrcB),
+    DstBucket = maybe_bucket_type(DstT, DstB),
+    SrcVClock = case SrcVC of
+        undefined ->
+            undefined;
+        _ ->
+            riak_object:decode_vclock(SrcVC)
+    end,
+    CloneOpts = make_options(Req),
+    StatsKey = case CloneOpts of
+        #{del_src := true} ->
+            riak_kv_stat:update(pb_move_request),
+            moves;
+        _ ->
+            riak_kv_stat:update(pb_copy_request),
+            copies
+    end,
+    %% Create response record populated with the encoded result object
+    %% and key, if generated.
+    %% Not used on error, but being optimistic simplifies the code.
+    ObjectResponse = fun(RObj) ->
+        Contents = riak_object:get_contents(RObj),
+        EncContent = riak_pb_kv_codec:encode_contents(Contents),
+        EncVClock = pbify_rpbvc(riak_object:vclock(RObj)),
+        case DstK of
+            undefined ->
+                #rpbcloneresp{
+                    content = EncContent, vclock = EncVClock,
+                    key = riak_object:key(RObj)
+                };
+            _ ->
+                #rpbcloneresp{content = EncContent, vclock = EncVClock}
+        end
+    end,
+    case riak_client:clone(SrcBucket, SrcK,
+            SrcVClock, DstBucket, DstK, CloneOpts, Client) of
+        {ok, RObj} ->
+            {reply, ObjectResponse(RObj), State};
+        {ok, RObj, [_|_] = Details} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                details = riak_pb_codec:encode_rich_pairs(Details)},
+            {reply, Resp1, State};
+        {ok, RObj, DelFail} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                del_fail = riak_pb_codec:encode_etf_binary(DelFail)},
+            {reply, Resp1, State};
+        {ok, RObj, DelFail, Details} ->
+            Resp0 = ObjectResponse(RObj),
+            Resp1 = Resp0#rpbcloneresp{
+                del_fail = riak_pb_codec:encode_etf_binary(DelFail),
+                details = riak_pb_codec:encode_rich_pairs(Details)
+            },
+            {reply, Resp1, State};
+        {error, Reason, Details} = Resp0 ->
+            update_error_stat(StatsKey, Resp0),
+            Resp = #rpbcloneresp{
+                error = riak_pb_codec:encode_etf_binary(Reason),
+                details = riak_pb_codec:encode_rich_pairs(Details)
+            },
+            {reply, Resp, State};
+        {error, Reason} = Resp0 ->
+            update_error_stat(StatsKey, Resp0),
+            Resp = #rpbcloneresp{
+                error = riak_pb_codec:encode_etf_binary(Reason)},
+            {reply, Resp, State}
     end.
 
 %% @doc process_stream/3 callback. This service does not create any
@@ -628,6 +717,40 @@ bucket_type(undefined, B) ->
     {<<"default">>, B};
 bucket_type(T, B) ->
     {T, B}.
+
+-spec update_error_stat(gets | puts | deletes | moves | copies,
+                        {error, any()} | {error, any(), any()} | any()) ->
+                           ok.
+update_error_stat(Action, Resp)
+    when (is_tuple(Resp) andalso tuple_size(Resp) >= 2 andalso element(1, Resp) =:= error)
+         andalso (Action =:= gets
+                  orelse Action =:= puts
+                  orelse Action =:= deletes
+                  orelse Action =:= moves
+                  orelse Action =:= copies) ->
+    Error = element(2, Resp),
+    case Error of
+        R when R =:= precommit_fail; R =:= notfound; R =:= bucket_type_unknown; R =:= failed ->
+            ok;
+        {R, _} when R =:= precommit_fail; R =:= deleted; R =:= n_val_violation ->
+            ok;
+        R when R =:= timeout ->
+            ok = riak_kv_stat:update({pb_client_error, Action, timeout});
+        R when R =:= too_many_fails; R =:= overload ->
+            ok = riak_kv_stat:update({pb_client_error, Action, general});
+        {R, _, _}
+            when R =:= r_val_unsatisfied;
+                 R =:= dw_val_unsatisfied;
+                 R =:= pr_val_unsatisfied;
+                 R =:= pw_val_unsatisfied;
+                 R =:= node_confirms_val_unsatisfied ->
+            ok = riak_kv_stat:update({pb_client_error, Action, general});
+        R ->
+            ?LOG_NOTICE("Unhandled error when updating error stats: ~p", [R]),
+            ok = riak_kv_stat:update({pb_client_error, Action, general})
+    end;
+update_error_stat(_, _Resp) ->
+    ok.
 
 %% ===================================================================
 %% Tests
