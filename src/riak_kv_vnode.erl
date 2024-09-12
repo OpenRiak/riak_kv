@@ -507,7 +507,7 @@ when_loading_complete(AAECntrl, Preflists, PreflistFun, OnlyIfBroken) ->
 
 
 %% @doc Reveal the underlying module state for testing
--spec(get_modstate(state()) -> {atom(), state()}).
+-spec get_modstate(state()) -> {module(), term()}.
 get_modstate(_State=#state{mod=Mod, modstate=ModState}) ->
     {Mod, ModState}.
 
