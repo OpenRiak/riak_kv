@@ -393,7 +393,7 @@ init(From={_, _, _}, [Query, Timeout]) ->
                                 riak_kv, legacyformat_tictacaae_tree, false
                             ),
                         leveled_tictac:new_tree(
-                            range_tree, TreeSize, UseLegacyTree
+                            range_tree, TreeSize, not UseLegacyTree
                         );
                     repl_keys_range ->
                         {[], 0, element(5, Query), ?REPL_BATCH_SIZE};
