@@ -388,7 +388,13 @@ init(From={_, _, _}, [Query, Timeout]) ->
                                     element(3, Query));
                     merge_tree_range ->
                         TreeSize = element(4, Query),
-                        leveled_tictac:new_tree(range_tree, TreeSize);
+                        UseLegacyTree =
+                            application:get_env(
+                                riak_kv, legacyformat_tictacaae_tree, false
+                            ),
+                        leveled_tictac:new_tree(
+                            range_tree, TreeSize, UseLegacyTree
+                        );
                     repl_keys_range ->
                         {[], 0, element(5, Query), ?REPL_BATCH_SIZE};
                     repair_keys_range ->
@@ -1001,11 +1007,12 @@ json_encode_tictac_empty_test() ->
     ?assertMatch([], leveled_tictac:find_dirtyleaves(Tree, ReverseTree)).
 
 json_encode_tictac_withentries_test() ->
-    encode_results_ofsize(small),
-    encode_results_ofsize(large).
+    encode_results_ofsize(small, true),
+    encode_results_ofsize(large, false),
+    encode_results_ofsize(large, true).
 
-encode_results_ofsize(TreeSize) ->
-    Tree = leveled_tictac:new_tree(tictac_folder_test, TreeSize),
+encode_results_ofsize(TreeSize, MapBasedTree) ->
+    Tree = leveled_tictac:new_tree(tictac_folder_test, TreeSize, MapBasedTree),
     ExtractFun = fun(K, V) -> {K, V} end,
     FoldFun = 
         fun({Key, Value}, AccTree) ->
