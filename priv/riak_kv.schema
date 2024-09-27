@@ -550,6 +550,74 @@
     hidden
 ]}.
 
+%% @doc Mode for handling conditional checks on PUTs
+%% Handling if-not-modified (vclock-based) and if-none-match conditionals on
+%% PUTS, there are three possible modes:
+%% - api_only (default)
+%% - prefer_token
+%% - mandate_token (not currently implemented)
+%% 
+%% In the api_only mode, a read will be done before the write within the API,
+%% and if the read passes the condition the PUT will be allowed (even though
+%% a parallel conditional PUT may be in-flight).
+%% In the prefer_token mode a token must be requested for the key to be
+%% updated, and the read and the write will be managed within the token
+%% session. Only a single update will normally have access to the token,
+%% requests will queue for use of the token.  When a token cannot be secured
+%% within a timeout, then the api_only method will be used.
+%% 
+%% Future releases may support a mandate_token mode which will error on failure
+%% to get a token, rather than proceed and accept eventual consistency (as with
+%% prefer_token).
+%%
+%% Only conditional PUTs are impacted by this setting, non-conditional PUTs
+%% being sent in parallel to conditional PUTs may cause siblings.  The
+%% HTTP standard headers of If-Unmodified-Since and If-Match, are always
+%% applied as api_only checks.  The riak-specific vector-clock based
+%% if-not-modified header, and the HTTP-default if-none-match header are the
+%% only conditional PUTs that will be subject to stronger, token-based
+%% restrictions.
+{mapping, "conditional_put_mode", "riak_kv.conditional_put_mode", [
+  {default, api_only},
+  {datatype, {enum, [api_only, prefer_token]}}
+]}.
+
+%% @doc Set the level of verification required on token access
+%% When requesting access to a token, this can be done in three different
+%% verification modes:
+%% - head_only
+%% - basic_consensus
+%% - primary_consensus (default)
+%%
+%% The head_only mode will make the node currently at the head of each preflist
+%% responsible for granting tokens in isolation. This is intended to meet
+%% constraints only in healthy clusters (or single-node clusters).
+%%
+%% In a consensus mode, the token will be granted by the node at the head of
+%% the preflist, and the issuance will be validated by up to two "downstream"
+%% nodes.  This means that when a node recovers from failure, and becomes head
+%% of the preflist it is prevented from making grants which are duplicates of
+%% ones made by a downstream node during the failure.
+%%
+%% There are two forms of consensus - basic and primary.  With basic
+%% consensus, any avaliable unique nodes in the preflist (either primary or
+%% fallback) can be used for consensus.  With primary consensus, the nodes
+%% must be 3 of 5 primary nodes (and hence a target_n_val of at least 5 is 
+%% required in this mode).
+%%
+%% With basic_consensus, tokens can still be granted in a wide range of failure
+%% scenarios, but with a risk of duplicate grants, in particular should a
+%% cluster be partitioned.
+%%
+%% No mode provides strict guarantees, including primary_consensus, especially
+%% in complex partition scenarios where different nodes have alternative views
+%% of node reachability.
+{mapping, "token_request_mode", "riak_kv.token_request_mode", [
+  {default, primary_consensus},
+  {datatype, {enum, [head_only, basic_consensus, primary_consensus]}}
+]}.
+
+
 %% @doc Controls which binary representation of a riak value is stored
 %% on disk.
 %% * 0: Original erlang:term_to_binary format. Higher space overhead.

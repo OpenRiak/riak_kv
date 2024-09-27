@@ -27,7 +27,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 -include_lib("riak_kv_vnode.hrl").
--include("riak_kv_wm_raw.hrl").
 -include("riak_kv_types.hrl").
 
 -compile({nowarn_deprecated_function, 
@@ -49,6 +48,7 @@
          waiting_local_vnode/2,
          waiting_remote_vnode/2,
          postcommit/2, finish/2]).
+-export([conditional_check/3]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -113,7 +113,6 @@
                 dw :: non_neg_integer() | undefined,
                 pw :: non_neg_integer() | undefined,
                 node_confirms :: non_neg_integer() | undefined,
-                sync_on_write :: atom(),
                 coord_pl_entry :: {integer(), atom()} | undefined,
                 preflist2 :: riak_core_apl:preflist_ann() | undefined,
                 bkey :: {riak_object:bucket(), riak_object:key()},
@@ -123,13 +122,11 @@
                 timeout = infinity :: pos_integer()|infinity,
                 tref :: reference() | undefined,
                 vnode_options=[] :: list(),
-                returnbody = false :: boolean(),
                 allowmult = true :: boolean(),
                 precommit=[] :: list(),
                 postcommit=[] :: list(),
                 bucket_props :: list() | undefined,
                 putcore :: riak_kv_put_core:putcore() | undefined,
-                put_usecs :: undefined | non_neg_integer(),
                 timing = [] :: [{atom(), {non_neg_integer(), non_neg_integer(),
                                           non_neg_integer()}}],
                 reply, % reply sent to client,
@@ -317,7 +314,37 @@ prepare(timeout, State = #state{robj = RObj, options=Options}) ->
     BucketProps = get_bucket_props(Bucket),
     StatTracked = get_option(stat_tracked, BucketProps, false),
     N = get_n_val(Options, BucketProps),
-    get_preflist(N, State#state{tracked_bucket=StatTracked, bucket_props=BucketProps}).
+    ConditionCheck = get_option(condition_check, Options, false),
+    CheckR =
+        case ConditionCheck of
+            false ->
+                ok;
+            {NotMod, NoneMatch, GetOpts} ->
+                Key = riak_object:key(RObj),
+                {GetCheck, _PutOpts} =
+                    riak_kv_put_fsm:conditional_check(
+                        riak_client:get(
+                            Bucket,
+                            Key,
+                            GetOpts,
+                            riak_client:new(node(), condition_check)
+                        ),
+                        NotMod,
+                        NoneMatch
+                    ),
+                GetCheck
+        end,
+    case CheckR of
+        ok ->
+            get_preflist(
+                N,
+                State#state{
+                    tracked_bucket=StatTracked, bucket_props=BucketProps
+                }
+            );
+        Error ->
+            process_reply(Error, State)
+    end.
 
 %% @private
 validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
@@ -1282,7 +1309,26 @@ get_soft_limit_option(Options) ->
         get_option(mbox_check, Options, SoftLimitSupported),
     SoftLimitedWanted.
 
-
+-spec conditional_check(
+    {ok, riak_object:riak_object()}|{error, term()},
+    {boolean()|undefined, vclock:vclock()},
+    boolean()|undefined) -> {ok|{error, term()}, list()}. 
+conditional_check({ok, _}, _NotMod, NoneMatch) when NoneMatch ->
+    {{error, "match_found"}, []};
+conditional_check({ok, PreFetchO}, {NotMod, InClock}, _NoneMatch) when NotMod ->
+    CurrClock = riak_object:vclock(PreFetchO),
+    case vclock:equal(InClock, CurrClock) of
+        true ->
+            {ok, [{if_not_modified, InClock}]};
+        _ ->
+            {{error, "modified"}, []}
+    end;
+conditional_check({error, notfound}, _NotMod, NoneMatch) when NoneMatch ->
+    {ok, [{if_none_match, true}]};
+conditional_check({error, notfound}, {NotMod, _}, _NoneMatch) when NotMod ->
+    {{error, "notfound"}, []};
+conditional_check({error, PreFetchError}, _NotMod, _NoneMatch) ->
+    {{error, {format, PreFetchError}}, []}.
 
 %% @private the local node is not in the preflist, or is overloaded,
 %% forward to another node

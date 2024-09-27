@@ -58,7 +58,6 @@
 %% @type default_timeout() = 60000
 -define(DEFAULT_TIMEOUT, 60000).
 -define(DEFAULT_FOLD_TIMEOUT, 3600000).
--define(DEFAULT_ERRTOL, 0.00003).
 
 %% TODO: This type needs to be better specified and validated against
 %%       any dependents on riak_kv.

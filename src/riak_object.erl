@@ -264,9 +264,23 @@ find_bestobject(FetchedItems) ->
     % the first received (the fastest responder) - as if there is a need
     % for a follow-up fetch, we should prefer the vnode that had responded
     % fastest to he HEAD (this may be local).
-    ObjNotJustHeadFun =  fun({_Idx, Rsp}) ->  not is_head(Rsp) end,
-    {Objects, Heads} = lists:partition(ObjNotJustHeadFun, FetchedItems),
+    ObjNotJustHeadFun =  fun({_Idx, Rsp}) -> not is_head(Rsp) end,
+    {Objects, MaybeDupHeads} =
+        lists:partition(ObjNotJustHeadFun, FetchedItems),
+    
+    %% If we've fetched the object, ignore the head
+    Heads =
+        lists:foldl(
+            fun({Idx, _}, UpdHeads) ->
+                lists:keydelete(Idx, 1, UpdHeads)
+            end,
+            MaybeDupHeads,
+            Objects
+        ),
+    
     %% prefer full objects to heads
+    %% 
+    %% 
     FoldList = Heads ++ Objects,
     
     DescendsFun =
@@ -1793,19 +1807,34 @@ convert_object_to_headonly(B, K, Object) ->
         VclockLen:32/integer,
         VclockBin:VclockLen/binary,
         SibCount:32/integer, SibsBin/binary>> = Binary,
+    io:format("SibCount ~w SibsBin size ~w~n", [SibCount, byte_size(SibsBin)]),
+    ConvertedSibsBin = convert_sibling_data(SibCount, SibsBin, <<>>),
+    HeadBin = 
+        <<?MAGIC:8/integer,
+            ?V1_VERS:8/integer,
+            VclockLen:32/integer,
+            VclockBin:VclockLen/binary,
+            SibCount:32/integer, ConvertedSibsBin/binary>>,
+    from_binary(B, K, HeadBin).
+
+convert_sibling_data(1, SibBin, AccBin) ->
+    {SibBin0, <<>>} = convert_individual_sibling(SibBin),
+    <<AccBin/binary, SibBin0/binary>>;
+convert_sibling_data(N, SibsBin, AccBin) ->
+    {SibBin0, RestBin} = convert_individual_sibling(SibsBin),
+    convert_sibling_data(N - 1, RestBin, <<AccBin/binary, SibBin0/binary>>).
+
+convert_individual_sibling(SibsBin) ->
     <<ValLen:32/integer,
         _ValBin:ValLen/binary,
         MetaLen:32/integer,
-        MetaBinRest:MetaLen/binary>> = SibsBin,
-    SibsBin0 = <<0:32/integer,
-                    MetaLen:32/integer,
-                    MetaBinRest:MetaLen/binary>>,
-    HeadBin = <<?MAGIC:8/integer,
-                ?V1_VERS:8/integer,
-                VclockLen:32/integer,
-                VclockBin:VclockLen/binary,
-                SibCount:32/integer, SibsBin0/binary>>,
-    from_binary(B, K, HeadBin).
+        MetaBinRest:MetaLen/binary,
+        OtherSiblings/binary>> = SibsBin,
+    SibBin0 =
+        <<0:32/integer,
+        MetaLen:32/integer,
+        MetaBinRest:MetaLen/binary>>,
+    {<<SibBin0/binary>>, OtherSiblings}.
 
 val_decoding_headresponse_test() ->
     % An empty binary as a value results in the content value being marked as
@@ -1850,6 +1879,25 @@ find_bestobject_equal_test() ->
                     find_bestobject([{2, {ok, Obj2}},
                                         {1, {ok, Obj1}},
                                         {3, {ok, Obj3}}])).
+
+find_bestobject_headget_confusion_reconcile() ->
+    B = <<"buckets_are_binaries">>,
+    K = <<"keys are binaries">>,
+    {_Obj1, UpdO} = update_test(),
+    Obj2 = riak_object:increment_vclock(UpdO, one_pid),
+    Obj3 = riak_object:increment_vclock(UpdO, alt_pid),
+    
+    ReplyH1 = {1, {ok, convert_object_to_headonly(B, K, Obj2)}},
+    ReplyB1 = {1, {ok, Obj3}},
+    ReplyB2 = {2, {ok, Obj2}},
+    ReplyB3 = {3, {ok, Obj3}},
+
+    Replies = [ReplyB2, ReplyB1, ReplyB2, ReplyH1, ReplyB3],
+    ?assertMatch(
+        {[ReplyB2, ReplyB1, ReplyB2, ReplyB3], []},
+        find_bestobject(Replies)
+    ).
+
 
 find_bestobject_ancestor() ->
     % one object is behind, and one of the dominant objects is head_only
@@ -1962,7 +2010,8 @@ bucket_prop_needers_test_() ->
      fun(_) ->
              meck:unload(riak_core_bucket)
      end,
-     [{"Ancestor", fun ancestor/0},
+     [
+        {"Ancestor", fun ancestor/0},
         {"Ancestor Weird Clocks", fun ancestor_weird_clocks/0},
         {"Reconcile", fun reconcile/0},
         {"Merge 1", fun merge1/0},
@@ -1979,8 +2028,12 @@ bucket_prop_needers_test_() ->
         {"Mixed Merge 2", fun mixed_merge2/0},
         {"Find Object Ancestor", fun find_bestobject_ancestor/0},
         {"Find Object Reconcile", fun find_bestobject_reconcile/0},
+        {"Find Object Head-Get Confusion Reconcile",
+            fun find_bestobject_headget_confusion_reconcile/0},
         {"Test Summary Bin Extract", fun summary_binary_extract/0},
-        {"Next Gen Repl Encode/Decode", fun nextgenrepl/0}]
+        {"Next Gen Repl Encode/Decode", fun nextgenrepl/0},
+        {"Simple Head/Get merge", fun simple_merge_head_and_get/0}
+    ]
     }.
 
 ancestor() ->
@@ -2476,6 +2529,19 @@ summary_binary_extract() ->
     ?assertMatch(false, element(1, is_aae_object_deleted(ObjBinC, true))),
     ?assertMatch(true, element(1, is_aae_object_deleted(ObjBinD, true))),
     ?assertMatch(true, element(1, is_aae_object_deleted(ObjBinE, true))).
+
+simple_merge_head_and_get() ->
+    B = <<"HeadTestB">>,
+    K = <<"HeadTestK">>,
+    Obj1 = new(B, K, <<"{\"a\":1}">>, "application/json"),
+    Obj2 = increment_vclock(Obj1, one_pid),
+    Obj3 = increment_vclock(Obj2, alt_pid),
+    Obj4 = convert_object_to_headonly(B, K, Obj2),
+    ObjMerge1 = merge(merge(Obj3, Obj4), Obj1),
+    ObjMerge2 = merge(Obj1, merge(Obj4, Obj3)),
+    ObjHead1 = convert_object_to_headonly(B, K, ObjMerge1),
+    ObjHead2 = convert_object_to_headonly(B, K, ObjMerge2),
+    ?assert(ObjHead1 == ObjHead2).
 
 
 trim_value_frombinary(<<?MAGIC:8/integer, 1:8/integer,

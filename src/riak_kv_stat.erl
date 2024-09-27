@@ -270,6 +270,31 @@ do_update({index_fsm_time, Microsecs, ResultCount}) ->
     ok = exometer:update([P, ?APP, index, fsm, complete], 1),
     ok = exometer:update([P, ?APP, index, fsm, results], ResultCount),
     ok = exometer:update([P, ?APP, index, fsm, time], Microsecs);
+do_update({token_session_time, Microsecs}) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, complete], 1),
+    ok = exometer:update([P, ?APP, token, session, duration], Microsecs);
+do_update(token_session_timeout) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, timeout], 1);
+do_update(token_session_refusal) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, refusal], 1);
+do_update(token_session_unreachable) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, unreachable], 1);
+do_update(token_session_request_timeout) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, request_timeout], 1);
+do_update(token_session_preflist_short) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, preflist_short], 1);
+do_update(token_session_renewal) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, renewal], 1);
+do_update(token_session_error) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, token, session, error], 1);
 do_update({read_repairs, Preflist}) ->
     ok = exometer:update([?PFX, ?APP, node, gets, read_repairs], 1),
     do_repairs(Preflist);
@@ -798,6 +823,18 @@ stats() ->
      {[list, fsm, create, error], spiral, [], [{one  , list_fsm_create_error},
                                                {count, list_fsm_create_error_total}]},
      {[list, fsm, active], counter, [], [{value, list_fsm_active}]},
+
+     {[token, session, complete], spiral, [], [{one, token_session_complete}]},
+     {[token, session, timeout], spiral, [], [{one, token_session_timeout}]},
+     {[token, session, refusal], spiral, [], [{one, token_session_refusal}]},
+     {[token, session, unreachable], spiral, [], [{one, token_session_unreachable}]},
+     {[token, session, preflist_short], spiral, [], [{one, token_session_preflist_short}]},
+     {[token, session, request_timeout], spiral, [], [{one, token_session_request_timeout}]},
+     {[token, session, renewal], spiral, [], [{one, token_session_renewal}]},
+     {[token, session, error], spiral, [], [{one, token_session_error}]},
+     {[token, session, duration], histogram, [], [{mean, token_session_time_mean},
+                                               {max, token_session_time_100}]},
+
      {[clusteraae, fsm, create], spiral, [], [{one, clusteraae_fsm_create}]},
      {[clusteraae, fsm, create, error], spiral, [], [{one, clusteraae_fsm_create_error}]},
      {[clusteraae, fsm, active], counter, [], [{value, clusteraae_fsm_active}]},

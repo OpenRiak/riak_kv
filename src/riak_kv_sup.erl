@@ -98,10 +98,14 @@ init([]) ->
                 {riak_kv_reader, start_link, []},
                 permanent, 30000, worker, [riak_kv_reader]},
 
+    TokenManager = {riak_kv_token_manager,
+                    {riak_kv_token_manager, start_link, []},
+                    permanent, 3000, worker, [riak_kv_token_manager]},
+
     EnsemblesKV =  {riak_kv_ensembles,
                     {riak_kv_ensembles, start_link, []},
                     permanent, 30000, worker, [riak_kv_ensembles]},
-
+    
     % Figure out which processes we should run...
     HasStorageBackend = (app_helper:get_env(riak_kv, storage_backend) /= undefined),
 
@@ -115,6 +119,7 @@ init([]) ->
         Reaper,
         Eraser,
         Reader,
+        TokenManager,
         ?IF(HasStorageBackend, VMaster, []),
         FastPutSup,
         DeleteSup,

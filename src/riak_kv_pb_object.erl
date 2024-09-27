@@ -52,7 +52,8 @@
 -module(riak_kv_pb_object).
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
--include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
+-include_lib("kernel/include/logger.hrl").
+
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
@@ -69,12 +70,13 @@
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
--record(state, {client,    % local client
-                req,       % current request (for multi-message requests like list keys)
-                req_ctx,   % context to go along with request (partial results, request ids etc)
-                is_consistent = false :: boolean(),
-                client_id = <<0,0,0,0>>, % emulate legacy API when vnode_vclocks is true
-                repl_compress = false :: boolean()}).
+-record(state,
+        {
+            client,    % local client
+            client_id = <<0,0,0,0>>,
+                % emulate legacy API when vnode_vclocks is true
+            repl_compress = false :: boolean()
+        }).
 
 %% @doc init/0 callback. Returns the service internal start
 %% state.
@@ -273,53 +275,18 @@ process(#rpbputreq{key = <<>>}, State) ->
     {error, "Key cannot be zero-length", State};
 process(#rpbputreq{type = <<>>}, State) ->
     {error, "Type cannot be zero-length", State};
-process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC,
-                   if_not_modified=NotMod, if_none_match=NoneMatch,
-                   n_val=N_val, sloppy_quorum=SloppyQuorum} = Req,
-        #state{client=C} = State) when NotMod; NoneMatch ->
-    GetOpts = make_option(n_val, N_val) ++
-              make_option(sloppy_quorum, SloppyQuorum),
+process(
+    #rpbputreq{
+        bucket=B0, type=T, key=K, vclock=PbVC,
+        content=RpbContent,
+        w=W0, dw=DW0, pw=PW0,
+        n_val=N_val, sloppy_quorum=SloppyQuorum, node_confirms=NodeConfirms0,
+        return_body=ReturnBody, return_head=ReturnHead,
+        timeout=Timeout,
+        asis=AsIs, if_not_modified=IfNotModified, if_none_match=IfNoneMatch},
+        #state{client=C} = State) ->
+
     B = maybe_bucket_type(T, B0),
-    Result =
-        case riak_kv_util:consistent_object(B) of
-            true ->
-                consistent;
-            false ->
-                riak_client:get(B, K, GetOpts, C)
-        end,
-    case Result of
-        consistent ->
-            process(Req#rpbputreq{if_not_modified=undefined,
-                                  if_none_match=undefined},
-                    State#state{is_consistent = true});
-        {ok, _} when NoneMatch ->
-            {error, "match_found", State};
-        {ok, O} when NotMod ->
-            case erlify_rpbvc(PbVC) == riak_object:vclock(O) of
-                true ->
-                    process(Req#rpbputreq{if_not_modified=undefined,
-                                          if_none_match=undefined},
-                            State);
-                _ ->
-                    {error, "modified", State}
-            end;
-        {error, _} when NoneMatch ->
-            process(Req#rpbputreq{if_not_modified=undefined,
-                                  if_none_match=undefined},
-                    State);
-        {error, notfound} when NotMod ->
-            {error, "notfound", State};
-        {error, Reason} ->
-            {error, {format, Reason}, State}
-    end;
-
-process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
-                   w=W0, dw=DW0, pw=PW0, return_body=ReturnBody,
-                   return_head=ReturnHead, timeout=Timeout, asis=AsIs,
-                   n_val=N_val, sloppy_quorum=SloppyQuorum,
-                   node_confirms=NodeConfirms0},
-        #state{client=C} = State0) ->
-
     case K of
         undefined ->
             %% Generate a key, the user didn't supply one
@@ -330,66 +297,148 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
             %% Don't return the key since we're not generating one
             ReturnKey = undefined
     end,
-    B = maybe_bucket_type(T, B0),
-    O0 = riak_object:new(B, Key, <<>>),
-    O1 = update_rpbcontent(O0, RpbContent),
-    O  = update_pbvc(O1, PbVC),
-    %% erlang_protobuffs encodes as 1/0/undefined
-    W = decode_quorum(W0),
-    DW = decode_quorum(DW0),
-    PW = decode_quorum(PW0),
-    NodeConfirms = decode_quorum(NodeConfirms0),
-    B = maybe_bucket_type(T, B0),
-    Options = case ReturnBody of
-                  1 -> [returnbody];
-                  true -> [returnbody];
-                  _ ->
-                      case ReturnHead of
-                          true -> [returnbody];
-                          _ -> []
-                      end
-              end,
-    {Options2, State} = 
-        case State0#state.is_consistent of
-            true ->
-                {[{if_none_match, true}|Options],
-                    State0#state{is_consistent = false}};
-            _ ->
-                {Options, State0}
+    IsConsistent = riak_kv_util:consistent_object(B),
+    CondPutMode =
+        application:get_env(riak_kv, conditional_put_mode, api_only),
+    MakeTokenRequest = CondPutMode =/= api_only,
+
+    {CheckResult, CondPutOpts, SessionToken} =    
+        case {IfNotModified, IfNoneMatch, IsConsistent, MakeTokenRequest} of
+            {_, true, true, _} ->
+                {ok, [{if_none_match, true}], none};
+            {undefined, undefined, _, _} ->
+                {ok, [], none};
+            {NotMod, NoneMatch, false, true} ->
+                GetOpts =
+                    make_options(
+                        [
+                            {basic_quorum, true},
+                            {return_body, false},
+                            {deleted_vclock, true}
+                        ]),
+                TokenResult =
+                    riak_kv_token_session:session_request_retry({B, K}),
+                case TokenResult of
+                    {true, Token} ->
+                        Condition =
+                            case NotMod of
+                                undefined ->
+                                    {undefined, true, GetOpts};
+                                _ ->
+                                    InClock = erlify_rpbvc(PbVC),
+                                    {{true, InClock}, undefined, GetOpts}
+                            end,
+                        {ok, [{condition_check, Condition}], Token};
+                    _ ->
+                        ?LOG_WARNING(
+                            "Fallback to weak check as no token available "
+                            "for ~p ~p",
+                            [B, K]
+                        ),
+                        {CheckR, PutOpts} =
+                            riak_kv_put_fsm:conditional_check(
+                                riak_client:get(B, K, GetOpts, C),
+                                {NotMod, erlify_rpbvc(PbVC)},
+                                NoneMatch
+                            ),
+                        {CheckR, PutOpts, none}
+                end;
+            {NotMod, NoneMatch, false, false} ->
+                GetOpts =
+                    make_option(n_val, N_val) ++
+                    make_option(sloppy_quorum, SloppyQuorum) ++
+                    make_option(timeout, Timeout),
+                {CheckR, PutOpts} =
+                    riak_kv_put_fsm:conditional_check(
+                        riak_client:get(B, K, GetOpts, C),
+                        {NotMod, erlify_rpbvc(PbVC)},
+                        NoneMatch
+                    ),
+                {CheckR, PutOpts, none}
         end,
-    Opts =
-        make_options([{w, W}, {dw, DW}, {pw, PW},
-                        {node_confirms, NodeConfirms},
-                        {timeout, Timeout}, {asis, AsIs},
-                        {n_val, N_val},
-                        {sloppy_quorum, SloppyQuorum}]) ++ Options2,
-    case riak_client:put(O, Opts, C) of
-        ok when is_binary(ReturnKey) ->
-            PutResp = #rpbputresp{key = ReturnKey},
-            {reply, PutResp, State};
-        ok ->
-            {reply, #rpbputresp{}, State};
-        {ok, Obj} ->
-            Contents = riak_object:get_contents(Obj),
-            PbContents = case ReturnHead of
-                             true ->
-                                 %% Remove all the 'value' fields from the contents
-                                 %% This is a rough equivalent of a REST HEAD
-                                 %% request
-                                 BlankContents = [{MD, <<>>} || {MD, _} <- Contents],
-                                 riak_pb_kv_codec:encode_contents(BlankContents);
-                             _ ->
-                                 riak_pb_kv_codec:encode_contents(Contents)
-                         end,
-            PutResp = #rpbputresp{content = PbContents,
-                                  vclock = pbify_rpbvc(riak_object:vclock(Obj)),
-                                  key = ReturnKey
-                                 },
-            {reply, PutResp, State};
-        {error, notfound} ->
-            {reply, #rpbputresp{}, State};
+    case CheckResult of
         {error, Reason} ->
-            {error, {format, Reason}, State}
+            riak_kv_token_session:session_release(SessionToken),
+            {error, Reason, State};
+        ok ->
+            O0 = riak_object:new(B, Key, <<>>),
+            O1 = update_rpbcontent(O0, RpbContent),
+            O  = update_pbvc(O1, PbVC),
+            %% erlang_protobuffs encodes as 1/0/undefined
+            W = decode_quorum(W0),
+            DW = decode_quorum(DW0),
+            PW = decode_quorum(PW0),
+            NodeConfirms = decode_quorum(NodeConfirms0),
+            BodyOptions =
+                case ReturnBody of
+                    1 -> [returnbody];
+                    true -> [returnbody];
+                    _ ->
+                        case ReturnHead of
+                            true -> [returnbody];
+                            _ -> []
+                        end
+                end,
+            Opts =
+                CondPutOpts ++
+                    BodyOptions ++
+                    make_options(
+                        [{w, W}, {dw, DW}, {pw, PW},
+                            {node_confirms, NodeConfirms},
+                            {timeout, Timeout}, {asis, AsIs},
+                            {n_val, N_val},
+                            {sloppy_quorum, SloppyQuorum}]),
+            PutRsp =
+                case SessionToken of
+                    none ->
+                        riak_client:put(O, Opts, C);
+                    _ ->
+                        riak_kv_token_session:session_use(
+                            SessionToken, put, [O, Opts]
+                        )
+                end,
+            riak_kv_token_session:session_release(SessionToken),
+            case PutRsp of
+                ok when is_binary(ReturnKey) ->
+                    PutResp = #rpbputresp{key = ReturnKey},
+                    {reply, PutResp, State};
+                ok ->
+                    {reply, #rpbputresp{}, State};
+                {ok, Obj} ->
+                    Contents = riak_object:get_contents(Obj),
+                    PbContents =
+                        case ReturnHead of
+                            true ->
+                                %% Remove all the 'value' fields from the
+                                %% contents.  This is a rough equivalent of
+                                %% a REST HEAD request
+                                BlankContents =
+                                    [{MD, <<>>} || {MD, _} <- Contents],
+                                riak_pb_kv_codec:encode_contents(
+                                    BlankContents);
+                            _ ->
+                                riak_pb_kv_codec:encode_contents(Contents)
+                        end,
+                    PutResp =
+                        #rpbputresp{
+                            content = PbContents,
+                            vclock = pbify_rpbvc(riak_object:vclock(Obj)),
+                            key = ReturnKey},
+                    {reply, PutResp, State};
+                {error, notfound} ->
+                    {reply, #rpbputresp{}, State};
+                {error, CondRsp}
+                        when
+                            CondRsp == "match_found";
+                            CondRsp == "modified";
+                            CondRsp == "notfound" ->
+                    %% Conditional PUTs which fail at the PUT_FSM
+                    %% Otherwise formatting will be different from condition
+                    %% failing at the API
+                    {error, CondRsp, State};
+                {error, PutError} ->
+                    {error, {format, PutError}, State}
+            end
     end;
 
 process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
@@ -432,6 +481,7 @@ process_stream(_,_,State) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
 
 -spec encode_nextgenrepl_response(
     intenal|internal_aaehash,
