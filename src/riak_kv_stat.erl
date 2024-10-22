@@ -340,13 +340,14 @@ do_update(write_once_merge) ->
 do_update({BackendInstanceName, {expired_keys, NumKeys, Bytes}}) ->
     exometer:update([?PFX, ?APP, expired_keys, BackendInstanceName], NumKeys),
     exometer:update([?PFX, ?APP, expired_bytes, BackendInstanceName], Bytes);
-do_update({fsm_spawned, Type}) when Type =:= gets; Type =:= puts ->
-    exometer:update([?PFX, ?APP, node, Type, fsm, active], 1);
-do_update({fsm_exit, Type}) when Type =:= gets; Type =:= puts  ->
-    exometer:update([?PFX, ?APP, node, Type, fsm, active], -1);
-do_update({fsm_error, Type}) when Type =:= gets; Type =:= puts ->
-    ok = do_update({fsm_exit, Type}),
-    exometer:update([?PFX, ?APP, node, Type, fsm, errors], 1);
+do_update({pb_client_error, Action, Type}) when Type =:= general;
+                                                Type =:= timeout ->
+    case lists:member(Action, [gets, puts, deletes, moves, copies]) of
+        true ->
+            ok = exometer:update([?PFX, ?APP, node, pb_client, Action, errors, Type], 1);
+        _ ->
+            ?LOG_ERROR("`pb_client_error` stat not handled: ~p", [Action])
+    end;
 do_update({index_create, Pid}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, index, fsm, create], 1),
@@ -624,12 +625,32 @@ stats() ->
                                                   {99    , vnode_map_update_time_99},
                                                   {max   , vnode_map_update_time_100}]},
 
+     %% node stats: errors
+     {[node, pb_client, gets, errors, general], spiral, [], [{one, node_pb_client_get_errors},
+                                                          {count, node_pb_client_get_errors_total}]},
+     {[node, pb_client, gets, errors, timeout], spiral, [], [{one, node_pb_client_get_errors_timeouts},
+                                                          {count, node_pb_client_get_errors_timeouts_total}]},
+     {[node, pb_client, puts, errors, general], spiral, [], [{one, node_pb_client_put_errors},
+                                                          {count, node_pb_client_put_errors_total}]},
+     {[node, pb_client, puts, errors, timeout], spiral, [], [{one, node_pb_client_put_errors_timeouts},
+                                                          {count, node_pb_client_put_errors_timeouts_total}]},
+     {[node, pb_client, deletes, errors, general], spiral, [], [{one, node_pb_client_delete_errors},
+                                                          {count, node_pb_client_delete_errors_total}]},
+     {[node, pb_client, deletes, errors, timeout], spiral, [], [{one, node_pb_client_delete_errors_timeouts},
+                                                          {count, node_pb_client_delete_errors_timeouts_total}]},
+     {[node, pb_client, moves, errors, general], spiral, [], [{one, node_pb_client_move_errors},
+                                                          {count, node_pb_client_move_errors_total}]},
+     {[node, pb_client, moves, errors, timeout], spiral, [], [{one, node_pb_client_move_errors_timeouts},
+                                                          {count, node_pb_client_move_errors_timeouts_total}]},
+     {[node, pb_client, copies, errors, general], spiral, [], [{one, node_pb_client_copy_errors},
+                                                          {count, node_pb_client_copy_errors_total}]},
+     {[node, pb_client, copies, errors, timeout], spiral, [], [{one, node_pb_client_copy_errors_timeouts},
+                                                          {count, node_pb_client_copy_errors_timeouts_total}]},
+
      %% node stats: gets
      {[node, gets], spiral, [], [{one  , node_gets},
                                  {count, node_gets_total}]},
      {[node, gets, fsm, active], counter},
-     {[node, gets, fsm, errors], spiral, [], [{one, node_get_fsm_errors},
-                                              {count, node_get_fsm_errors_total}]},
      {[node, gets, objsize], histogram, [], [{mean  , node_get_fsm_objsize_mean},
                                              {median, node_get_fsm_objsize_median},
                                              {95    , node_get_fsm_objsize_95},

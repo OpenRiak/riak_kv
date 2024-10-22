@@ -181,8 +181,9 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             {reply, #rpbgetresp{}, State};
-        {error, Reason} ->
-            {error, {format,Reason}, State}
+        {error, Reason} = Resp ->
+            update_error_stat(gets, Resp),
+            {error, {format, Reason}, State}
     end;
 
 process(#rpbfetchreq{queuename = QueueName, encoding = EncodingBin},
@@ -322,7 +323,8 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC,
                     State);
         {error, notfound} when NotMod ->
             {error, "notfound", State};
-        {error, Reason} ->
+        {error, Reason} = Resp ->
+            update_error_stat(puts, Resp),
             {error, {format, Reason}, State}
     end;
 
@@ -402,7 +404,8 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
             {reply, PutResp, State};
         {error, notfound} ->
             {reply, #rpbputresp{}, State};
-        {error, Reason} ->
+        {error, Reason} = Resp ->
+            update_error_stat(puts, Resp),
             {error, {format, Reason}, State}
     end;
 process(#rpbclonereq{} = Req, State) ->
@@ -436,7 +439,8 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
             {reply, rpbdelresp, State};
         {error, notfound} ->  %% delete succeeds if already deleted
             {reply, rpbdelresp, State};
-        {error, Reason} ->
+        {error, Reason} = Resp ->
+            update_error_stat(deletes, Resp),
             {error, {format, Reason}, State}
     end.
 
@@ -466,11 +470,13 @@ process_clone(#rpbclonereq{
             riak_object:decode_vclock(SrcVC)
     end,
     CloneOpts = make_options(Req),
-    case CloneOpts of
+    StatsKey = case CloneOpts of
         #{del_src := true} ->
-            riak_kv_stat:update(pb_move_request);
+            riak_kv_stat:update(pb_move_request),
+            moves;
         _ ->
-            riak_kv_stat:update(pb_copy_request)
+            riak_kv_stat:update(pb_copy_request),
+            copies
     end,
     %% Create response record populated with the encoded result object
     %% and key, if generated.
@@ -510,13 +516,15 @@ process_clone(#rpbclonereq{
                 details = riak_pb_codec:encode_rich_pairs(Details)
             },
             {reply, Resp1, State};
-        {error, Reason, Details} ->
+        {error, Reason, Details} = Resp0 ->
+            update_error_stat(StatsKey, Resp0),
             Resp = #rpbcloneresp{
                 error = riak_pb_codec:encode_etf_binary(Reason),
                 details = riak_pb_codec:encode_rich_pairs(Details)
             },
             {reply, Resp, State};
-        {error, Reason} ->
+        {error, Reason} = Resp0 ->
+            update_error_stat(StatsKey, Resp0),
             Resp = #rpbcloneresp{
                 error = riak_pb_codec:encode_etf_binary(Reason)},
             {reply, Resp, State}
@@ -688,6 +696,40 @@ bucket_type(undefined, B) ->
     {<<"default">>, B};
 bucket_type(T, B) ->
     {T, B}.
+
+-spec update_error_stat(gets | puts | deletes | moves | copies,
+                        {error, any()} | {error, any(), any()} | any()) ->
+                           ok.
+update_error_stat(Action, Resp)
+    when (is_tuple(Resp) andalso tuple_size(Resp) >= 2 andalso element(1, Resp) =:= error)
+         andalso (Action =:= gets
+                  orelse Action =:= puts
+                  orelse Action =:= deletes
+                  orelse Action =:= moves
+                  orelse Action =:= copies) ->
+    Error = element(2, Resp),
+    case Error of
+        R when R =:= precommit_fail; R =:= notfound; R =:= bucket_type_unknown; R =:= failed ->
+            ok;
+        {R, _} when R =:= precommit_fail; R =:= deleted; R =:= n_val_violation ->
+            ok;
+        R when R =:= timeout ->
+            ok = riak_kv_stat:update({pb_client_error, Action, timeout});
+        R when R =:= too_many_fails; R =:= overload ->
+            ok = riak_kv_stat:update({pb_client_error, Action, general});
+        {R, _, _}
+            when R =:= r_val_unsatisfied;
+                 R =:= dw_val_unsatisfied;
+                 R =:= pr_val_unsatisfied;
+                 R =:= pw_val_unsatisfied;
+                 R =:= node_confirms_val_unsatisfied ->
+            ok = riak_kv_stat:update({pb_client_error, Action, general});
+        R ->
+            ?LOG_NOTICE("Unhandled error when updating error stats: ~p", [R]),
+            ok = riak_kv_stat:update({pb_client_error, Action, general})
+    end;
+update_error_stat(_, _Resp) ->
+    ok.
 
 %% ===================================================================
 %% Tests
