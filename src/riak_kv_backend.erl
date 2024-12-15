@@ -47,7 +47,8 @@
         fold_opts/0,
         index_spec/0,
         fold_acc/0,
-        fold_result/0
+        fold_result/0,
+        capability/0
     ]
 ).
 
@@ -150,7 +151,8 @@
     data_size(state()) ->
         undefined |
         {non_neg_integer(), objects} |
-        {fun(() -> {non_neg_integer(), objects}), dynamic}.
+        {non_neg_integer(), bytes} |
+        {fun(() -> {non_neg_integer(), objects}|undefined), dynamic}.
 
 -callback
     complex_query(

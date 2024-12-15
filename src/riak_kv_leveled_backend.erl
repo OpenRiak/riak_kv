@@ -111,12 +111,13 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()|undefined) -> {ok, [atom()]}.
+-spec capabilities(state()|undefined) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_) ->
     {ok, ?CAPABILITIES}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
