@@ -1,17 +1,22 @@
-%% ----------------------------------------------------------------------------
-%% This file is provided to you under the Apache License, Version 2.0 (the
-%% "License"); you may not use this file except in compliance with the License.
-%% You may obtain a copy of the License at
+%% -------------------------------------------------------------------
+%%
+%% riak_kv_leveled_backend: Riak leveled backend
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
 %%
 %%   http://www.apache.org/licenses/LICENSE-2.0
 %%
-%% Unless required by applicable law or agreed to in writing, software
-%% distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-%% WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
-%% License for the specific language governing permissions and limitations
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
 %% under the License.
 %%
-%% ----------------------------------------------------------------------------
+%% -------------------------------------------------------------------
 
 -module(riak_kv_leveled_backend).
 -behavior(riak_kv_backend).
@@ -30,6 +35,7 @@
          fold_buckets/4,
          fold_keys/4,
          fold_objects/4,
+         complex_query/7,
          is_empty/1,
          status/1,
          data_size/1,
@@ -56,16 +62,21 @@
 
 
 -define(RIAK_TAG, o_rkv).
--define(CAPABILITIES, [always_v1obj,
-                        head,
-                        indexes,
-                        async_fold,
-                        fold_heads,
-                        snap_prefold,
-                        flush_put,
-                        hot_backup,
-                        size,
-                        leveled]).
+-define(CAPABILITIES,
+    [
+        always_v1obj,
+        head,
+        indexes,
+        async_fold,
+        fold_heads,
+        snap_prefold,
+        flush_put,
+        hot_backup,
+        size,
+        leveled,
+        complex_query
+    ]
+).
 -define(API_VERSION, 1).
 -define(BUCKET_SDG, <<"MD">>).
 -define(KEY_SDG, <<"SHUDOWN_GUID">>).
@@ -150,46 +161,54 @@ start(Partition, Config) ->
                     {false, true} ->
                         {ok, TS} = file:read_file(FN),
                         LockTS = calendar:now_to_datetime(binary_to_term(TS)),
-                        ?LOG_ERROR("Cannot start in retain mode " ++
-                                        "due to recalc being set on ~w " ++
-                                        "see FN ~s",
-                                        [LockTS, FN]),
+                        ?LOG_ERROR(
+                            "Cannot start in retain mode "
+                            "due to recalc being set on ~w see FN ~s",
+                            [LockTS, FN]
+                        ),
                         {error, invalid_compaction_change};
                     {false, false} ->
                         {ok, retain}
                 end,
 
-            StartOpts = [{root_path, DataDir},
-                            {max_journalsize, MJS},
-                            {max_journalobjectcount, MJC},
-                            {cache_size, BCS},
-                            {max_pencillercachesize, PCS},
-                            {ledger_preloadpagecache_level, PCL},
-                            {sync_strategy, SYS},
-                            {compression_method, CMM},
-                            {compression_point, CMP},
-                            {log_level, LOL},
-                            {max_run_length, MRL},
-                            {database_id, DBid},
-                            {maxrunlength_compactionpercentage, MCP},
-                            {singlefile_compactionpercentage, SCP},
-                            {journalcompaction_scoreonein,
-                                max(1, CRD div CSP)},
-                            {snapshot_timeout_short, TOS},
-                            {snapshot_timeout_long, TOL},
-                            {reload_strategy, [{?RIAK_TAG, ReloadStrategy}]}],
+            StartOpts =
+                [
+                    {root_path, DataDir},
+                    {max_journalsize, MJS},
+                    {max_journalobjectcount, MJC},
+                    {cache_size, BCS},
+                    {max_pencillercachesize, PCS},
+                    {ledger_preloadpagecache_level, PCL},
+                    {sync_strategy, SYS},
+                    {compression_method, CMM},
+                    {compression_point, CMP},
+                    {log_level, LOL},
+                    {max_run_length, MRL},
+                    {database_id, DBid},
+                    {maxrunlength_compactionpercentage, MCP},
+                    {singlefile_compactionpercentage, SCP},
+                    {journalcompaction_scoreonein, max(1, CRD div CSP)},
+                    {snapshot_timeout_short, TOS},
+                    {snapshot_timeout_long, TOL},
+                    {reload_strategy, [{?RIAK_TAG, ReloadStrategy}]}
+                ],
             {ok, Bookie} = leveled_bookie:book_start(StartOpts),
             Ref = make_ref(),
             ValidHours = valid_hours(CLH, CTH),
             schedule_journalcompaction(Ref, Partition, CRD, ValidHours),
-            {ok, #state{bookie=Bookie,
-                        reference=Ref,
-                        partition=Partition,
-                        config=Config,
-                        db_path=DataDir,
-                        compactions_perday = CRD,
-                        valid_hours = ValidHours,
-                        backend_pause_ms = BackendPause}};
+            {
+                ok, 
+                #state{
+                    bookie=Bookie,
+                    reference=Ref,
+                    partition=Partition,
+                    config=Config,
+                    db_path=DataDir,
+                    compactions_perday = CRD,
+                    valid_hours = ValidHours,
+                    backend_pause_ms = BackendPause
+                }
+            };
         {error, Reason} ->
             ?LOG_ERROR("Failed to start leveled backend: ~p\n",
                             [Reason]),
@@ -208,10 +227,10 @@ stop(#state{bookie=Bookie}) ->
 
 
 %% @doc Retrieve an object from the leveled backend as a binary
--spec get(riak_object:bucket(), riak_object:key(), state()) ->
-                 {ok, any(), state()} |
-                 {ok, not_found, state()} |
-                 {error, term(), state()}.
+-spec get(riak_object:bucket(), riak_object:key(),state()) ->
+        {ok, any(), state()} |
+        {ok, not_found, state()} |
+        {error, term(), state()}.
 get(Bucket, Key, #state{bookie=Bookie}=State) ->
     case leveled_bookie:book_get(Bookie, Bucket, Key, ?RIAK_TAG) of
         {ok, Value} ->
@@ -222,9 +241,9 @@ get(Bucket, Key, #state{bookie=Bookie}=State) ->
 
 %% @doc Retrieve an object from the leveled backend as a binary
 -spec head(riak_object:bucket(), riak_object:key(), state()) ->
-                 {ok, any(), state()} |
-                 {ok, not_found, state()} |
-                 {error, term(), state()}.
+        {ok, any(), state()} |
+        {ok, not_found, state()} |
+        {error, term(), state()}.
 head(Bucket, Key, #state{bookie=Bookie}=State) ->
     case leveled_bookie:book_head(Bookie, Bucket, Key, ?RIAK_TAG) of
         {ok, Value} ->
@@ -234,60 +253,56 @@ head(Bucket, Key, #state{bookie=Bookie}=State) ->
     end.
 
 %% @doc Insert an object into the leveled backend.
--spec flush_put(riak_object:bucket(),
-                    riak_object:key(),
-                    [riak_object:index_spec()],
-                    binary(),
-                    state()) ->
-                         {ok, state()} |
-                         {error, term(), state()}.
+-spec flush_put(
+    riak_object:bucket(),
+    riak_object:key(),
+    [riak_object:index_spec()],
+    binary(),
+    state()) -> {ok, state()} | {error, term(), state()}.
 flush_put(Bucket, Key, IndexSpecs, Val, State) ->
     do_put(Bucket, Key, IndexSpecs, Val, true, State).
 
-
--spec put(riak_object:bucket(),
-                    riak_object:key(),
-                    [riak_object:index_spec()],
-                    binary(),
-                    state()) ->
-                         {ok, state()} |
-                         {error, term(), state()}.
+-spec put(
+    riak_object:bucket(),
+    riak_object:key(),
+    [riak_object:index_spec()],
+    binary(),
+    state()) -> {ok, state()} | {error, term(), state()}.
 put(Bucket, Key, IndexSpecs, Val, State) ->
     do_put(Bucket, Key, IndexSpecs, Val, false, State).
 
 
 %% @doc Delete an object from the leveled backend
--spec delete(riak_object:bucket(),
-                riak_object:key(),
-                [riak_object:index_spec()],
-                state()) ->
-                    {ok, state()} |
-                    {error, term(), state()}.
+-spec delete(
+    riak_object:bucket(),
+    riak_object:key(),
+    [riak_object:index_spec()],
+    state()) -> {ok, state()} | {error, term(), state()}.
 delete(Bucket, Key, IndexSpecs, #state{bookie=Bookie}=State) ->
-    case leveled_bookie:book_put(Bookie,
-                                    Bucket, Key, delete, IndexSpecs,
-                                    ?RIAK_TAG) of
+    PutResponse =
+        leveled_bookie:book_put(
+            Bookie, Bucket, Key, delete, IndexSpecs, ?RIAK_TAG),
+    case PutResponse of
         ok ->
             {ok, State};
         pause ->
-            ?LOG_WARNING("Backend ~w paused for ~w ms in response to delete",
-                            [State#state.partition,
-                                State#state.backend_pause_ms]),
+            ?LOG_WARNING(
+                "Backend ~w paused for ~w ms in response to delete",
+                [State#state.partition, State#state.backend_pause_ms]),
             timer:sleep(State#state.backend_pause_ms),                 
             {ok, State}
     end.
 
 %% @doc Fold over all the buckets
--spec fold_buckets(riak_kv_backend:fold_buckets_fun(),
-                   any(),
-                   [],
-                   state()) -> {ok, any()} | {async, fun(() -> any())}.
+-spec fold_buckets(
+    riak_kv_backend:fold_buckets_fun(),
+    any(),
+    [],
+    state()) -> {ok, any()} | {async, fun(() -> any())}.
 fold_buckets(FoldBucketsFun, Acc, Opts, #state{bookie=Bookie}) ->
     {async, Folder} = 
-        leveled_bookie:book_bucketlist(Bookie, 
-                                        ?RIAK_TAG, 
-                                        {FoldBucketsFun, Acc}, 
-                                        all),
+        leveled_bookie:book_bucketlist(
+            Bookie, ?RIAK_TAG, {FoldBucketsFun, Acc}, all),
     case lists:member(async_fold, Opts) of
         true ->
             {async, Folder};
@@ -296,10 +311,11 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{bookie=Bookie}) ->
     end.
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, term()} | {async, fun(() -> any())}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) -> {ok, term()} | {async, fun(() -> any())}.
 fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
     %% Figure out how we should limit the fold: by bucket, by
     %% secondary index, or neither (fold across everything.)
@@ -326,7 +342,8 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
                     end_term=EndTerm,
                     return_terms=ReturnTerms,
                     start_inclusive=StartInc,
-                    term_regex=TermRegex} = riak_index:upgrade_query(Q),
+                    term_regex=TermRegex
+                } = riak_index:upgrade_query(Q),
 
                 StartKey = 
                     case StartInc of
@@ -395,10 +412,11 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{bookie=Bookie}) ->
 
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun(() -> any())}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) -> {ok, any()} | {async, fun(() -> any())}.
 fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
 
     {async, ObjectFolder} =
@@ -431,18 +449,15 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
                             {true, _BK} ->
                                 case StndObjFold of   
                                     true ->
-                                        FoldObjectsFun(ObjB,
-                                                        ObjK,
-                                                        Obj, 
-                                                        InnerAcc);
+                                        FoldObjectsFun(
+                                            ObjB, ObjK, Obj, InnerAcc);
                                     false ->
                                         % Assumption here is that if this is 
                                         % not flagged as a standard object fold
                                         % it is using a fold_keys_fun -
                                         % so the object is disguised as a key
-                                        FoldObjectsFun(ObjB,
-                                                        {o, ObjK, Obj}, 
-                                                        InnerAcc)
+                                        FoldObjectsFun(
+                                            ObjB, {o, ObjK, Obj}, InnerAcc)
                                 end;
                             {skip, _BK} ->
                                 InnerAcc;
@@ -467,30 +482,36 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 % and EndInclusive should be handled by the passed in fold
                 % function (by the riak_index range checker), so null is used
                 % for EndKey
-                leveled_bookie:book_objectfold(Bookie, 
-                                                ?RIAK_TAG,
-                                                FilterBucket, 
-                                                {StartKey, EndKey},
-                                                {SpecialFoldFun, Acc}, 
-                                                false);
+                leveled_bookie:book_objectfold(
+                    Bookie, 
+                    ?RIAK_TAG,
+                    FilterBucket, 
+                    {StartKey, EndKey},
+                    {SpecialFoldFun, Acc}, 
+                    false
+                );
             {false, false} ->
                 % It is expected (but not proven) that sqn_order should be
                 % more efficient than key_order when folding over all objects
-                leveled_bookie:book_objectfold(Bookie, 
-                                                ?RIAK_TAG, 
-                                                {FoldObjectsFun, Acc},
-                                                false, 
-                                                sqn_order);
+                leveled_bookie:book_objectfold(
+                    Bookie, 
+                    ?RIAK_TAG, 
+                    {FoldObjectsFun, Acc},
+                    false, 
+                    sqn_order
+                );
             
             {{bucket, B}, false} ->
                 % The order of this will be key_order and not sqn_order as
                 % defined for fold_objects/4 when not constrained by bucket
-                leveled_bookie:book_objectfold(Bookie, 
-                                                ?RIAK_TAG,
-                                                B, 
-                                                all, 
-                                                {FoldObjectsFun, Acc}, 
-                                                false)
+                leveled_bookie:book_objectfold(
+                    Bookie, 
+                    ?RIAK_TAG,
+                    B, 
+                    all, 
+                    {FoldObjectsFun, Acc}, 
+                    false
+                )
         end,
     case lists:member(async_fold, Opts) of
         true ->
@@ -507,10 +528,11 @@ fold_objects(FoldObjectsFun, Acc, Opts, #state{bookie=Bookie}) ->
 %% expectation that the only the HeadBinary and Size is required, but if the
 %% #r_content.value is required the whole original object can be fetched using
 %% FetchFun(Clone, FetchKey), as long as the fold function has not finished
--spec fold_heads(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun(() -> any())}.
+-spec fold_heads(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) -> {ok, any()} | {async, fun(() -> any())}.
 fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
     CheckPresence =
         case proplists:get_value(check_presence, Opts) of
@@ -537,31 +559,37 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 KeyRange = 
                     {IdxQuery#riak_kv_index_v3.start_term,
                         IdxQuery#riak_kv_index_v3.end_term},
-                leveled_bookie:book_headfold(Bookie, 
-                                                ?RIAK_TAG, 
-                                                {range, Bucket, KeyRange},
-                                                {FoldHeadsFun, Acc}, 
-                                                CheckPresence, 
-                                                SnapPreFold, 
-                                                SegmentList);
+                leveled_bookie:book_headfold(
+                    Bookie, 
+                    ?RIAK_TAG, 
+                    {range, Bucket, KeyRange},
+                    {FoldHeadsFun, Acc}, 
+                    CheckPresence, 
+                    SnapPreFold, 
+                    SegmentList
+                );
             false ->
                 case proplists:get_value(bucket, Opts) of
                     undefined ->
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
-                                                        {FoldHeadsFun, Acc}, 
-                                                        CheckPresence,
-                                                        SnapPreFold,
-                                                        SegmentList);
+                        leveled_bookie:book_headfold(
+                            Bookie, 
+                            ?RIAK_TAG, 
+                            {FoldHeadsFun, Acc}, 
+                            CheckPresence,
+                            SnapPreFold,
+                            SegmentList
+                        );
                     B ->
                         % Equivalent to a $key query, but without the key range
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
-                                                        {range, B, all},
-                                                        {FoldHeadsFun, Acc}, 
-                                                        CheckPresence, 
-                                                        SnapPreFold, 
-                                                        SegmentList)
+                        leveled_bookie:book_headfold(
+                            Bookie, 
+                            ?RIAK_TAG, 
+                            {range, B, all},
+                            {FoldHeadsFun, Acc}, 
+                            CheckPresence, 
+                            SnapPreFold, 
+                            SegmentList
+                        )
                 end
         end,
 
@@ -574,12 +602,52 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
             {ok, HeadFolder()}
     end.
 
+-spec complex_query(
+    riak_kv_backend:fold_keys_fun(),
+    riak_kv_backend:fold_acc(),
+    riak_object:bucket(),
+    riak_kv_query:evaluated_query(),
+    binary() | boolean(),
+    riak_kv_backend:fold_opts(),
+    state()
+) -> riak_kv_backend:fold_result().
+complex_query(
+        FoldTermsFun, InitAcc, Bucket, Query, ReturnTerms, FoldOpts, State) ->
+    {async, FoldFun} =
+        case Query of
+            {QueryComboFun, SubQueries} ->
+                leveled_bookie:book_multiindexfold(
+                    State#state.bookie,
+                    Bucket,
+                    FoldTermsFun,
+                    SubQueries,
+                    QueryComboFun
+                );
+            {IdxField, StartTerm, EndTerm, TermExpression} ->
+                leveled_bookie:book_indexfold(
+                    State#state.bookie,
+                    {Bucket, <<>>},
+                    {FoldTermsFun, InitAcc},
+                    {IdxField, StartTerm, EndTerm},
+                    {ReturnTerms, TermExpression}
+                )
+        end,
+    SnapPreFold = lists:member(snap_prefold, FoldOpts),
+    case {lists:member(async_fold, FoldOpts), SnapPreFold} of
+        {true, true} ->
+            {queue, FoldFun};
+        {true, false} ->
+            {async, FoldFun};
+        _ ->
+            {ok, FoldFun}
+    end.
 
 %% @doc Delete all objects from this leveled backend
--spec drop(state()) -> {ok, state()} | {error, term(), state()}.
-drop(#state{bookie=Bookie, partition=Partition, config=Config}=_State) ->
+-spec drop(state()) -> {ok, state()}.
+drop(#state{bookie=Bookie, partition=Partition, config=Config} = _PrevState) ->
     ok = leveled_bookie:book_destroy(Bookie),
-    start(Partition, Config).
+    {ok, State} = start(Partition, Config),
+    {ok, State}.
 
 %% @doc Returns true if this leveled backend contains any
 %% non-tombstone values; otherwise returns false.
@@ -652,17 +720,21 @@ callback(Ref, compact_journal, State) ->
     _ = spawn(fun() -> log_fragmentation(binary_alloc) end),
     case is_reference(Ref) of
         true ->
-             prompt_journalcompaction(State#state.bookie,
-                                        Ref,
-                                        State#state.partition,
-                                        State#state.compactions_perday,
-                                        State#state.valid_hours),
+            prompt_journalcompaction(
+                State#state.bookie,
+                Ref,
+                State#state.partition,
+                State#state.compactions_perday,
+                State#state.valid_hours
+            ),
              {ok, State}
     end;
 callback(Ref, UnexpectedCallback, State) ->
-    ?LOG_INFO("Ignoring unexpected callback ~w with ref ~w " ++
-                "may be expected if multi-backend",
-                [UnexpectedCallback, Ref]),
+    ?LOG_INFO(
+        "Ignoring unexpected callback ~w with ref ~w "
+        "may be expected if multi-backend",
+        [UnexpectedCallback, Ref]
+    ),
     {ok, State}.
 
 %% ===================================================================
@@ -710,25 +782,37 @@ log_fragmentation(Allocator) ->
             fun(ReconAllocOutputLine, {MBAcc, MCAcc, SBAcc, SCAcc}) ->
                 case ReconAllocOutputLine of
                     {{Allocator, I}, Stats} when I > 0, is_list(Stats) ->
-                        {MBAcc + proplists:get_value(
-                                    mbcs_block_size, Stats, 0),
-                            MCAcc + proplists:get_value(
-                                    mbcs_carriers_size, Stats, 0),
-                            SBAcc + proplists:get_value(
-                                    sbcs_block_size, Stats, 0),
-                            SCAcc + proplists:get_value(
-                                    sbcs_carriers_size, Stats, 0)};
+                        {
+                            MBAcc + get_memstat(mbcs_block_size, Stats),
+                            MCAcc + get_memstat(mbcs_carriers_size, Stats),
+                            SBAcc + get_memstat(sbcs_block_size, Stats),
+                            SCAcc + get_memstat(sbcs_carriers_size, Stats)};
                     _ ->
                         {MBAcc, MCAcc, SBAcc, SCAcc}
                 end
             end,
             {0, 0, 0, 0},
-            recon_alloc:fragmentation(current)),
-    ?LOG_INFO(
-        "Memory for allocator=~p "
-        "mbcs_block_size=~w mbcs_carrier_size=~w "
-        "sbcs_block_size=~w sbcs_carrier_size=~w",
-        [Allocator, MB_BS, MB_CS, SB_BS, SB_CS]).
+            get_fragmentation_stats()
+        ),
+    _ = 
+        ?LOG_INFO(
+            "Memory for allocator=~p "
+            "mbcs_block_size=~w mbcs_carrier_size=~w "
+            "sbcs_block_size=~w sbcs_carrier_size=~w",
+            [Allocator, MB_BS, MB_CS, SB_BS, SB_CS]
+        ),
+    ok.
+
+-spec get_memstat(atom(), list({atom(), non_neg_integer()})) -> non_neg_integer().
+get_memstat(StatType, Stats) ->
+    case proplists:get_value(StatType, Stats, 0) of
+        I when is_integer(I) -> I
+    end.
+
+-spec get_fragmentation_stats() ->
+    list({{atom(), non_neg_integer()}, list({atom(), non_neg_integer()})}).
+get_fragmentation_stats() ->
+    recon_alloc:fragmentation(current).
 
 %% @private
 %% Complete a PUT, with the sync option true/false depending on whether 
@@ -742,16 +826,25 @@ log_fragmentation(Allocator) ->
                          {ok, state()} |
                          {error, term(), state()}.
 do_put(Bucket, Key, IndexSpecs, Val, Sync, #state{bookie=Bookie}=State) ->
-    case leveled_bookie:book_put(Bookie,
-                                    Bucket, Key, Val, IndexSpecs,
-                                    ?RIAK_TAG,
-                                    infinity, Sync) of
+    PutResponse =
+        leveled_bookie:book_put(
+            Bookie,
+            Bucket,
+            Key,
+            Val,
+            IndexSpecs,
+            ?RIAK_TAG,
+            infinity,
+            Sync
+        ),
+    case PutResponse of
         ok ->
             {ok, State};
         pause ->
-            ?LOG_WARNING("Backend ~w paused for ~w ms in response to put",
-                            [State#state.partition,
-                                State#state.backend_pause_ms]),
+            ?LOG_WARNING(
+                "Backend ~w paused for ~w ms in response to put",
+                [State#state.partition, State#state.backend_pause_ms]
+            ),
             timer:sleep(State#state.backend_pause_ms),
             {ok, State}
     end.
@@ -764,8 +857,10 @@ get_data_dir(DataRoot, Partition) ->
         ok ->
             {ok, PartitionDir};
         {error, Reason} ->
-            ?LOG_ERROR("Failed to create leveled dir ~s: ~p",
-                            [PartitionDir, Reason]),
+            ?LOG_ERROR(
+                "Failed to create leveled dir ~s: ~p",
+                [PartitionDir, Reason]
+            ),
             {error, Reason}
     end.
 
@@ -773,14 +868,18 @@ get_data_dir(DataRoot, Partition) ->
 %% Request a callback in the future to check for journal compaction
 -spec schedule_journalcompaction(reference(), integer(), integer(), list(integer())) -> reference().
 schedule_journalcompaction(Ref, PartitionID, PerDay, ValidHours) when is_reference(Ref) ->
-    Interval = leveled_iclerk:schedule_compaction(ValidHours,
-                                                    PerDay,
-                                                    os:timestamp()),
-    ?LOG_INFO("Schedule compaction for interval ~w on partition ~w",
-                    [Interval, PartitionID]),
-    riak_kv_backend:callback_after(Interval * 1000, % callback interval in ms
-                                    Ref,
-                                    compact_journal).
+    Interval =
+        leveled_iclerk:schedule_compaction(ValidHours, PerDay, os:timestamp()),
+    ?LOG_INFO(
+        "Schedule compaction for interval ~w on partition ~w",
+        [Interval, PartitionID]
+    ),
+    riak_kv_backend:callback_after(
+        Interval * 1000, % callback interval in ms
+        Ref,
+        compact_journal
+    
+    ).
 
 %% @private
 %% Do journal compaction if the callback is in a valid time period
@@ -827,33 +926,43 @@ valid_hours(LowHour, HighHour) ->
 
 prop_leveled_backend() ->
     Path = riak_kv_test_util:get_test_dir("leveled-backend"),
-    ?SETUP(fun() ->
-                   application:load(sasl),
-                   application:set_env(sasl,
-                                        sasl_error_logger,
-                                        {file, Path ++ "/riak_kv_leveled_backend_eqc_sasl.log"}),
-                   error_logger:tty(false),
-                   error_logger:logfile({open, Path ++ "/riak_kv_leveled_backend_eqc.log"}),
-                   fun() -> ?assertCmd("rm -rf " ++ Path ++ "/*") end
-           end,
-           backend_eqc:prop_backend(?MODULE,
-                                    false,
-                                    [{data_root, Path},
-                                        {cache_size, 100},
-                                        {penciller_cache_size, 1000},
-                                        {sync_strategy, none},
-                                        {compression_method, native},
-                                        {compression_point, on_receipt},
-                                        {compaction_runs_perday, 1},
-                                        {compaction_low_hour, 1},
-                                        {compaction_top_hour, 23},
-                                        {max_run_length, 2},
-                                        {maxrunlength_compactionpercentage, 70.0},
-                                        {singlefile_compactionpercentage, 50.0},
-                                        {snapshot_timeout_short, 900},
-                                        {snapshot_timeout_long, 3600},
-                                        {log_level, error},
-                                        {journal_objectcount, 100}])).
+    ?SETUP(
+        fun() ->
+            application:load(sasl),
+            application:set_env(
+                sasl,
+                sasl_error_logger,
+                {file, Path ++ "/riak_kv_leveled_backend_eqc_sasl.log"}
+            ),
+            error_logger:tty(false),
+            error_logger:logfile(
+                {open, Path ++ "/riak_kv_leveled_backend_eqc.log"}
+            ),
+            fun() -> ?assertCmd("rm -rf " ++ Path ++ "/*") end
+        end,
+           backend_eqc:prop_backend(
+            ?MODULE,
+            false,
+            [
+                {data_root, Path},
+                {cache_size, 100},
+                {penciller_cache_size, 1000},
+                {sync_strategy, none},
+                {compression_method, native},
+                {compression_point, on_receipt},
+                {compaction_runs_perday, 1},
+                {compaction_low_hour, 1},
+                {compaction_top_hour, 23},
+                {max_run_length, 2},
+                {maxrunlength_compactionpercentage, 70.0},
+                {singlefile_compactionpercentage, 50.0},
+                {snapshot_timeout_short, 900},
+                {snapshot_timeout_long, 3600},
+                {log_level, error},
+                {journal_objectcount, 100}
+            ]
+        )
+    ).
 
 -endif. % EQC
 

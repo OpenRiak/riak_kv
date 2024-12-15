@@ -64,6 +64,12 @@ init([]) ->
     IndexFsmSup = {riak_kv_index_fsm_sup,
                    {riak_kv_index_fsm_sup, start_link, []},
                    permanent, infinity, supervisor, [riak_kv_index_fsm_sup]},
+    QuerySup = 
+        {
+            riak_kv_query_sup,
+            {riak_kv_query_sup, start_link, []},
+            permanent, infinity, supervisor, [riak_kv_query_sup]
+        },
     ClusterAAEFsmSup = {riak_kv_clusteraae_fsm_sup,
                    {riak_kv_clusteraae_fsm_sup, start_link, []},
                    permanent, infinity, supervisor, [riak_kv_clusteraae_fsm_sup]},
@@ -122,6 +128,7 @@ init([]) ->
         BucketsFsmSup,
         KeysFsmSup,
         IndexFsmSup,
+        QuerySup,
         ClusterAAEFsmSup,
         HotBackupAAEFsmSup,
         [EnsemblesKV || riak_core_sup:ensembles_enabled()],

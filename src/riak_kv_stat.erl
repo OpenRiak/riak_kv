@@ -343,6 +343,14 @@ do_update({index_create, Pid}) ->
     ok;
 do_update(index_create_error) ->
     exometer:update([?PFX, ?APP, index, fsm, create, error], 1);
+do_update({query_create, Pid}) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, query, fsm, create], 1),
+    ok = exometer:update([P, ?APP, query, fsm, active], 1),
+    add_monitor(query, Pid),
+    ok;
+do_update(query_create_error) ->
+    exometer:update([?PFX, ?APP, query, fsm, create, error], 1);
 do_update({clusteraae_create, Pid}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, clusteraae, fsm, create], 1),
@@ -801,6 +809,34 @@ stats() ->
      {[clusteraae, fsm, create], spiral, [], [{one, clusteraae_fsm_create}]},
      {[clusteraae, fsm, create, error], spiral, [], [{one, clusteraae_fsm_create_error}]},
      {[clusteraae, fsm, active], counter, [], [{value, clusteraae_fsm_active}]},
+     {[query, fsm, create], spiral, [], [{one, query_fsm_create}]},
+     {[query, fsm, create, error], spiral, [], [{one, query_fsm_create_error}]},
+     {[query, fsm, active], counter, [], [{value, query_fsm_active}]},
+     {[query, fsm, complete], spiral, [], [{one, query_fsm_complete}]},
+     {
+        [query, fsm, results],
+        histogram,
+        [], 
+        [
+            {mean  , query_fsm_results_mean},
+            {median, query_fsm_results_median},
+            {95    , query_fsm_results_95},
+            {99    , query_fsm_results_99},
+            {max   , query_fsm_results_100}
+        ]
+    },
+     {
+        [query, fsm, time],
+        histogram,
+        [],
+        [
+            {mean , query_fsm_time_mean},
+            {median, query_fsm_time_median},
+            {95    , query_fsm_time_95},
+            {99    , query_fsm_time_99},
+            {max   , query_fsm_time_100}
+        ]
+    },
 
      %% misc stats
      {mapper_count, counter, [], [{value, executing_mappers}]},

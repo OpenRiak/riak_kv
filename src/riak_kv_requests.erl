@@ -29,6 +29,7 @@
          new_listkeys_request/3,
          new_listbuckets_request/1,
          new_index_request/4,
+         new_query_request/7,
          new_vnode_status_request/0,
          new_delete_request/2,
          new_reap_request/2,
@@ -43,6 +44,10 @@
          get_item_filter/1,
          get_ack_backpressure/1,
          get_query/1,
+         get_querytype/1,
+         get_accumulation_type/1,
+         get_return_terms/1,
+         get_buffer_size/1,
          get_object/1,
          get_delete_hash/1,
          get_encoded_obj/1,
@@ -64,6 +69,7 @@
               listkeys_request/0,
               listbuckets_request/0,
               index_request/0,
+              query_request/0,
               vnode_status_request/0,
               delete_request/0,
               reap_request/0,
@@ -81,11 +87,10 @@
 -type request_options() :: [any()].
 -type replica_type() :: primary | fallback.
 -type encoded_obj() :: binary().
--type bucket() :: riak_core_bucket:bucket().
 -type item_filter() :: function().
 -type coverage_filter() :: riak_kv_coverage_filter:filter().
 -type query() :: riak_index:query_def().
--type aae_query() :: riak_kv_clusteraae_fsm:query_definition().
+-type aae_query() :: riak_kv_aaefold:query_definition().
 
 -record(riak_kv_put_req_v1,
         { bkey :: bucket_key(),
@@ -106,27 +111,39 @@
 }).
 
 -record(riak_kv_listkeys_req_v3, {
-          bucket :: bucket(),
+          bucket :: riak_object:bucket(),
           item_filter :: item_filter()}).
 
 %% same as _v3, but triggers ack-based backpressure (we switch on the record *name*)
 -record(riak_kv_listkeys_req_v4, {
-          bucket :: bucket(),
+          bucket :: riak_object:bucket(),
           item_filter :: item_filter()}).
 
 -record(riak_kv_listbuckets_req_v1, {
           item_filter :: item_filter()}).
 
 -record(riak_kv_index_req_v1, {
-          bucket :: bucket(),
+          bucket :: riak_object:bucket(),
           item_filter :: coverage_filter(),
           qry :: query()}).
 
 %% same as _v1, but triggers ack-based backpressure
 -record(riak_kv_index_req_v2, {
-          bucket :: bucket(),
+          bucket :: riak_object:bucket(),
           item_filter :: coverage_filter(),
           qry :: riak_index:query_def()}).
+
+-record(riak_kv_complexquery_req_v1,
+    {
+        bucket :: riak_object:bucket(),
+        item_filter :: coverage_filter(),
+        query_type :: riak_kv_query:query_type(),
+        acc_type :: riak_kv_query:accumulation_option(),
+        return_terms :: binary()|boolean(),
+        buffer_size :: pos_integer(),
+        query :: riak_kv_query:query_definition()
+    }
+).
 
 -record(riak_kv_vnode_status_req_v1, {}).
 
@@ -151,7 +168,7 @@
           req_id :: non_neg_integer()}).
 
 -record(riak_kv_aaefold_req_v1, 
-            {qry :: riak_kv_clusteraae_fsm:query_definition(),
+            {qry :: aae_query(),
                 init_acc :: any(),
                 n_val :: pos_integer()}).
 
@@ -164,6 +181,7 @@
 -opaque listbuckets_request() :: #riak_kv_listbuckets_req_v1{}.
 -opaque listkeys_request() :: #riak_kv_listkeys_req_v3{} | #riak_kv_listkeys_req_v4{}.
 -opaque index_request() :: #riak_kv_index_req_v1{} | #riak_kv_index_req_v2{}.
+-opaque query_request() :: #riak_kv_complexquery_req_v1{}.
 -opaque vnode_status_request() :: #riak_kv_vnode_status_req_v1{}.
 -opaque delete_request() :: #riak_kv_delete_req_v1{}.
 -opaque reap_request() :: #riak_kv_reap_req_v1{}.
@@ -180,6 +198,7 @@
                  | listkeys_request()
                  | listbuckets_request()
                  | index_request()
+                 | query_request()
                  | vnode_status_request()
                  | delete_request()
                  | reap_request()
@@ -195,6 +214,7 @@
                       | kv_listkeys_request
                       | kv_listbuckets_request
                       | kv_index_request
+                      | kv_query_request
                       | kv_vnode_status_request
                       | kv_delete_request
                       | kv_reap_request
@@ -214,6 +234,7 @@ request_type(#riak_kv_listkeys_req_v4{})-> kv_listkeys_request;
 request_type(#riak_kv_listbuckets_req_v1{})-> kv_listbuckets_request;
 request_type(#riak_kv_index_req_v1{})-> kv_index_request;
 request_type(#riak_kv_index_req_v2{})-> kv_index_request;
+request_type(#riak_kv_complexquery_req_v1{})-> kv_query_request;
 request_type(#riak_kv_vnode_status_req_v1{})-> kv_vnode_status_request;
 request_type(#riak_kv_delete_req_v1{})-> kv_delete_request;
 request_type(#riak_kv_reap_req_v1{}) -> kv_reap_request;
@@ -248,7 +269,10 @@ new_head_request(BKey, ReqId) ->
 new_w1c_put_request(BKey, EncodedObj, ReplicaType) ->
     #riak_kv_w1c_put_req_v1{bkey = BKey, encoded_obj = EncodedObj, type = ReplicaType}.
 
--spec new_listkeys_request(bucket(), item_filter(), UseAckBackpressure::boolean()) -> listkeys_request().
+-spec new_listkeys_request(
+    riak_object:bucket(),
+    item_filter(),
+    UseAckBackpressure::boolean()) -> listkeys_request().
 new_listkeys_request(Bucket, ItemFilter, true) ->
     #riak_kv_listkeys_req_v4{bucket=Bucket,
                              item_filter=ItemFilter};
@@ -256,9 +280,10 @@ new_listkeys_request(Bucket, ItemFilter, false) ->
     #riak_kv_listkeys_req_v3{bucket=Bucket,
                              item_filter=ItemFilter}.
 
--spec new_aaefold_request(aae_query(),
-                            any(),
-                            pos_integer()) -> aaefold_request().
+-spec new_aaefold_request(
+    aae_query(),
+    any(),
+    pos_integer()) -> aaefold_request().
 new_aaefold_request(Query, InitAcc, NVal) ->
     #riak_kv_aaefold_req_v1{qry = Query, init_acc = InitAcc, n_val = NVal}.
 
@@ -270,11 +295,11 @@ new_hotbackup_request(BackupPath) ->
 new_listbuckets_request(ItemFilter) ->
     #riak_kv_listbuckets_req_v1{item_filter=ItemFilter}.
 
--spec new_index_request(bucket(),
-                        coverage_filter(),
-                        riak_index:query_def(),
-                        UseAckBackpressure::boolean())
-                       -> index_request().
+-spec new_index_request(
+    riak_object:bucket(),
+    coverage_filter(),
+    riak_index:query_def(),
+    UseAckBackpressure::boolean()) -> index_request().
 new_index_request(Bucket, ItemFilter, Query, false) ->
     #riak_kv_index_req_v1{bucket=Bucket,
                          item_filter=ItemFilter,
@@ -283,6 +308,26 @@ new_index_request(Bucket, ItemFilter, Query, true) ->
     #riak_kv_index_req_v2{bucket=Bucket,
                           item_filter=ItemFilter,
                           qry=Query}.
+
+-spec new_query_request(
+    riak_object:bucket(),
+    coverage_filter(),
+    riak_kv_query:query_type(),
+    riak_kv_query:accumulation_option(),
+    binary()|boolean(),
+    pos_integer(),
+    riak_kv_query:query_definition()) -> query_request().
+new_query_request(
+        Bucket, ItemFilter, Type, AccType, ReturnTerms, BuffSize, Query) ->
+    #riak_kv_complexquery_req_v1{
+        bucket = Bucket,
+        item_filter = ItemFilter,
+        query_type = Type,
+        acc_type = AccType,
+        return_terms = ReturnTerms,
+        buffer_size = BuffSize,
+        query = Query
+    }.
 
 -spec new_vnode_status_request() -> vnode_status_request().
 new_vnode_status_request() ->
@@ -326,7 +371,7 @@ get_bucket_key(#riak_kv_reap_req_v1{bkey = BKey}) ->
 get_bucket_keys(#riak_kv_vclock_req_v1{bkeys = BKeys}) ->
     BKeys.
 
--spec get_bucket(request()) -> bucket().
+-spec get_bucket(request()) -> riak_object:bucket().
 get_bucket(#riak_kv_listkeys_req_v3{bucket = Bucket}) ->
     Bucket;
 get_bucket(#riak_kv_listkeys_req_v4{bucket = Bucket}) ->
@@ -334,6 +379,8 @@ get_bucket(#riak_kv_listkeys_req_v4{bucket = Bucket}) ->
 get_bucket(#riak_kv_index_req_v1{bucket = Bucket}) ->
     Bucket;
 get_bucket(#riak_kv_index_req_v2{bucket = Bucket}) ->
+    Bucket;
+get_bucket(#riak_kv_complexquery_req_v1{bucket = Bucket}) ->
     Bucket.
 
 
@@ -347,6 +394,8 @@ get_item_filter(#riak_kv_listbuckets_req_v1{item_filter = ItemFilter}) ->
 get_item_filter(#riak_kv_index_req_v1{item_filter = ItemFilter}) ->
     ItemFilter;
 get_item_filter(#riak_kv_index_req_v2{item_filter = ItemFilter}) ->
+    ItemFilter;
+get_item_filter(#riak_kv_complexquery_req_v1{item_filter = ItemFilter}) ->
     ItemFilter.
 
 -spec get_ack_backpressure(listkeys_request()|index_request())
@@ -360,13 +409,32 @@ get_ack_backpressure(#riak_kv_index_req_v1{}) ->
 get_ack_backpressure(#riak_kv_index_req_v2{}) ->
     true.
 
--spec get_query(request()) -> query()|aae_query().
+-spec get_query(
+    request()) -> query()|aae_query()|riak_kv_query:query_definition().
 get_query(#riak_kv_index_req_v1{qry = Query}) ->
     Query;
 get_query(#riak_kv_index_req_v2{qry = Query}) ->
     Query;
 get_query(#riak_kv_aaefold_req_v1{qry = Query}) ->
+    Query;
+get_query(#riak_kv_complexquery_req_v1{query = Query}) ->
     Query.
+
+-spec get_querytype(request()) -> riak_kv_query:query_type().
+get_querytype(#riak_kv_complexquery_req_v1{query_type = QT}) ->
+    QT.
+
+-spec get_accumulation_type(request()) -> riak_kv_query:accumulation_option().
+get_accumulation_type(#riak_kv_complexquery_req_v1{acc_type = ATY}) ->
+    ATY.
+
+-spec get_return_terms(request()) -> binary()|boolean().
+get_return_terms(#riak_kv_complexquery_req_v1{return_terms = RT}) ->
+    RT.
+
+-spec get_buffer_size(request()) -> pos_integer().
+get_buffer_size(#riak_kv_complexquery_req_v1{buffer_size = BS}) ->
+    BS.
 
 -spec get_encoded_obj(request()) -> encoded_obj().
 get_encoded_obj(#riak_kv_w1c_put_req_v1{encoded_obj = EncodedObj}) ->
