@@ -32,7 +32,8 @@
         key_acc :: key_accumulator()|none,
         term_acc :: termkey_accumulator()|none,
         agg :: buffer_agg()|none,
-        type :: riak_kv_query:accumulation_option()
+        type :: riak_kv_query:accumulation_option(),
+        start_time = os:system_time(microsecond) :: pos_integer()
     }
 ).
 
@@ -210,16 +211,24 @@ merge(
         agg = #termkeycount_agg{map = UpdTKSMap}
     }.
 
+
+
 -spec flush(buffer()) -> ok.
-flush(#buffer{count = C, type = T} = Buffer) when T == match_count ->
+flush(Buffer) ->
+    do_flush(Buffer),
+    Duration = os:system_time(microsecond) - Buffer#buffer.start_time,
+    ok = riak_kv_stat:update({query_vnode_time, Duration}),
+    ok.
+    
+do_flush(#buffer{count = C, type = T} = Buffer) when T == match_count ->
     reply(Buffer, {T, C});
-flush(#buffer{key_acc = Acc, type = T} = Buffer)
+do_flush(#buffer{key_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == keys ->
     reply(Buffer, {T, Acc});
-flush(#buffer{term_acc = Acc, type = T} = Buffer)
+do_flush(#buffer{term_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == term_with_keys ->
     reply(Buffer, {T, Acc});
-flush(#buffer{type = T} = Buffer) ->
+do_flush(#buffer{type = T} = Buffer) ->
     UpdB = merge(Buffer#buffer{count = Buffer#buffer.max_size}),
     Result = 
         case {T, UpdB#buffer.agg} of

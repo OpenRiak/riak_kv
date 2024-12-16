@@ -270,6 +270,15 @@ do_update({index_fsm_time, Microsecs, ResultCount}) ->
     ok = exometer:update([P, ?APP, index, fsm, complete], 1),
     ok = exometer:update([P, ?APP, index, fsm, results], ResultCount),
     ok = exometer:update([P, ?APP, index, fsm, time], Microsecs);
+do_update({query_node_time, Microsecs, ResultCount}) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, query, node, complete], 1),
+    ok = exometer:update([P, ?APP, query, node, results], ResultCount),
+    ok = exometer:update([P, ?APP, query, node, time], Microsecs);
+do_update({query_vnode_time, Microsecs}) ->
+    P = ?PFX,
+    ok = exometer:update([P, ?APP, query, vnode, complete], 1),
+    ok = exometer:update([P, ?APP, query, vnode, time], Microsecs);
 do_update({read_repairs, Preflist}) ->
     ok = exometer:update([?PFX, ?APP, node, gets, read_repairs], 1),
     do_repairs(Preflist);
@@ -345,12 +354,11 @@ do_update(index_create_error) ->
     exometer:update([?PFX, ?APP, index, fsm, create, error], 1);
 do_update({query_create, Pid}) ->
     P = ?PFX,
-    ok = exometer:update([P, ?APP, query, fsm, create], 1),
-    ok = exometer:update([P, ?APP, query, fsm, active], 1),
+    ok = exometer:update([P, ?APP, query, server, create], 1),
     add_monitor(query, Pid),
     ok;
 do_update(query_create_error) ->
-    exometer:update([?PFX, ?APP, query, fsm, create, error], 1);
+    exometer:update([?PFX, ?APP, query, server, create, error], 1);
 do_update({clusteraae_create, Pid}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, clusteraae, fsm, create], 1),
@@ -809,32 +817,40 @@ stats() ->
      {[clusteraae, fsm, create], spiral, [], [{one, clusteraae_fsm_create}]},
      {[clusteraae, fsm, create, error], spiral, [], [{one, clusteraae_fsm_create_error}]},
      {[clusteraae, fsm, active], counter, [], [{value, clusteraae_fsm_active}]},
-     {[query, fsm, create], spiral, [], [{one, query_fsm_create}]},
-     {[query, fsm, create, error], spiral, [], [{one, query_fsm_create_error}]},
-     {[query, fsm, active], counter, [], [{value, query_fsm_active}]},
-     {[query, fsm, complete], spiral, [], [{one, query_fsm_complete}]},
+     {[query, server, create], spiral, [], [{one, query_server_create}]},
+     {[query, server, create, error], spiral, [], [{one, query_server_create_error}]},
+     {[query, node, complete], spiral, [], [{one, node_query}, {count, node_query_total}]},
      {
-        [query, fsm, results],
+        [query, node, results],
         histogram,
         [], 
         [
-            {mean  , query_fsm_results_mean},
-            {median, query_fsm_results_median},
-            {95    , query_fsm_results_95},
-            {99    , query_fsm_results_99},
-            {max   , query_fsm_results_100}
+            {mean  , node_query_results_mean},
+            {median, node_query_results_median},
+            {max   , node_query_results_100}
         ]
     },
      {
-        [query, fsm, time],
+        [query, node, time],
         histogram,
         [],
         [
-            {mean , query_fsm_time_mean},
-            {median, query_fsm_time_median},
-            {95    , query_fsm_time_95},
-            {99    , query_fsm_time_99},
-            {max   , query_fsm_time_100}
+            {mean ,  node_query_time_mean},
+            {median, node_query_time_median},
+            {99,     node_query_time_99},
+            {max   , node_query_time_100}
+        ]
+    },
+    {[query, vnode, complete], spiral, [], [{one, vnode_query}]},
+     {
+        [query, vnode, time],
+        histogram,
+        [],
+        [
+            {mean ,  vnode_query_time_mean},
+            {median, vnode_query_time_median},
+            {99,     vnode_query_time_99},
+            {max   , vnode_query_time_100}
         ]
     },
 

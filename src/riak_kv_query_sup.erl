@@ -33,9 +33,9 @@
 
 start_query_worker(Node, Args) ->
     case supervisor:start_child({?MODULE, Node}, Args) of
-        {ok, Pid} ->
+        {ok, Pid, ReqID} ->
             ok = riak_kv_stat:update({query_create, Pid}),
-            {ok, Pid};
+            {ok, Pid, ReqID};
         Error ->
             ok = riak_kv_stat:update(query_create_error),
             Error
@@ -49,11 +49,11 @@ init([]) ->
     QueryChildSpec =
         {
             undefined,
-            {riak_kv_query_worker, query_start, []},
+            {riak_kv_query_server, query_start, []},
             temporary,
             5000,
             worker,
-            [riak_kv_query_worker]
+            [riak_kv_query_server]
         },
 
     {ok, {{simple_one_for_one, 10, 10}, [QueryChildSpec]}}.

@@ -41,7 +41,7 @@
 %% refactored in line with this - and this may involve re-introducing a
 %% common behaviour.
 
--module(riak_kv_query_worker).
+-module(riak_kv_query_server).
 
 -behaviour(gen_server).
 
@@ -493,7 +493,7 @@ update_timings(Timings) ->
 -spec log_timings(timings(), riak_object:bucket(), non_neg_integer()) -> ok.
 log_timings(Timings, Bucket, ResultCount) ->
     Duration = timer:now_diff(os:timestamp(), Timings#timings.start_time),
-    ok = riak_kv_stat:update({index_fsm_time, Duration, ResultCount}),
+    ok = riak_kv_stat:update({query_node_time, Duration, ResultCount}),
     log_timings(Timings,
                 Bucket,
                 ResultCount,
