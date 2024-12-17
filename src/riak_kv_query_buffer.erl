@@ -247,8 +247,10 @@ do_flush(#buffer{type = T} = Buffer) ->
 -spec aggregate(reply_type(), reply_type()|none) -> reply_type().
 aggregate(R, none) ->
     R;
-aggregate({T, KL}, {T, AggKL}) when T == keys; T == term_with_keys ->
+aggregate({T, KL}, {T, AggKL}) when T == keys ->
     {T, lists:merge(KL, AggKL)};
+aggregate({T, KL}, {T, AggKL}) when T == term_with_keys ->
+    {T, lists:umerge(KL, AggKL)};
 aggregate({T, C}, {T, AggC}) when T == match_count; T == key_count ->
     {T, AggC + C};
 aggregate({T, TM}, {T, AggTM})
@@ -261,6 +263,7 @@ reply(#buffer{reply_fun = R}, {T, KL})
     R({T, lists:reverse(KL)});
 reply(#buffer{reply_fun = R}, Result) ->
     R(Result).
+
 
 %%%============================================================================
 %%% Test
@@ -428,6 +431,9 @@ term_with_keys_test() ->
                 lists:seq(101, 200)
             )
         },
+    ok = get_reply(),
+    {L1DupsSubset, _Rest} = lists:split(10, L1),
+    A ! {term_with_keys, L1DupsSubset},
     ok = get_reply(),
     
     A ! stop,

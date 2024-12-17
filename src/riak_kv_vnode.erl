@@ -3588,7 +3588,6 @@ result_fun_ack(Bucket, Sender) ->
             riak_core_vnode:reply(Sender, {{self(), Monitor}, Bucket, Items}),
             receive
                 {Monitor, ok} ->
-                    ?LOG_INFO("Received Ack at Sender ~0p", [Sender]),
                     erlang:demonitor(Monitor, [flush]);
                 {Monitor, stop_fold} ->
                     erlang:demonitor(Monitor, [flush]),
@@ -3615,14 +3614,12 @@ stop_fold({Pid, Ref}) ->
 %% @private
 finish_fun(BufferMod, Sender) ->
     fun(Buffer) ->
-        ?LOG_INFO("Finsh fold, send to ~0p", [Sender]),
         finish_fold(BufferMod, Buffer, Sender)
     end.
 
 %% @private
 finish_fold(BufferMod, Buffer, Sender) ->
     BufferMod:flush(Buffer),
-    ?LOG_INFO("Results flushed - reply to Sender ~0p with done", [Sender]),
     riak_core_vnode:reply(Sender, done).
 
 %% @private

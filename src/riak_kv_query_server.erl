@@ -139,6 +139,8 @@
 -type vnode_id() :: non_neg_integer().
 -type vnode_monitor() :: #{vnode_id() => non_neg_integer()}|#{}.
 
+-export_type([results/0]).
+
 
 %%%============================================================================
 %%% API
@@ -258,7 +260,6 @@ handle_info(
         {{ReqID, Vnode}, {From, _B, {keys, Results}}}, 
         #state{req_id = ReqID} = State) ->
     riak_kv_vnode:ack_keys(From),
-    ?LOG_INFO("Received result size ~w ack'd to ~0p", [length(Results), From]),
     {keys, UpdResults} =
         riak_kv_query_buffer:aggregate(
             {keys, Results},
@@ -387,7 +388,6 @@ handle_info(
                         {RM, lists:sum(maps:values(RM))}
                 end,
             {raw, ClientReqID, ClientPid} = State#state.from,
-            ?LOG_INFO("Returning response ~0p", [Results]),
             ClientPid ! {ClientReqID, Results},
             log_timings(
                 UpdTimings,
@@ -396,10 +396,6 @@ handle_info(
             ),
             {stop, normal, State};
         _ ->
-            ?LOG_INFO(
-                "Query done for ~w remainining ~w",
-                [Vnode, sets:size(UpdCoverageVnodes)]
-            ),
             {
                 noreply,
                 State#state{

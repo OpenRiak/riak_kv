@@ -40,7 +40,8 @@
         add_accumulation_option/2,
         add_accumulation_term/2,
         add_result_provision/2,
-        add_queries/3
+        add_queries/3,
+        is_query/1
     ]
 ).
 
@@ -103,7 +104,7 @@
     evaluated_query()|
     {aggregation_function(), list({aggregation_tag(), evaluated_query()})}.
 -type validation_stage() ::
-    aggregation_function|accumulation_option|accumulation_term|
+    aggregation_expression|accumulation_option|accumulation_term|
         result_provision|query_evaluation.
 -type validation_error() ::
     {error, validation_stage(), binary()}.
@@ -152,7 +153,8 @@
         evaluated_query/0,
         validation_error/0,
         query_definition/0,
-        complex_query_definition/0
+        complex_query_definition/0,
+        query_user_input/0
     ]
 ).
 
@@ -239,33 +241,38 @@ get_r(Query) -> Query#riak_kv_query.r.
 get_querytype(Query) -> Query#riak_kv_query.type.
 
 -spec add_aggregation_expression(
-    complex_query_definition(), string())
+    complex_query_definition(), string()|undefined)
         -> {ok, complex_query_definition()}|validation_error().
 add_aggregation_expression(
     #riak_kv_query{type = Type} = Query, AggregationString)
-        when Type == combo_query ->
+        when Type == combo_query, AggregationString =/= undefined ->
     case leveled_setop:generate_setop_function(AggregationString) of
         {error, ParseError} ->
             ?LOG_WARNING(
                 "Invalid aggregation submitted ~s due to reason ~0p",
                 [AggregationString, ParseError]
             ),
-            {error, aggregation_function, <<"Invalid function">>};
+            {error, aggregation_expression, <<"Invalid function">>};
         AppFunction ->
             {
                 ok,
                 Query#riak_kv_query{aggregation_expression = AppFunction}
             }
     end;
+add_aggregation_expression(
+    #riak_kv_query{type = Type} = Query, undefined)
+        when Type == single_query ->
+    {ok, Query};
 add_aggregation_expression(_Query, _AggregationString) ->
     {
         error,
-        aggregation_function,
+        aggregation_expression,
         <<"Attempt to aggregate single query">>
     }.
 
--spec add_accumulation_option(complex_query_definition(), binary()) ->
-    {ok, complex_query_definition()}|validation_error(). 
+-spec add_accumulation_option(
+    complex_query_definition(), binary()|undefined) ->
+        {ok, complex_query_definition()}|validation_error(). 
 add_accumulation_option(
     #riak_kv_query{type = Type} = Query,
     AccumulationOption)
@@ -305,6 +312,8 @@ add_accumulation_option(
                 <<"Unsupported option in combination query">>
             }
     end;
+add_accumulation_option(Query, undefined) ->
+    {ok, Query};
 add_accumulation_option(_Q, BadOption) when is_binary(BadOption) ->
     {
         error,
@@ -315,7 +324,7 @@ add_accumulation_option(_Q, BadOption) when is_binary(BadOption) ->
     }.
 
 -spec add_accumulation_term(
-    complex_query_definition(), binary()) ->
+    complex_query_definition(), binary()|undefined) ->
         {ok, complex_query_definition()}|validation_error().
 add_accumulation_term(
     #riak_kv_query{accumulation_option = AccOpt} = Query,
@@ -332,6 +341,8 @@ add_accumulation_term(
         Query#riak_kv_query{
             accumulation_term = AccumulationTerm}
     };
+add_accumulation_term(Query, undefined) ->
+    {ok, Query};
 add_accumulation_term(
         #riak_kv_query{accumulation_option = AccOpt}, AccumulationTerm) ->
     {
@@ -534,6 +545,9 @@ decode_option(<<"term_with_keycount">>) -> term_with_keycount.
 get_reqid() ->
     erlang:phash2({self(), os:timestamp(), crypto:strong_rand_bytes(2)}).
 
+-spec is_query(complex_query_definition()) -> boolean().
+is_query(Query) -> is_record(Query, riak_kv_query).
+
 %%%============================================================================
 %%% Test
 %%%============================================================================
@@ -547,16 +561,16 @@ new(Bucket, Type) -> new(Bucket, Type, 60).
 bad_aggregation_expression_test() ->
     QS = new({<<"Type">>, <<"Bucket">>}, single_query),
     ?assertMatch(
-        {error, aggregation_function, <<"Attempt to aggregate single query">>},
+        {error, aggregation_expression, <<"Attempt to aggregate single query">>},
         add_aggregation_expression(QS, <<"$1 UNION $2">>)
     ),
     QC = new(<<"Bucket">>, combo_query),
     ?assertMatch(
-        {error, aggregation_function, <<"Invalid function">>},
+        {error, aggregation_expression, <<"Invalid function">>},
         add_aggregation_expression(QC, <<"$1 UNION S2">>)
     ),
     ?assertMatch(
-        {error, aggregation_function, <<"Invalid function">>},
+        {error, aggregation_expression, <<"Invalid function">>},
         add_aggregation_expression(QC, <<"$1 XOR $2">>)
     ),
     {ok, UpdQ} = add_aggregation_expression(QC, <<"$1 UNION $2">>),
