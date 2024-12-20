@@ -139,11 +139,11 @@ merge(#buffer{count = C, key_acc = Acc, type = T} = Buffer)
     Buffer#buffer{count = 0};
 merge(#buffer{key_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
         when Acc =/= none, Agg == none, T == keys ->
-    reply(Buffer, {T, Acc}),
+    reply(Buffer, {T, lists:usort(Acc)}),
     Buffer#buffer{key_acc = [], count = 0};
 merge(#buffer{term_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
         when Acc =/= none, Agg == none, T == term_with_keys ->
-    reply(Buffer, {T, Acc}),
+    reply(Buffer, {T, lists:usort(Acc)}),
     Buffer#buffer{term_acc = [], count = 0};
 merge(#buffer{key_acc = Acc, agg = Agg, type = T} = Buffer)
         when Acc =/= none, is_record(Agg, key_agg), T == key_count  ->
@@ -224,10 +224,10 @@ do_flush(#buffer{count = C, type = T} = Buffer) when T == match_count ->
     reply(Buffer, {T, C});
 do_flush(#buffer{key_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == keys ->
-    reply(Buffer, {T, Acc});
+    reply(Buffer, {T, lists:usort(Acc)});
 do_flush(#buffer{term_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == term_with_keys ->
-    reply(Buffer, {T, Acc});
+    reply(Buffer, {T, lists:usort(Acc)});
 do_flush(#buffer{type = T} = Buffer) ->
     UpdB = merge(Buffer#buffer{count = Buffer#buffer.max_size}),
     Result = 
@@ -247,9 +247,7 @@ do_flush(#buffer{type = T} = Buffer) ->
 -spec aggregate(reply_type(), reply_type()|none) -> reply_type().
 aggregate(R, none) ->
     R;
-aggregate({T, KL}, {T, AggKL}) when T == keys ->
-    {T, lists:merge(KL, AggKL)};
-aggregate({T, KL}, {T, AggKL}) when T == term_with_keys ->
+aggregate({T, KL}, {T, AggKL}) when T == keys; T == term_with_keys ->
     {T, lists:umerge(KL, AggKL)};
 aggregate({T, C}, {T, AggC}) when T == match_count; T == key_count ->
     {T, AggC + C};
@@ -259,8 +257,8 @@ aggregate({T, TM}, {T, AggTM})
 
 -spec reply(buffer(), reply_type()|ping) -> ok.
 reply(#buffer{reply_fun = R}, {T, KL})
-        when is_list(KL) andalso (T == keys orelse T == term_with_keys) ->
-    R({T, lists:reverse(KL)});
+        when is_list(KL), (T == keys orelse T == term_with_keys) ->
+    R({T, KL});
 reply(#buffer{reply_fun = R}, Result) ->
     R(Result).
 
@@ -307,7 +305,9 @@ keys_test() ->
         lists:foldl(
             fun(I, BAcc) -> add(to_key(I), BAcc) end,
             B,
-            lists:seq(1, 100) ++ lists:seq(201, 1000)
+            lists:reverse(lists:seq(201, 300)) ++ 
+                lists:seq(301, 1000) ++
+                lists:seq(1, 100)
         ),
     ExpectedSize = (900 div 64) * 64,
     A ! check,
@@ -413,7 +413,9 @@ term_with_keys_test() ->
                 add({to_term(I), to_key(rand:uniform(1000))}, BAcc)
             end,
             B,
-            lists:seq(1, 100) ++ lists:seq(201, 1000)
+            lists:reverse(lists:seq(201, 300)) ++ 
+                lists:seq(301, 1000) ++
+                lists:seq(1, 100)
         ),
     ExpectedSize = (900 div 64) * 64,
     A ! check,
