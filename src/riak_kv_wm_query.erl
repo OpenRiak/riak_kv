@@ -466,14 +466,26 @@ convert_query(QM) ->
     {boolean()|{halt, pos_integer()}, request_data(), context()}.
 %% @doc Produce the JSON response to an index lookup.
 process_post(RD, Ctx) ->
-    Query = Ctx#ctx.query,
     Client = Ctx#ctx.client,
-    AccOpt = riak_kv_query:get_accumulator(Query),
+    AccOpt = riak_kv_query:get_accumulator(Ctx#ctx.query),
+    {ok, Query} =
+        riak_kv_query:add_result_encodingfun(
+            Ctx#ctx.query,
+            encoding_function(AccOpt)
+        ),
     case riak_client:query(Query, Client) of
         {error, timeout} ->
             {{halt, 503}, return_json_error("timeout", RD), Ctx};
-        Results ->
-            JsonEncodedResults = encode_results(AccOpt, Results),
+        {error, Reason} ->
+            Error =
+                lists:flatten(
+                    io_lib:format(
+                        <<"Query with option ~w failed - ~0p">>,
+                        [AccOpt, Reason]
+                    )
+                ),
+            {{halt, 500}, return_json_error(Error, RD), Ctx};
+        JsonEncodedResults ->
             {
                 true,
                 wrq:append_to_resp_body(
@@ -484,19 +496,13 @@ process_post(RD, Ctx) ->
             }
     end.
 
+-spec encoding_function(riak_kv_query:accumulation_option()) ->
+    fun((riak_kv_query_server:results()) -> binary()).
+encoding_function(AccOpt) ->
+    fun(Results) -> encode_results(AccOpt, Results) end.
+
 -spec encode_results(
-    riak_kv_query:accumulation_option(),
-    riak_kv_query_server:results() | {error, term()}) ->
-        binary().
-encode_results(AccOpt, {error, Reason}) ->
-    iolist_to_binary(
-        lists:flatten(
-            io_lib:format(
-                <<"Query with option ~w failed - ~0p">>,
-                [AccOpt, Reason]
-            )
-        )
-    );
+    riak_kv_query:accumulation_option(), riak_kv_query_server:results()) -> binary().
 encode_results(keys, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(

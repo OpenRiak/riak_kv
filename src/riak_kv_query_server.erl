@@ -95,7 +95,8 @@
         bucket :: riak_object:bucket(),
         vnode_monitor :: vnode_monitor(),
         vnodes_ongoing :: sets:set(vnode_id()),
-        acc :: result_record()|redacted
+        acc :: result_record()|redacted,
+        result_encoding_fun :: riak_kv_query:encoding_fun()|raw
     }
 ).
 
@@ -230,7 +231,9 @@ init(Query) ->
                     bucket = Bucket,
                     vnode_monitor = InitMonitor,
                     vnodes_ongoing = VnodesOngoing,
-                    acc = Acc
+                    acc = Acc,
+                    result_encoding_fun
+                        = riak_kv_query:get_result_encodingfun(Query)
                 }
             }
     end.
@@ -388,7 +391,12 @@ handle_info(
                         {RM, lists:sum(maps:values(RM))}
                 end,
             {raw, ClientReqID, ClientPid} = State#state.from,
-            ClientPid ! {ClientReqID, Results},
+            case State#state.result_encoding_fun of
+                raw ->
+                    ClientPid ! {ClientReqID, Results};
+                EncodingFun ->
+                    ClientPid ! {ClientReqID, EncodingFun(Results)}
+            end,
             log_timings(
                 UpdTimings,
                 State#state.bucket,

@@ -1038,9 +1038,10 @@ hotbackup(BackupPath, DefaultNVal, PlanNVal, {?MODULE, [Node, _ClientId]}) ->
 
 -spec query(
     riak_kv_query:complex_query_definition(), riak_client()) ->
-        {ok, [riak_object:key()]} |
-        {ok, [{binary(), riak_object:key()}]} |
-        {ok, #{binary() => non_neg_integer()}} |
+        [riak_object:key()] |
+        [{binary(), riak_object:key()}] |
+        #{binary() => non_neg_integer()} |
+        binary() |
         {error, timeout} |
         {error, term()}.
 query(Query, {?MODULE, [Node, _ClientId]}) ->

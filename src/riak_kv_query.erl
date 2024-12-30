@@ -36,10 +36,12 @@
         get_reqid/1,
         get_reqid/0,
         get_clientpid/1,
+        get_result_encodingfun/1,
         add_aggregation_expression/2,
         add_accumulation_option/2,
         add_accumulation_term/2,
         add_result_provision/2,
+        add_result_encodingfun/2,
         add_queries/3,
         is_query/1
     ]
@@ -108,6 +110,8 @@
         result_provision|query_evaluation.
 -type validation_error() ::
     {error, validation_stage(), binary()}.
+-type encoding_fun() ::
+    fun((riak_kv_query_server:results()) -> binary()).
 
 -record(riak_kv_query,
     {
@@ -135,7 +139,9 @@
         client_pid
             :: pid() | undefined,
         client_reqid
-            :: non_neg_integer() | undefined
+            :: non_neg_integer() | undefined,
+        result_encodingfun = raw
+            :: raw|encoding_fun()
     }
 ).
 
@@ -154,7 +160,8 @@
         validation_error/0,
         query_definition/0,
         complex_query_definition/0,
-        query_user_input/0
+        query_user_input/0,
+        encoding_fun/0
     ]
 ).
 
@@ -239,6 +246,9 @@ get_r(Query) -> Query#riak_kv_query.r.
 
 -spec get_querytype(complex_query_definition()) -> query_type().
 get_querytype(Query) -> Query#riak_kv_query.type.
+
+-spec get_result_encodingfun(complex_query_definition()) -> raw|encoding_fun().
+get_result_encodingfun(Query) -> Query#riak_kv_query.result_encodingfun.
 
 -spec add_aggregation_expression(
     complex_query_definition(), string()|undefined)
@@ -368,6 +378,11 @@ add_result_provision(_Query, _BadProvision) ->
         result_provision,
         <<"Invalid result provision">>
     }.
+
+-spec add_result_encodingfun(complex_query_definition(), encoding_fun())
+        -> {ok, complex_query_definition()}.
+add_result_encodingfun(Query, EncodingFun) when is_function(EncodingFun) ->
+    {ok, Query#riak_kv_query{result_encodingfun = EncodingFun}}.
 
 -spec add_queries(
     complex_query_definition(),
