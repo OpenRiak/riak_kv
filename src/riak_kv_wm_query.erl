@@ -97,7 +97,8 @@
     allowed_methods/2,
     malformed_request/2,
     resource_exists/2,
-    process_post/2
+    process_post/2,
+    encode_key/2
 ]).
 
 -record(ctx, {
@@ -126,6 +127,7 @@
 -define(QL_FILTER_EXPRESSION, <<"filter_expression">>).
 
 -define(ACCKEY_KEYS, <<"keys">>).
+-define(ACCKEY_RAWKEYS, <<"raw_keys">>).
 -define(ACCKEY_TERMKEYS, <<"term_with_keys">>).
 -define(ACCKEY_KEYCOUNT, <<"key_count">>).
 -define(ACCKEY_MATCHCOUNT, <<"match_count">>).
@@ -507,7 +509,13 @@ encode_results(keys, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
             #{?ACCKEY_KEYS => Results},
-            fun riak_kv_wm_index:keys_encode/2
+            fun encode_key/2
+        )
+    );
+encode_results(raw_keys, Results) ->
+    iolist_to_binary(
+        riak_kv_wm_json:encode(
+            #{?ACCKEY_RAWKEYS => Results}
         )
     );
 encode_results(term_with_keys, Results) ->
@@ -533,6 +541,11 @@ encode_results(term_with_keycount, CountMap) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(#{?ACCKEY_TERMKEYCOUNT => CountMap})
     ).
+
+encode_key({Key}, Encode) when is_binary(Key) ->
+    encode_key(Key, Encode);
+encode_key(Key, Encode) ->
+    riak_kv_wm_json:encode_value(Key, Encode).
 
 %% ===================================================================
 %% EUnit tests

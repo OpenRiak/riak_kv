@@ -52,7 +52,7 @@
 -type aggregation_function()
     :: fun((list(sets:set(riak_object:key()))) -> sets:set(riak_object:key())).
 -type smpl_accumulator()
-    :: keys|key_count|match_count.
+    :: keys|raw_keys|key_count|match_count.
 -type term_accumulator()
     :: term_with_keys|term_with_matchcount|term_with_keycount.
 -type accumulation_option()
@@ -229,6 +229,7 @@ get_returnterms(Query) ->
         KeyOnly
             when 
                 KeyOnly == keys;
+                KeyOnly == raw_keys;
                 KeyOnly == key_count;
                 KeyOnly == match_count ->
             false;
@@ -290,6 +291,7 @@ add_accumulation_option(
             Type == combo_query andalso
             (
                 AccumulationOption == <<"keys">> orelse
+                AccumulationOption == <<"raw_keys">> orelse
                 AccumulationOption == <<"key_count">>
             ) ->
     {
@@ -303,6 +305,7 @@ add_accumulation_option(
     AccumulationOption)
         when
             AccumulationOption == <<"keys">>;
+            AccumulationOption == <<"raw_keys">>;
             AccumulationOption == <<"key_count">>;
             AccumulationOption == <<"match_count">>;
             AccumulationOption == <<"term_with_keys">>;
@@ -550,6 +553,7 @@ evaluate_expression(EvalExpr, FilterExpr, Subs) ->
 
 -spec decode_option(binary()) -> accumulation_option().
 decode_option(<<"keys">>) -> keys;
+decode_option(<<"raw_keys">>) -> raw_keys;
 decode_option(<<"key_count">>) -> key_count;
 decode_option(<<"match_count">>) -> match_count;
 decode_option(<<"term_with_keys">>) -> term_with_keys;

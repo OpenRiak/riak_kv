@@ -71,6 +71,10 @@
 -include_lib("kernel/include/logger.hrl").
 
 -define(VERSION, [{version, 2}]). % to be used in sets
+-define(ETS_THRESHOLD, 4096).
+% -define(START_OPTS, [{spawn_opt, [{min_heap_size, ?MIN_HEAP_SIZE}]}]).
+-define(START_OPTS, []).
+-define(DEFAULT_BUFFER_SIZE, 320).
 
 -record(timings, 
     {
@@ -96,6 +100,7 @@
         vnode_monitor :: vnode_monitor(),
         vnodes_ongoing :: sets:set(vnode_id()),
         acc :: result_record()|redacted,
+        result_table = none :: none|ets:table(),
         result_encoding_fun :: riak_kv_query:encoding_fun()|raw
     }
 ).
@@ -107,14 +112,12 @@
 ).
 -record(key_acc,
     {
-        results = [] :: key_list(),
-        last_key_monitor :: last_key_monitor()
+        results = [] :: key_list()
     }
 ).
 -record(term_acc,
     {
-        results = [] :: term_list(),
-        last_key_monitor :: last_term_monitor()
+        results = [] :: term_list()
     }
 ).
 -record(map_acc,
@@ -123,10 +126,8 @@
     }
 ).
 
--type key_list() :: list(riak_object:key()).
+-type key_list() :: list({riak_object:key()})|list(riak_object:key()).
 -type term_list() :: list({binary(), riak_object:key()}).
--type last_key_monitor() :: #{vnode_id() => riak_object:key()|none}.
--type last_term_monitor() :: #{vnode_id() => {binary(), riak_object:key()}|none}.
 -type count_map() :: #{binary() => non_neg_integer()}|#{}.
 
 -type result_record() :: #count_acc{}|#key_acc{}|#term_acc{}|#map_acc{}.
@@ -151,8 +152,7 @@
     riak_kv_query:complex_query_definition())
         -> {ok, pid(), non_neg_integer()}.
 query_start(Query) ->
-    {ok, Worker} =
-        gen_server:start_link(?MODULE, Query, []),
+    {ok, Worker} = gen_server:start_link(?MODULE, Query, ?START_OPTS),
     {ok, Worker, riak_kv_query:get_reqid(Query)}.
 
 -spec new_timeout(pid(), pos_integer()) -> ok.
@@ -206,11 +206,11 @@ init(Query) ->
             Acc =
                 case AccType of
                     keys ->
-                        LKM = maps:from_keys(CoverageVnodes, none),
-                        #key_acc{last_key_monitor = LKM};
+                        #key_acc{};
+                    raw_keys ->
+                        #key_acc{};
                     term_with_keys ->
-                        LKTM = maps:from_keys(CoverageVnodes, none),
-                        #term_acc{last_key_monitor = LKTM};
+                        #term_acc{};
                     match_count ->
                         #count_acc{};
                     key_count ->
@@ -261,28 +261,65 @@ handle_info(
     };
 handle_info(
         {{ReqID, Vnode}, {From, _B, {keys, Results}}}, 
-        #state{req_id = ReqID} = State) ->
+        #state{req_id = ReqID, result_table = none} = State) ->
     riak_kv_vnode:ack_keys(From),
     {keys, UpdResults} =
         riak_kv_query_buffer:aggregate(
             {keys, Results},
             {keys, (State#state.acc)#key_acc.results}
         ),
-    UpdLKM =
-        case UpdResults of
-            ActualList when is_list(ActualList), length(ActualList) > 0 ->
-                LastKey = lists:last(UpdResults),
-                maps:update(
-                    Vnode, LastKey, (State#state.acc)#key_acc.last_key_monitor
-                );
+    case length(UpdResults)
+        of 
+            ResultsSoFar when ResultsSoFar < ?ETS_THRESHOLD ->
+                {
+                    noreply,
+                    State#state{
+                        vnode_monitor =
+                            update_monitor(Vnode, State#state.vnode_monitor),
+                        acc = #key_acc{results = UpdResults}
+                    }
+                };
             _ ->
-                (State#state.acc)#key_acc.last_key_monitor
-        end,
+                ResultTable = ets:new(query_results, [set, private]),
+                true = 
+                    ets:insert_new(ResultTable, UpdResults),
+                {
+                    noreply,
+                    State#state{
+                        vnode_monitor =
+                            update_monitor(Vnode, State#state.vnode_monitor),
+                        acc = #key_acc{},
+                        result_table = ResultTable
+                    }
+                }
+    end;
+handle_info(
+        {{ReqID, Vnode}, {From, _B, {keys, Results}}}, 
+        #state{req_id = ReqID, result_table = ResultTable} = State) ->
+    riak_kv_vnode:ack_keys(From),
+    true = ets:insert(ResultTable, Results),
     {
         noreply,
         State#state{
-            vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor),
-            acc = #key_acc{results = UpdResults, last_key_monitor = UpdLKM}
+            vnode_monitor =
+                update_monitor(Vnode, State#state.vnode_monitor)
+        }
+    };
+handle_info(
+        {{ReqID, Vnode}, {From, _B, {raw_keys, Results}}}, 
+        #state{req_id = ReqID, result_table = none} = State) ->
+    riak_kv_vnode:ack_keys(From),
+    {raw_keys, UpdResults} =
+        riak_kv_query_buffer:aggregate(
+            {raw_keys, Results},
+            {raw_keys, (State#state.acc)#key_acc.results}
+        ),
+    {
+        noreply,
+        State#state{
+            vnode_monitor =
+                update_monitor(Vnode, State#state.vnode_monitor),
+            acc = #key_acc{results = UpdResults}
         }
     };
 handle_info(
@@ -294,21 +331,11 @@ handle_info(
             {term_with_keys, Results},
             {term_with_keys, (State#state.acc)#term_acc.results}
         ),
-        UpdLKM =
-            case UpdResults of
-                ActualList when is_list(ActualList), length(ActualList) > 0 ->
-                    LastTerm = lists:last(UpdResults),
-                    maps:update(
-                        Vnode, LastTerm, (State#state.acc)#term_acc.last_key_monitor
-                    );
-                _ ->
-                    (State#state.acc)#term_acc.last_key_monitor
-            end,
     {
         noreply,
         State#state{
             vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor),
-            acc = #term_acc{results = UpdResults, last_key_monitor = UpdLKM}
+            acc = #term_acc{results = UpdResults}
         }
     };
 handle_info(
@@ -381,14 +408,12 @@ handle_info(
     UpdTimings = update_timings(State#state.timings),
     case sets:size(UpdCoverageVnodes) of
         0 ->
-            {Results, ResultsSent} =
-                case extract_results(State#state.acc) of
-                    RL when is_list(RL) ->
-                        {RL, length(RL)};
-                    RC when is_integer(RC) ->
-                        {RC, RC};
-                    RM when is_map(RM) ->
-                        {RM, lists:sum(maps:values(RM))}
+            Results =
+                case State#state.result_table of
+                    none ->
+                        extract_results(State#state.acc);
+                    RT0 ->
+                        ets:tab2list(RT0)
                 end,
             {raw, ClientReqID, ClientPid} = State#state.from,
             case State#state.result_encoding_fun of
@@ -397,6 +422,13 @@ handle_info(
                 EncodingFun ->
                     ClientPid ! {ClientReqID, EncodingFun(Results)}
             end,
+            ResultsSent =
+                case State#state.result_table of
+                    none ->
+                        extract_count(State#state.acc);
+                    RT1 ->
+                        ets:info(RT1, size)
+                end,
             log_timings(
                 UpdTimings,
                 State#state.bucket,
@@ -423,7 +455,10 @@ handle_info(Msg, State) ->
     ?LOG_INFO("Receieved unexpected message ~0p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{result_table = none}) ->
+    ok;
+terminate(_Reason, #state{result_table = ResultTable}) ->
+    ets:delete(ResultTable),
     ok.
 
     
@@ -453,10 +488,17 @@ update_monitor(Vnode, VnodeMonitor) ->
     maps:update_with(Vnode, fun(V) -> V + 1 end, VnodeMonitor).
 
 -spec calculate_buffer_size(
-    riak_kv_query:complex_query_definition()) -> pos_integer().
+    riak_kv_query:complex_query_definition())
+        -> {pos_integer(), non_neg_integer()}.
 calculate_buffer_size(_Query) ->
     %% May need to change when adding support for max_results
-    application:get_env(riak_kv, query_buffer_size, 256).
+    ConfiguredSize =
+        application:get_env(riak_kv, query_buffer_size, ?DEFAULT_BUFFER_SIZE),
+    BufferSize = max(ConfiguredSize, riak_kv_query_buffer:min_buffer()),
+    {
+        BufferSize,
+        BufferSize div 2
+    }.
 
 -spec extract_results(result_record()) -> results().
 extract_results(Acc) when is_record(Acc, key_acc) ->
@@ -466,6 +508,15 @@ extract_results(Acc) when is_record(Acc, term_acc) ->
 extract_results(Acc) when is_record(Acc, map_acc) ->
     Acc#map_acc.results;
 extract_results(Acc) when is_record(Acc, count_acc) ->
+    Acc#count_acc.results.
+
+extract_count(Acc) when is_record(Acc, key_acc) ->
+    length(Acc#key_acc.results);
+extract_count(Acc) when is_record(Acc, term_acc) ->
+    length(Acc#term_acc.results);
+extract_count(Acc) when is_record(Acc, map_acc) ->
+    lists:sum(maps:values(Acc#map_acc.results));
+extract_count(Acc) when is_record(Acc, count_acc) ->
     Acc#count_acc.results.
 
 -spec update_timings(timings()) -> timings().

@@ -140,7 +140,7 @@
         query_type :: riak_kv_query:query_type(),
         acc_type :: riak_kv_query:accumulation_option(),
         return_terms :: binary()|boolean(),
-        buffer_size :: pos_integer(),
+        buffer_size :: {pos_integer(), non_neg_integer()},
         query :: riak_kv_query:query_definition()
     }
 ).
@@ -315,7 +315,7 @@ new_index_request(Bucket, ItemFilter, Query, true) ->
     riak_kv_query:query_type(),
     riak_kv_query:accumulation_option(),
     binary()|boolean(),
-    pos_integer(),
+    {pos_integer(), non_neg_integer()},
     riak_kv_query:query_definition()) -> query_request().
 new_query_request(
         Bucket, ItemFilter, Type, AccType, ReturnTerms, BuffSize, Query) ->
@@ -432,7 +432,7 @@ get_accumulation_type(#riak_kv_complexquery_req_v1{acc_type = ATY}) ->
 get_return_terms(#riak_kv_complexquery_req_v1{return_terms = RT}) ->
     RT.
 
--spec get_buffer_size(request()) -> pos_integer().
+-spec get_buffer_size(request()) -> {pos_integer(), non_neg_integer()}.
 get_buffer_size(#riak_kv_complexquery_req_v1{buffer_size = BS}) ->
     BS.
 
