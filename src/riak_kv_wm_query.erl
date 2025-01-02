@@ -98,7 +98,8 @@
     malformed_request/2,
     resource_exists/2,
     process_post/2,
-    encode_key/2
+    encode_key/2,
+    encode_key_withterm/2
 ]).
 
 -record(ctx, {
@@ -522,7 +523,7 @@ encode_results(term_with_keys, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
             #{?ACCKEY_TERMKEYS => Results},
-            fun riak_kv_wm_index:results_encode/2
+            fun riak_kv_wm_query:encode_key_withterm/2
         )
     );
 encode_results(match_count, Count) ->
@@ -546,6 +547,13 @@ encode_key({Key}, Encode) when is_binary(Key) ->
     encode_key(Key, Encode);
 encode_key(Key, Encode) ->
     riak_kv_wm_json:encode_value(Key, Encode).
+
+encode_key_withterm({TermKeyTuple}, Encode) when is_tuple(TermKeyTuple) ->
+    encode_key_withterm(TermKeyTuple, Encode);
+encode_key_withterm({Term, Key}, Encode) when is_binary(Term), is_binary(Key) ->
+    ["{", [Encode(Term, Encode), $: | Encode(Key, Encode)], "}"];
+encode_key_withterm(Result, Encode) ->
+    riak_kv_wm_json:encode_value(Result, Encode).
 
 %% ===================================================================
 %% EUnit tests
@@ -828,6 +836,12 @@ encode_results_test() ->
         KeyList,
         maps:get(?ACCKEY_KEYS, riak_kv_wm_json:decode(BinKL))
     ),
+    KeyListT = [{<<"K00001">>}, {<<"K00002">>}, {<<"K0003">>}],
+    BinKLT = encode_results(keys, KeyListT),
+    ?assertMatch(
+        KeyList,
+        maps:get(?ACCKEY_KEYS, riak_kv_wm_json:decode(BinKLT))
+    ),
     TermKeyList = [{<<"T0001">>, <<"K0002">>}, {<<"T0002">>, <<"K0001">>}],
     BinTKL = encode_results(term_with_keys, TermKeyList),
     ?assertMatch(
@@ -836,6 +850,18 @@ encode_results_test() ->
             lists:map(
                 fun(M) -> [{T, K}] = maps:to_list(M), {T, K} end,
                 maps:get(?ACCKEY_TERMKEYS, riak_kv_wm_json:decode(BinTKL))
+            )
+        )
+    ),
+    TermKeyListT =
+        [{{<<"T0001">>, <<"K0002">>}}, {{<<"T0002">>, <<"K0001">>}}],
+    BinTKLT = encode_results(term_with_keys, TermKeyListT),
+    ?assertMatch(
+        TermKeyList,
+        lists:sort(
+            lists:map(
+                fun(M) -> [{T, K}] = maps:to_list(M), {T, K} end,
+                maps:get(?ACCKEY_TERMKEYS, riak_kv_wm_json:decode(BinTKLT))
             )
         )
     ),

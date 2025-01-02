@@ -157,7 +157,7 @@ add(Key, #buffer{key_acc = A, count = C} = Buffer)
     Buffer#buffer{key_acc = [{Key}|A], count = C + 1};
 add({Term, Key}, #buffer{term_acc = A, count = C} = Buffer)
         when A =/= none, is_binary(Term), is_binary(Key) ->
-    Buffer#buffer{term_acc = [{Term, Key}|A], count = C + 1}.
+    Buffer#buffer{term_acc = [{{Term, Key}}|A], count = C + 1}.
 
 -spec merge(buffer()) -> buffer().
 merge(#buffer{count = C, key_acc = Acc, type = T} = Buffer)
@@ -205,7 +205,7 @@ merge(
     reply(Buffer, ping),
     UpdTCMap =
         lists:foldl(
-            fun({Term, _Key}, FoldAcc) when is_map(FoldAcc), is_binary(Term) ->
+            fun({{Term, _Key}}, FoldAcc) when is_map(FoldAcc), is_binary(Term) ->
                 maps:update_with(Term, fun(V) -> V + 1 end, 1, FoldAcc)
             end,
             TCMap,
@@ -227,7 +227,7 @@ merge(
     reply(Buffer, ping),
     UpdTKSMap =
         lists:foldl(
-            fun({Term, Key}, FoldAcc)
+            fun({{Term, Key}}, FoldAcc)
                     when is_map(FoldAcc), is_binary(Term), is_binary(Key) ->
                 maps:update_with(
                     Term, 
@@ -450,7 +450,20 @@ duplicate_count_tester(Type, ExpectedCount) ->
 
 term_with_keys_test() ->
     A = start_aggregator(),
-    ReplyFun = fun(M) -> A ! M, receive ok -> ok end end,
+    ReplyFun =
+        fun(M) -> 
+            case M of
+                {term_with_keys, TKL} ->
+                    A !
+                        {
+                            term_with_keys,
+                            lists:map(fun({{T, K}}) -> {T, K} end, TKL)
+                        };
+                SimpleM ->
+                    A ! SimpleM
+            end,
+            receive ok -> ok end
+        end,
     B = new({64, 0}, term_with_keys, ReplyFun),
     UpdB =
         lists:foldl(

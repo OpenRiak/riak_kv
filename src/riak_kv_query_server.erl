@@ -75,6 +75,7 @@
 % -define(START_OPTS, [{spawn_opt, [{min_heap_size, ?MIN_HEAP_SIZE}]}]).
 -define(START_OPTS, []).
 -define(DEFAULT_BUFFER_SIZE, 320).
+-define(DBTYPE_KEYS, ordered_set).
 
 -record(timings, 
     {
@@ -110,14 +111,9 @@
         results = 0 :: non_neg_integer()
     }
 ).
--record(key_acc,
+-record(list_acc,
     {
-        results = [] :: key_list()
-    }
-).
--record(term_acc,
-    {
-        results = [] :: term_list()
+        results = [] :: key_list()|term_list()
     }
 ).
 -record(map_acc,
@@ -127,10 +123,10 @@
 ).
 
 -type key_list() :: list({riak_object:key()})|list(riak_object:key()).
--type term_list() :: list({binary(), riak_object:key()}).
+-type term_list() :: list({{binary(), riak_object:key()}}).
 -type count_map() :: #{binary() => non_neg_integer()}|#{}.
 
--type result_record() :: #count_acc{}|#key_acc{}|#term_acc{}|#map_acc{}.
+-type result_record() :: #count_acc{}|#list_acc{}|#map_acc{}.
 -type results() :: key_list()|term_list()|count_map()|non_neg_integer().
 
 -type from() :: {atom(), req_id(), pid()}.
@@ -206,11 +202,11 @@ init(Query) ->
             Acc =
                 case AccType of
                     keys ->
-                        #key_acc{};
+                        #list_acc{};
                     raw_keys ->
-                        #key_acc{};
+                        #list_acc{};
                     term_with_keys ->
-                        #term_acc{};
+                        #list_acc{};
                     match_count ->
                         #count_acc{};
                     key_count ->
@@ -260,13 +256,14 @@ handle_info(
             vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor)}
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {keys, Results}}}, 
-        #state{req_id = ReqID, result_table = none} = State) ->
+        {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
+        #state{req_id = ReqID, result_table = none} = State)
+            when AccOpt == keys; AccOpt == term_with_keys ->
     riak_kv_vnode:ack_keys(From),
-    {keys, UpdResults} =
+    {AccOpt, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {keys, Results},
-            {keys, (State#state.acc)#key_acc.results}
+            {AccOpt, Results},
+            {AccOpt, (State#state.acc)#list_acc.results}
         ),
     case length(UpdResults)
         of 
@@ -276,11 +273,11 @@ handle_info(
                     State#state{
                         vnode_monitor =
                             update_monitor(Vnode, State#state.vnode_monitor),
-                        acc = #key_acc{results = UpdResults}
+                        acc = #list_acc{results = UpdResults}
                     }
                 };
             _ ->
-                ResultTable = ets:new(query_results, [set, private]),
+                ResultTable = ets:new(query_results, [?DBTYPE_KEYS, private]),
                 true = 
                     ets:insert_new(ResultTable, UpdResults),
                 {
@@ -288,14 +285,15 @@ handle_info(
                     State#state{
                         vnode_monitor =
                             update_monitor(Vnode, State#state.vnode_monitor),
-                        acc = #key_acc{},
+                        acc = #list_acc{},
                         result_table = ResultTable
                     }
                 }
     end;
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {keys, Results}}}, 
-        #state{req_id = ReqID, result_table = ResultTable} = State) ->
+        {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
+        #state{req_id = ReqID, result_table = ResultTable} = State)
+            when AccOpt == keys; AccOpt == term_with_keys ->
     riak_kv_vnode:ack_keys(From),
     true = ets:insert(ResultTable, Results),
     {
@@ -312,30 +310,14 @@ handle_info(
     {raw_keys, UpdResults} =
         riak_kv_query_buffer:aggregate(
             {raw_keys, Results},
-            {raw_keys, (State#state.acc)#key_acc.results}
+            {raw_keys, (State#state.acc)#list_acc.results}
         ),
     {
         noreply,
         State#state{
             vnode_monitor =
                 update_monitor(Vnode, State#state.vnode_monitor),
-            acc = #key_acc{results = UpdResults}
-        }
-    };
-handle_info(
-        {{ReqID, Vnode}, {From, _B, {term_with_keys, Results}}},
-        #state{req_id = ReqID} = State) ->
-    riak_kv_vnode:ack_keys(From),
-    {term_with_keys, UpdResults} =
-        riak_kv_query_buffer:aggregate(
-            {term_with_keys, Results},
-            {term_with_keys, (State#state.acc)#term_acc.results}
-        ),
-    {
-        noreply,
-        State#state{
-            vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor),
-            acc = #term_acc{results = UpdResults}
+            acc = #list_acc{results = UpdResults}
         }
     };
 handle_info(
@@ -501,19 +483,15 @@ calculate_buffer_size(_Query) ->
     }.
 
 -spec extract_results(result_record()) -> results().
-extract_results(Acc) when is_record(Acc, key_acc) ->
-    Acc#key_acc.results;
-extract_results(Acc) when is_record(Acc, term_acc) ->
-    Acc#term_acc.results;
+extract_results(Acc) when is_record(Acc, list_acc) ->
+    Acc#list_acc.results;
 extract_results(Acc) when is_record(Acc, map_acc) ->
     Acc#map_acc.results;
 extract_results(Acc) when is_record(Acc, count_acc) ->
     Acc#count_acc.results.
 
-extract_count(Acc) when is_record(Acc, key_acc) ->
-    length(Acc#key_acc.results);
-extract_count(Acc) when is_record(Acc, term_acc) ->
-    length(Acc#term_acc.results);
+extract_count(Acc) when is_record(Acc, list_acc) ->
+    length(Acc#list_acc.results);
 extract_count(Acc) when is_record(Acc, map_acc) ->
     lists:sum(maps:values(Acc#map_acc.results));
 extract_count(Acc) when is_record(Acc, count_acc) ->
