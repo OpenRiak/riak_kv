@@ -710,6 +710,150 @@ valid_query_ae4_test() ->
     QueryList = maps:get(<<"query_list">>, M),
     ?assertMatch(ok, check_querylist(QueryList, false)).
 
+valid_query_ae5_test() ->
+    IQJson =
+        <<"
+            {
+                \"aggregation_expression\" : \"$1 INTERSECT $2\",
+                \"timeout\" : 60,
+                \"accumulation_option\" : \"keys\",
+                \"substitutions\" :
+                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},
+                \"query_list\" :
+                    [
+                        {
+                            \"aggregation_tag\" : 1,
+                            \"index_name\" : \"example1_bin\",
+                            \"start_term\" : \"A\",
+                            \"end_term\"   : \"B\",
+                            \"evaluation_expression\" :
+                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",
+                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"
+                        },
+                        {
+                            \"aggregation_tag\" : 2,
+                            \"index_name\" : \"example2_bin\",
+                            \"start_term\" : \"C\",
+                            \"end_term\"   : \"D\"
+                        }
+
+                    ]
+            }
+        ">>,
+    {ok, M} = decode_json_body(IQJson),
+    {ok, Q} = make_query({<<"BT">>, <<"B">>}, M),
+    ?assert(riak_kv_query:is_query(Q)),
+    QueryList = maps:get(<<"query_list">>, M),
+    ?assertMatch(ok, check_querylist(QueryList, false)).
+
+invalid_query_ae6_test() ->
+    IQJson = % unescaped "|" in eval expression
+        <<"
+            {
+                \"aggregation_expression\" : \"$1 INTERSECT $2\",
+                \"timeout\" : 60,
+                \"accumulation_option\" : \"keys\",
+                \"substitutions\" :
+                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},
+                \"query_list\" :
+                    [
+                        {
+                            \"aggregation_tag\" : 1,
+                            \"index_name\" : \"example1_bin\",
+                            \"start_term\" : \"A\",
+                            \"end_term\"   : \"B\",
+                            \"evaluation_expression\" :
+                                \"delim($term, |, ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",
+                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"
+                        },
+                        {
+                            \"aggregation_tag\" : 2,
+                            \"index_name\" : \"example2_bin\",
+                            \"start_term\" : \"C\",
+                            \"end_term\"   : \"D\"
+                        }
+
+                    ]
+            }
+        ">>,
+    {ok, M} = decode_json_body(IQJson),
+    ?assertMatch(
+        {error, query_evaluation, <<"Invalid eval function">>},
+        make_query({<<"BT">>, <<"B">>}, M)
+    ).
+
+invalid_query_ae7_test() ->
+    IQJson = % BETWEN not BETWEEN
+        <<"
+            {
+                \"aggregation_expression\" : \"$1 INTERSECT $2\",
+                \"timeout\" : 60,
+                \"accumulation_option\" : \"keys\",
+                \"substitutions\" :
+                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},
+                \"query_list\" :
+                    [
+                        {
+                            \"aggregation_tag\" : 1,
+                            \"index_name\" : \"example1_bin\",
+                            \"start_term\" : \"A\",
+                            \"end_term\"   : \"B\",
+                            \"evaluation_expression\" :
+                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",
+                            \"filter_expression\" : \"($dob BETWEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"
+                        },
+                        {
+                            \"aggregation_tag\" : 2,
+                            \"index_name\" : \"example2_bin\",
+                            \"start_term\" : \"C\",
+                            \"end_term\"   : \"D\"
+                        }
+
+                    ]
+            }
+        ">>,
+    {ok, M} = decode_json_body(IQJson),
+    ?assertMatch(
+        {error, query_evaluation, <<"Invalid filter function">>},
+        make_query({<<"BT">>, <<"B">>}, M)
+    ).
+
+invalid_query_ae8_test() ->
+    IQJson = % missing substitution
+        <<"
+            {
+                \"aggregation_expression\" : \"$1 INTERSECT $2\",
+                \"timeout\" : 60,
+                \"accumulation_option\" : \"keys\",
+                \"substitutions\" :
+                    {\"low_dob\" : \"20210804\", \"gnsc\" : \"Ma\"},
+                \"query_list\" :
+                    [
+                        {
+                            \"aggregation_tag\" : 1,
+                            \"index_name\" : \"example1_bin\",
+                            \"start_term\" : \"A\",
+                            \"end_term\"   : \"B\",
+                            \"evaluation_expression\" :
+                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",
+                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"
+                        },
+                        {
+                            \"aggregation_tag\" : 2,
+                            \"index_name\" : \"example2_bin\",
+                            \"start_term\" : \"C\",
+                            \"end_term\"   : \"D\"
+                        }
+
+                    ]
+            }
+        ">>,
+    {ok, M} = decode_json_body(IQJson),
+    ?assertMatch(
+        {error, query_evaluation, <<"Invalid filter function">>},
+        make_query({<<"BT">>, <<"B">>}, M)
+    ).
+
 invalid_query_to_test() ->
     IQJson =
         <<"
