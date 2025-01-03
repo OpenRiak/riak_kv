@@ -131,10 +131,17 @@ stop() ->
 init([]) ->
     register_stats(),
     Me = self(),
-    State = #state{monitors = [{index, spawn_link(?MODULE, monitor_loop, [index])},
-                               {list, spawn_link(?MODULE, monitor_loop, [list])},
-                               {clusteraae, spawn_link(?MODULE, monitor_loop, [clusteraae])}],
-                   repair_mon = spawn_monitor(fun() -> stat_repair_loop(Me) end)},
+    State =
+        #state{
+            monitors =
+                [
+                    {index, spawn_link(?MODULE, monitor_loop, [index])},
+                    {query, spawn_link(?MODULE, monitor_loop, [query])},
+                    {list, spawn_link(?MODULE, monitor_loop, [list])},
+                    {clusteraae, spawn_link(?MODULE, monitor_loop, [clusteraae])}
+                ],
+            repair_mon = spawn_monitor(fun() -> stat_repair_loop(Me) end)
+        },
     {ok, State}.
 
 handle_call({register, Name, Type}, _From, State) ->
