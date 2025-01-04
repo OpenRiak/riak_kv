@@ -30,9 +30,10 @@
         max_size :: pos_integer(),
         count = 0 :: non_neg_integer(),
         reply_fun :: reply_fun(),
-        rawkey_acc :: raw_key_accumulator()|none,
+        rawkey_acc :: rawkey_accumulator()|none,
         key_acc :: key_accumulator()|none,
-        term_acc :: termkey_accumulator()|none,
+        rawterm_acc :: rawterm_accumulator()|none,
+        term_acc :: term_accumulator()|none,
         agg :: buffer_agg()|none,
         type :: riak_kv_query:accumulation_option(),
         start_time = os:system_time(microsecond) :: pos_integer()
@@ -57,14 +58,14 @@
     }
 ).
 
--type raw_key_accumulator()
+-type rawkey_accumulator()
     :: list(binary()).
+-type rawterm_accumulator()
+    :: list({binary(), binary()}).
 -type key_accumulator()
     :: list({binary()}).
--type termkey_accumulator()
-    :: list({binary(), binary()}).
-% -type key_aggregator()
-%     ::list(list(binary())).
+-type term_accumulator()
+    :: list({{binary(), binary()}}).
 -type keycount_aggregator()
     :: sets:set(binary()).
 -type countby_aggregator()
@@ -75,10 +76,11 @@
 -type reply_type()
     :: 
         {keys, key_accumulator()} |
-        {raw_keys, raw_key_accumulator() } |
+        {raw_keys, rawkey_accumulator() } |
         {count, non_neg_integer()} |
         {raw_count, non_neg_integer()} |
-        {terms, termkey_accumulator()} |
+        {terms, term_accumulator()} |
+        {raw_terms, rawterm_accumulator()} |
         {term_with_rawcount, countby_aggregator()} |
         {term_with_count, countby_aggregator()}.
 -type reply_fun()
@@ -109,6 +111,8 @@ new(Size, T, ReplyFun) when T == raw_count ->
     new_buffer(Size, ReplyFun, none, none, T);
 new(Size, T, ReplyFun) when T == terms->
     new_buffer(Size, ReplyFun, terms, none, T);
+new(Size, T, ReplyFun) when T == raw_terms->
+    new_buffer(Size, ReplyFun, raw_terms, none, T);
 new(Size, T, ReplyFun) when T == term_with_rawcount->
     new_buffer(Size, ReplyFun, terms, #termcount_agg{}, T);
 new(Size, T, ReplyFun) when T == term_with_count ->
@@ -116,12 +120,13 @@ new(Size, T, ReplyFun) when T == term_with_count ->
 
 new_buffer({BufferSize, JitterSize}, ReplyFun, AccType, InitAgg, Type)
         when BufferSize >= ?MIN_BUFFER, JitterSize =< BufferSize ->
-    {RawKeyAcc, KeyAcc, TermAcc} =
+    {RawKeyAcc, KeyAcc, RawTermAcc, TermAcc} =
         case AccType of
-            none -> {none, none, none};
-            raw_keys -> {[], none, none};
-            keys -> {none, [], none};
-            terms -> {none, none, []}
+            none -> {none, none, none, none};
+            raw_keys -> {[], none, none, none};
+            keys -> {none, [], none, none};
+            terms -> {none, none, none, []};
+            raw_terms -> {none, none, [], none}
         end,
     ActualBufferSize =
         case JitterSize of
@@ -135,6 +140,7 @@ new_buffer({BufferSize, JitterSize}, ReplyFun, AccType, InitAgg, Type)
         reply_fun = ReplyFun,
         rawkey_acc = RawKeyAcc,
         key_acc = KeyAcc,
+        rawterm_acc = RawTermAcc,
         term_acc = TermAcc,
         agg = InitAgg,
         type = Type
@@ -147,7 +153,9 @@ add(Key, #buffer{max_size = MS, count = MS} = Buffer) ->
     add(Key, merge(Buffer));
 add(_Key,
     #buffer{
-        rawkey_acc = none, key_acc = none, term_acc = none, count = C} = B) ->
+        rawkey_acc = none, key_acc = none, term_acc = none, rawterm_acc = none,
+        count = C
+    } = B) ->
     B#buffer{count = C + 1};
 add(Key, #buffer{rawkey_acc = A, count = C} = Buffer)
         when A =/= none, is_binary(Key) ->
@@ -155,6 +163,9 @@ add(Key, #buffer{rawkey_acc = A, count = C} = Buffer)
 add(Key, #buffer{key_acc = A, count = C} = Buffer)
         when A =/= none, is_binary(Key) ->
     Buffer#buffer{key_acc = [{Key}|A], count = C + 1};
+add({Term, Key}, #buffer{rawterm_acc = A, count = C} = Buffer)
+        when A =/= none, is_binary(Term), is_binary(Key) ->
+    Buffer#buffer{rawterm_acc = [{Term, Key}|A], count = C + 1};
 add({Term, Key}, #buffer{term_acc = A, count = C} = Buffer)
         when A =/= none, is_binary(Term), is_binary(Key) ->
     Buffer#buffer{term_acc = [{{Term, Key}}|A], count = C + 1}.
@@ -179,6 +190,11 @@ merge(#buffer{term_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
             Acc =/= none , Agg == none, T == terms ->
     reply(Buffer, {T, Acc}),
     Buffer#buffer{term_acc = [], count = 0};
+merge(#buffer{rawterm_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
+        when 
+            Acc =/= none, Agg == none, T == raw_terms ->
+    reply(Buffer, {T, Acc}),
+    Buffer#buffer{rawterm_acc = [], count = 0};
 merge(#buffer{rawkey_acc = Acc, agg = Agg, type = T} = Buffer)
         when Acc =/= none, is_record(Agg, key_agg), T == count  ->
     reply(Buffer, ping),
@@ -262,6 +278,9 @@ do_flush(#buffer{rawkey_acc = Acc, type = T} = Buffer)
 do_flush(#buffer{key_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == keys ->
     reply(Buffer, {T, Acc});
+do_flush(#buffer{rawterm_acc = Acc, type = T} = Buffer)
+        when Acc =/= none, T == raw_terms ->
+    reply(Buffer, {T, Acc});
 do_flush(#buffer{term_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == terms ->
     reply(Buffer, {T, Acc});
@@ -286,7 +305,7 @@ aggregate(R, none) ->
     R;
 aggregate({T, KL}, {T, AggKL}) when T == keys; T == terms ->
     {T, lists:umerge(lists:usort(KL), AggKL)};
-aggregate({T, KL}, {T, AggKL}) when T == raw_keys ->
+aggregate({T, KL}, {T, AggKL}) when T == raw_keys; T == raw_terms ->
     {T, KL ++ AggKL};
 aggregate({T, C}, {T, AggC}) when T == raw_count; T == count ->
     {T, AggC + C};
@@ -370,6 +389,29 @@ keys_test() ->
     ?assertMatch([], ExpectedList -- L3),
     ?assertMatch([], L3 -- ExpectedList),
     ?assertMatch(L3, lists:sort(L3)).
+
+rawterms_test() ->
+    A = start_aggregator(),
+    ReplyFun = fun(M) -> A ! M, receive ok -> ok end end,
+    Type = raw_terms,
+    B = new({64, 0}, Type, ReplyFun),
+    UpdB =
+        lists:foldl(
+            fun(I, Bacc) -> add({to_term(I), to_key(I)}, Bacc) end,
+            B,
+            lists:seq(1, 200)
+        ),
+    ExpectedSize = (200 div 64) * 64,
+    A ! check,
+    {Type, C1} = get_reply(),
+    ?assertMatch(ExpectedSize, length(C1)),
+    ok = flush(UpdB),
+    A ! check,
+    {Type, C2} = get_reply(),
+    ?assertMatch(200, length(C2)),
+    A ! stop,
+    {Type, C3} = get_reply(),
+    ?assertMatch(200, length(C3)).
 
 match_count_test() ->
     A = start_aggregator(),

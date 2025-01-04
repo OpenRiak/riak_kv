@@ -207,6 +207,8 @@ init(Query) ->
                         #list_acc{};
                     terms ->
                         #list_acc{};
+                    raw_terms ->
+                        #list_acc{};
                     raw_count ->
                         #count_acc{};
                     count ->
@@ -304,13 +306,14 @@ handle_info(
         }
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {raw_keys, Results}}}, 
-        #state{req_id = ReqID, result_table = none} = State) ->
+    {{ReqID, Vnode}, {From, _B, {T, Results}}}, 
+    #state{req_id = ReqID, result_table = none} = State)
+        when T == raw_keys; T == raw_terms ->
     riak_kv_vnode:ack_keys(From),
-    {raw_keys, UpdResults} =
+    {T, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {raw_keys, Results},
-            {raw_keys, (State#state.acc)#list_acc.results}
+            {T, Results},
+            {T, (State#state.acc)#list_acc.results}
         ),
     {
         noreply,
