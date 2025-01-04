@@ -205,15 +205,15 @@ init(Query) ->
                         #list_acc{};
                     raw_keys ->
                         #list_acc{};
-                    term_with_keys ->
+                    terms ->
                         #list_acc{};
-                    match_count ->
+                    raw_count ->
                         #count_acc{};
-                    key_count ->
+                    count ->
                         #count_acc{};
-                    term_with_matchcount ->
+                    term_with_rawcount ->
                         #map_acc{};
-                    term_with_keycount ->
+                    term_with_count ->
                         #map_acc{}
                     end,
             erlang:send_after(TimeoutS * 1000, self(), {timeout, ReqID}),
@@ -258,7 +258,7 @@ handle_info(
 handle_info(
         {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
         #state{req_id = ReqID, result_table = none} = State)
-            when AccOpt == keys; AccOpt == term_with_keys ->
+            when AccOpt == keys; AccOpt == terms ->
     riak_kv_vnode:ack_keys(From),
     {AccOpt, UpdResults} =
         riak_kv_query_buffer:aggregate(
@@ -293,7 +293,7 @@ handle_info(
 handle_info(
         {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
         #state{req_id = ReqID, result_table = ResultTable} = State)
-            when AccOpt == keys; AccOpt == term_with_keys ->
+            when AccOpt == keys; AccOpt == terms ->
     riak_kv_vnode:ack_keys(From),
     true = ets:insert(ResultTable, Results),
     {
@@ -321,13 +321,13 @@ handle_info(
         }
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {match_count, Count}}},
+        {{ReqID, Vnode}, {From, _B, {raw_count, Count}}},
         #state{req_id = ReqID} = State) ->
     riak_kv_vnode:ack_keys(From),
-    {match_count, UpdResults} =
+    {raw_count, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {match_count, Count},
-            {match_count, (State#state.acc)#count_acc.results}
+            {raw_count, Count},
+            {raw_count, (State#state.acc)#count_acc.results}
         ),
     {
         noreply,
@@ -337,13 +337,13 @@ handle_info(
         }
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {key_count, Count}}},
+        {{ReqID, Vnode}, {From, _B, {count, Count}}},
         #state{req_id = ReqID} = State) ->
     riak_kv_vnode:ack_keys(From),
-    {key_count, UpdResults} =
+    {count, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {key_count, Count},
-            {key_count, (State#state.acc)#count_acc.results}
+            {count, Count},
+            {count, (State#state.acc)#count_acc.results}
         ),
     {
         noreply,
@@ -353,13 +353,13 @@ handle_info(
         }
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {term_with_matchcount, RM}}},
+        {{ReqID, Vnode}, {From, _B, {term_with_rawcount, RM}}},
         #state{req_id = ReqID} = State) ->
     riak_kv_vnode:ack_keys(From),
-    {term_with_matchcount, UpdResults} =
+    {term_with_rawcount, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {term_with_matchcount, RM},
-            {term_with_matchcount, (State#state.acc)#map_acc.results}
+            {term_with_rawcount, RM},
+            {term_with_rawcount, (State#state.acc)#map_acc.results}
         ),
     {
         noreply,
@@ -369,13 +369,13 @@ handle_info(
         }
     };
 handle_info(
-        {{ReqID, Vnode}, {From, _B, {term_with_keycount, RM}}},
+        {{ReqID, Vnode}, {From, _B, {term_with_count, RM}}},
         #state{req_id = ReqID} = State) ->
     riak_kv_vnode:ack_keys(From),
-    {term_with_keycount, UpdResults} =
+    {term_with_count, UpdResults} =
         riak_kv_query_buffer:aggregate(
-            {term_with_keycount, RM},
-            {term_with_keycount, (State#state.acc)#map_acc.results}
+            {term_with_count, RM},
+            {term_with_count, (State#state.acc)#map_acc.results}
         ),
     {
         noreply,

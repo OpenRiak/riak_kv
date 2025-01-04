@@ -76,11 +76,11 @@
     :: 
         {keys, key_accumulator()} |
         {raw_keys, raw_key_accumulator() } |
-        {key_count, non_neg_integer()} |
-        {match_count, non_neg_integer()} |
-        {term_with_keys, termkey_accumulator()} |
-        {term_with_matchcount, countby_aggregator()} |
-        {term_with_keycount, countby_aggregator()}.
+        {count, non_neg_integer()} |
+        {raw_count, non_neg_integer()} |
+        {terms, termkey_accumulator()} |
+        {term_with_rawcount, countby_aggregator()} |
+        {term_with_count, countby_aggregator()}.
 -type reply_fun()
     :: fun((reply_type()|ping) -> ok).
 
@@ -103,15 +103,15 @@ new(Size, T, ReplyFun) when T == keys ->
     new_buffer(Size, ReplyFun, keys, none, T);
 new(Size, T, ReplyFun) when T == raw_keys ->
     new_buffer(Size, ReplyFun, raw_keys, none, T);
-new(Size, T, ReplyFun) when T == key_count->
+new(Size, T, ReplyFun) when T == count->
     new_buffer(Size, ReplyFun, raw_keys, #key_agg{}, T);
-new(Size, T, ReplyFun) when T == match_count ->
+new(Size, T, ReplyFun) when T == raw_count ->
     new_buffer(Size, ReplyFun, none, none, T);
-new(Size, T, ReplyFun) when T == term_with_keys->
+new(Size, T, ReplyFun) when T == terms->
     new_buffer(Size, ReplyFun, terms, none, T);
-new(Size, T, ReplyFun) when T == term_with_matchcount->
+new(Size, T, ReplyFun) when T == term_with_rawcount->
     new_buffer(Size, ReplyFun, terms, #termcount_agg{}, T);
-new(Size, T, ReplyFun) when T == term_with_keycount ->
+new(Size, T, ReplyFun) when T == term_with_count ->
     new_buffer(Size, ReplyFun, terms, #termkeycount_agg{}, T).
 
 new_buffer({BufferSize, JitterSize}, ReplyFun, AccType, InitAgg, Type)
@@ -161,7 +161,7 @@ add({Term, Key}, #buffer{term_acc = A, count = C} = Buffer)
 
 -spec merge(buffer()) -> buffer().
 merge(#buffer{count = C, key_acc = Acc, type = T} = Buffer)
-        when Acc == none, T == match_count ->
+        when Acc == none, T == raw_count ->
     reply(Buffer, {T, C}),
     Buffer#buffer{count = 0};
 merge(#buffer{key_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
@@ -176,11 +176,11 @@ merge(#buffer{rawkey_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
     Buffer#buffer{rawkey_acc = [], count = 0};
 merge(#buffer{term_acc = Acc, agg = Agg = Agg, type = T} = Buffer)
         when 
-            Acc =/= none , Agg == none, T == term_with_keys ->
+            Acc =/= none , Agg == none, T == terms ->
     reply(Buffer, {T, Acc}),
     Buffer#buffer{term_acc = [], count = 0};
 merge(#buffer{rawkey_acc = Acc, agg = Agg, type = T} = Buffer)
-        when Acc =/= none, is_record(Agg, key_agg), T == key_count  ->
+        when Acc =/= none, is_record(Agg, key_agg), T == count  ->
     reply(Buffer, ping),
     Buffer#buffer{
         count = 0,
@@ -201,7 +201,7 @@ merge(
         when
             Acc =/= none,
             is_map(TCMap),
-            T == term_with_matchcount ->
+            T == term_with_rawcount ->
     reply(Buffer, ping),
     UpdTCMap =
         lists:foldl(
@@ -223,7 +223,7 @@ merge(
     when
         Acc =/= none,
         is_map(TKSMap),
-        T == term_with_keycount ->
+        T == term_with_count ->
     reply(Buffer, ping),
     UpdTKSMap =
         lists:foldl(
@@ -254,7 +254,7 @@ flush(Buffer) ->
     ok = riak_kv_stat:update({query_vnode_time, Duration}),
     ok.
     
-do_flush(#buffer{count = C, type = T} = Buffer) when T == match_count ->
+do_flush(#buffer{count = C, type = T} = Buffer) when T == raw_count ->
     reply(Buffer, {T, C});
 do_flush(#buffer{rawkey_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == raw_keys ->
@@ -263,17 +263,17 @@ do_flush(#buffer{key_acc = Acc, type = T} = Buffer)
         when Acc =/= none, T == keys ->
     reply(Buffer, {T, Acc});
 do_flush(#buffer{term_acc = Acc, type = T} = Buffer)
-        when Acc =/= none, T == term_with_keys ->
+        when Acc =/= none, T == terms ->
     reply(Buffer, {T, Acc});
 do_flush(#buffer{type = T} = Buffer) ->
     UpdB = merge(Buffer),
     Result = 
         case {T, UpdB#buffer.agg} of
-            {key_count, Agg} when is_record(Agg, key_agg) ->
+            {count, Agg} when is_record(Agg, key_agg) ->
                 sets:size(Agg#key_agg.set);
-            {term_with_matchcount, Agg} when is_record(Agg, termcount_agg) ->
+            {term_with_rawcount, Agg} when is_record(Agg, termcount_agg) ->
                 Agg#termcount_agg.map;
-            {term_with_keycount, Agg} when is_record(Agg, termkeycount_agg) ->
+            {term_with_count, Agg} when is_record(Agg, termkeycount_agg) ->
                 maps:map(
                     fun(_MK, KS) -> sets:size(KS) end,
                     Agg#termkeycount_agg.map
@@ -284,14 +284,14 @@ do_flush(#buffer{type = T} = Buffer) ->
 -spec aggregate(reply_type(), reply_type()|none) -> reply_type().
 aggregate(R, none) ->
     R;
-aggregate({T, KL}, {T, AggKL}) when T == keys; T == term_with_keys ->
+aggregate({T, KL}, {T, AggKL}) when T == keys; T == terms ->
     {T, lists:umerge(lists:usort(KL), AggKL)};
 aggregate({T, KL}, {T, AggKL}) when T == raw_keys ->
     {T, KL ++ AggKL};
-aggregate({T, C}, {T, AggC}) when T == match_count; T == key_count ->
+aggregate({T, C}, {T, AggC}) when T == raw_count; T == count ->
     {T, AggC + C};
 aggregate({T, TM}, {T, AggTM})
-        when T == term_with_matchcount; T == term_with_keycount ->
+        when T == term_with_rawcount; T == term_with_count ->
     {T, maps:merge_with(fun(_K, C, AggC) -> AggC + C end, TM, AggTM)}.
 
 -spec reply(buffer(), reply_type()|ping) -> ok.
@@ -374,7 +374,7 @@ keys_test() ->
 match_count_test() ->
     A = start_aggregator(),
     ReplyFun = fun(M) -> A ! M, receive ok -> ok end end,
-    Type = match_count,
+    Type = raw_count,
     B = new({64, 0}, Type, ReplyFun),
     UpdB =
         lists:foldl(
@@ -400,7 +400,7 @@ match_count_test() ->
 key_count_basic_test() ->
     A = start_aggregator(),
     ReplyFun = fun(M) -> A ! M, receive ok -> ok end end,
-    Type = key_count,
+    Type = count,
     B = new({64, 0}, Type, ReplyFun),
     UpdB =
         lists:foldl(
@@ -422,10 +422,10 @@ key_count_basic_test() ->
     ?assertMatch(ExpectedCount, C3).
 
 match_count_dup_test() ->
-    duplicate_count_tester(match_count, 1100).
+    duplicate_count_tester(raw_count, 1100).
 
 key_count_dup_test() ->
-    duplicate_count_tester(key_count, 1000).
+    duplicate_count_tester(count, 1000).
 
 duplicate_count_tester(Type, ExpectedCount) ->
     A = start_aggregator(),
@@ -453,10 +453,10 @@ term_with_keys_test() ->
     ReplyFun =
         fun(M) -> 
             case M of
-                {term_with_keys, TKL} ->
+                {terms, TKL} ->
                     A !
                         {
-                            term_with_keys,
+                            terms,
                             lists:map(fun({{T, K}}) -> {T, K} end, TKL)
                         };
                 SimpleM ->
@@ -464,7 +464,7 @@ term_with_keys_test() ->
             end,
             receive ok -> ok end
         end,
-    B = new({64, 0}, term_with_keys, ReplyFun),
+    B = new({64, 0}, terms, ReplyFun),
     UpdB =
         lists:foldl(
             fun(I, BAcc) ->
@@ -477,15 +477,15 @@ term_with_keys_test() ->
         ),
     ExpectedSize = (900 div 64) * 64,
     A ! check,
-    {term_with_keys, L1} = get_reply(),
+    {terms, L1} = get_reply(),
     ?assertMatch(ExpectedSize, length(L1)),
     ok = flush(UpdB), 
     A ! check,
-    {term_with_keys, L2} = get_reply(),
+    {terms, L2} = get_reply(),
     ?assertMatch(900, length(L2)),
     A ! 
         {
-            term_with_keys,
+            terms,
             lists:map(
                 fun(I) -> {to_term(I), to_key(rand:uniform(1000))} end,
                 lists:seq(101, 200)
@@ -493,11 +493,11 @@ term_with_keys_test() ->
         },
     ok = get_reply(),
     {L1DupsSubset, _Rest} = lists:split(10, L1),
-    A ! {term_with_keys, L1DupsSubset},
+    A ! {terms, L1DupsSubset},
     ok = get_reply(),
     
     A ! stop,
-    {term_with_keys, L3} = get_reply(),
+    {terms, L3} = get_reply(),
     L4 =
         lists:filter(
             fun({T, K}) -> is_binary(T) andalso is_binary(K) end,
@@ -507,11 +507,11 @@ term_with_keys_test() ->
     ?assertMatch(1000, length(L4)),
     ?assertMatch(L3, lists:sort(L3)).
 
-term_with_keycount_test() ->
-    duplicate_term_count_tester(term_with_keycount, 10, 11).
+term_with_count_test() ->
+    duplicate_term_count_tester(term_with_count, 10, 11).
 
-term_with_matchcount_test() ->
-    duplicate_term_count_tester(term_with_matchcount, 90, 91).
+term_with_rawcount_test() ->
+    duplicate_term_count_tester(term_with_rawcount, 90, 91).
 
 duplicate_term_count_tester(Type, C1, C2) ->
     A = start_aggregator(),

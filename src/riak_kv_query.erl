@@ -52,9 +52,9 @@
 -type aggregation_function()
     :: fun((list(sets:set(riak_object:key()))) -> sets:set(riak_object:key())).
 -type smpl_accumulator()
-    :: keys|raw_keys|key_count|match_count.
+    :: keys|raw_keys|count|raw_count.
 -type term_accumulator()
-    :: term_with_keys|term_with_matchcount|term_with_keycount.
+    :: raw_terms|terms|term_with_rawcount|term_with_count.
 -type accumulation_option()
     :: smpl_accumulator()|term_accumulator().
 -type result_provision()
@@ -230,8 +230,8 @@ get_returnterms(Query) ->
             when 
                 KeyOnly == keys;
                 KeyOnly == raw_keys;
-                KeyOnly == key_count;
-                KeyOnly == match_count ->
+                KeyOnly == count;
+                KeyOnly == raw_count ->
             false;
         _ ->
             case Query#riak_kv_query.accumulation_term of
@@ -292,7 +292,7 @@ add_accumulation_option(
             (
                 AccumulationOption == <<"keys">> orelse
                 AccumulationOption == <<"raw_keys">> orelse
-                AccumulationOption == <<"key_count">>
+                AccumulationOption == <<"count">>
             ) ->
     {
         ok,
@@ -306,11 +306,12 @@ add_accumulation_option(
         when
             AccumulationOption == <<"keys">>;
             AccumulationOption == <<"raw_keys">>;
-            AccumulationOption == <<"key_count">>;
-            AccumulationOption == <<"match_count">>;
-            AccumulationOption == <<"term_with_keys">>;
-            AccumulationOption == <<"term_with_matchcount">>;
-            AccumulationOption == <<"term_with_keycount">> ->
+            AccumulationOption == <<"count">>;
+            AccumulationOption == <<"raw_count">>;
+            AccumulationOption == <<"terms">>;
+            AccumulationOption == <<"raw_terms">>;
+            AccumulationOption == <<"term_with_rawcount">>;
+            AccumulationOption == <<"term_with_count">> ->
     case Type of
         single_query ->
             {
@@ -345,9 +346,10 @@ add_accumulation_term(
         when
             is_binary(AccumulationTerm) andalso
             (
-                AccOpt == term_with_keys orelse
-                AccOpt == term_with_matchcount orelse
-                AccOpt == term_with_keycount
+                AccOpt == terms orelse
+                AccOpt == raw_terms orelse
+                AccOpt == term_with_rawcount orelse
+                AccOpt == term_with_count
             ) ->
     {
         ok,
@@ -554,11 +556,12 @@ evaluate_expression(EvalExpr, FilterExpr, Subs) ->
 -spec decode_option(binary()) -> accumulation_option().
 decode_option(<<"keys">>) -> keys;
 decode_option(<<"raw_keys">>) -> raw_keys;
-decode_option(<<"key_count">>) -> key_count;
-decode_option(<<"match_count">>) -> match_count;
-decode_option(<<"term_with_keys">>) -> term_with_keys;
-decode_option(<<"term_with_matchcount">>) -> term_with_matchcount;
-decode_option(<<"term_with_keycount">>) -> term_with_keycount.
+decode_option(<<"count">>) -> count;
+decode_option(<<"raw_count">>) -> raw_count;
+decode_option(<<"terms">>) -> terms;
+decode_option(<<"raw_terms">>) -> raw_terms;
+decode_option(<<"term_with_rawcount">>) -> term_with_rawcount;
+decode_option(<<"term_with_count">>) -> term_with_count.
 
 -spec get_reqid() -> non_neg_integer().
 get_reqid() ->
@@ -603,43 +606,35 @@ bad_accumulation_option_test() ->
             accumulation_option,
             <<"Unsupported option in combination query">>
         },
-        add_accumulation_option(QC, <<"term_with_keys">>)
+        add_accumulation_option(QC, <<"terms">>)
     ),
     QS = new({<<"Type">>, <<"Bucket">>}, single_query),
     ?assertMatch(
         {
             error,
             accumulation_option,
-            <<"Unrecognised option <<\"trm_with_keys\">>">>
+            <<"Unrecognised option <<\"trms\">>">>
         },
-        add_accumulation_option(QS, <<"trm_with_keys">>)
-    ),
-    ?assertMatch(
-        {
-            error,
-            accumulation_option,
-            <<"Unrecognised option <<\"trm_with_keys\">>">>
-        },
-        add_accumulation_option(QS, <<"trm_with_keys">>)
+        add_accumulation_option(QS, <<"trms">>)
     ).
 
 bad_accumulation_term_test() ->
     QS = new(<<"bucket">>, single_query),
-    {ok, QS1} = add_accumulation_option(QS, <<"term_with_keycount">>),
+    {ok, QS1} = add_accumulation_option(QS, <<"term_with_count">>),
     ?assertMatch(
         {
             error,
             accumulation_term,
-            <<"Bad term 0 with option term_with_keycount">>
+            <<"Bad term 0 with option term_with_count">>
         },
         add_accumulation_term(QS1, 0)
     ),
-    {ok, QS2} = add_accumulation_option(QS, <<"key_count">>),
+    {ok, QS2} = add_accumulation_option(QS, <<"count">>),
     ?assertMatch(
         {
             error,
             accumulation_term,
-            <<"Bad term <<\"$term\">> with option key_count">>
+            <<"Bad term <<\"$term\">> with option count">>
         },
         add_accumulation_term(QS2, <<"$term">>)
     ).

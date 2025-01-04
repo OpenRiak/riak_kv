@@ -128,12 +128,14 @@
 -define(QL_FILTER_EXPRESSION, <<"filter_expression">>).
 
 -define(ACCKEY_KEYS, <<"keys">>).
+-define(ACCKEY_TERMS, <<"terms">>).
+-define(ACCKEY_COUNT, <<"count">>).
+-define(ACCKEY_TERMCOUNT, <<"term_with_count">>).
 -define(ACCKEY_RAWKEYS, <<"raw_keys">>).
--define(ACCKEY_TERMKEYS, <<"term_with_keys">>).
--define(ACCKEY_KEYCOUNT, <<"key_count">>).
--define(ACCKEY_MATCHCOUNT, <<"match_count">>).
--define(ACCKEY_TERMMATCHCOUNT, <<"term_with_matchcount">>).
--define(ACCKEY_TERMKEYCOUNT, <<"term_with_keycount">>).
+-define(ACCKEY_RAWTERMS, <<"raw_terms">>).
+-define(ACCKEY_RAWCOUNT, <<"raw_count">>).
+-define(ACCKEY_TERMRAWCOUNT, <<"term_with_rawcount">>).
+
 
 -define(REQUIRED_KEYS, [?QUERY_LIST]).
 -define(POSSIBLE_KEYS,
@@ -519,28 +521,35 @@ encode_results(raw_keys, Results) ->
             #{?ACCKEY_RAWKEYS => Results}
         )
     );
-encode_results(term_with_keys, Results) ->
+encode_results(terms, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
-            #{?ACCKEY_TERMKEYS => Results},
+            #{?ACCKEY_TERMS => Results},
             fun riak_kv_wm_query:encode_key_withterm/2
         )
     );
-encode_results(match_count, Count) ->
+encode_results(raw_terms, Results) ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_MATCHCOUNT => Count})
+        riak_kv_wm_json:encode(
+            #{?ACCKEY_RAWTERMS => Results},
+            fun riak_kv_wm_query:encode_key_withterm/2
+        )
     );
-encode_results(key_count, Count) ->
+encode_results(raw_count, Count) ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_KEYCOUNT => Count})
+        riak_kv_wm_json:encode(#{?ACCKEY_RAWCOUNT => Count})
     );
-encode_results(term_with_matchcount, CountMap) ->
+encode_results(count, Count) ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_TERMMATCHCOUNT => CountMap})
+        riak_kv_wm_json:encode(#{?ACCKEY_COUNT => Count})
     );
-encode_results(term_with_keycount, CountMap) ->
+encode_results(term_with_rawcount, CountMap) ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_TERMKEYCOUNT => CountMap})
+        riak_kv_wm_json:encode(#{?ACCKEY_TERMRAWCOUNT => CountMap})
+    );
+encode_results(term_with_count, CountMap) ->
+    iolist_to_binary(
+        riak_kv_wm_json:encode(#{?ACCKEY_TERMCOUNT => CountMap})
     ).
 
 encode_key({Key}, Encode) when is_binary(Key) ->
@@ -964,15 +973,15 @@ invalid_query_missingtag2_test() ->
     ).
 
 encode_results_test() ->
-    BinMC = encode_results(match_count, 500),
+    BinMC = encode_results(raw_count, 500),
     ?assertMatch(
         500,
-        maps:get(?ACCKEY_MATCHCOUNT, riak_kv_wm_json:decode(BinMC))
+        maps:get(?ACCKEY_RAWCOUNT, riak_kv_wm_json:decode(BinMC))
     ),
-    BinKC = encode_results(key_count, 600),
+    BinKC = encode_results(count, 600),
     ?assertMatch(
         600,
-        maps:get(?ACCKEY_KEYCOUNT, riak_kv_wm_json:decode(BinKC))
+        maps:get(?ACCKEY_COUNT, riak_kv_wm_json:decode(BinKC))
     ),
     KeyList = [<<"K00001">>, <<"K00002">>, <<"K0003">>],
     BinKL = encode_results(keys, KeyList),
@@ -987,43 +996,43 @@ encode_results_test() ->
         maps:get(?ACCKEY_KEYS, riak_kv_wm_json:decode(BinKLT))
     ),
     TermKeyList = [{<<"T0001">>, <<"K0002">>}, {<<"T0002">>, <<"K0001">>}],
-    BinTKL = encode_results(term_with_keys, TermKeyList),
+    BinTKL = encode_results(terms, TermKeyList),
     ?assertMatch(
         TermKeyList,
         lists:sort(
             lists:map(
                 fun(M) -> [{T, K}] = maps:to_list(M), {T, K} end,
-                maps:get(?ACCKEY_TERMKEYS, riak_kv_wm_json:decode(BinTKL))
+                maps:get(?ACCKEY_TERMS, riak_kv_wm_json:decode(BinTKL))
             )
         )
     ),
     TermKeyListT =
         [{{<<"T0001">>, <<"K0002">>}}, {{<<"T0002">>, <<"K0001">>}}],
-    BinTKLT = encode_results(term_with_keys, TermKeyListT),
+    BinTKLT = encode_results(terms, TermKeyListT),
     ?assertMatch(
         TermKeyList,
         lists:sort(
             lists:map(
                 fun(M) -> [{T, K}] = maps:to_list(M), {T, K} end,
-                maps:get(?ACCKEY_TERMKEYS, riak_kv_wm_json:decode(BinTKLT))
+                maps:get(?ACCKEY_TERMS, riak_kv_wm_json:decode(BinTKLT))
             )
         )
     ),
     TermCount = #{<<"T0001">> => 12, <<"T0002">> => 10},
-    BinTKC = encode_results(term_with_keycount, TermCount),
+    BinTKC = encode_results(term_with_count, TermCount),
     ?assertMatch(
         10,
         maps:get(
             <<"T0002">>,
-            maps:get(?ACCKEY_TERMKEYCOUNT, riak_kv_wm_json:decode(BinTKC))
+            maps:get(?ACCKEY_TERMCOUNT, riak_kv_wm_json:decode(BinTKC))
         )
     ),
-    BinTMC = encode_results(term_with_matchcount, TermCount),
+    BinTMC = encode_results(term_with_rawcount, TermCount),
     ?assertMatch(
         12,
         maps:get(
             <<"T0001">>,
-            maps:get(?ACCKEY_TERMMATCHCOUNT, riak_kv_wm_json:decode(BinTMC))
+            maps:get(?ACCKEY_TERMRAWCOUNT, riak_kv_wm_json:decode(BinTMC))
         )
     )
     .
