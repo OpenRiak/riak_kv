@@ -1699,7 +1699,7 @@ handle_coverage_request(kv_query_request, Req, FilterVNodes, Sender, State) ->
     ReturnTerms = riak_kv_requests:get_return_terms(Req),
     BufferSize = riak_kv_requests:get_buffer_size(Req),
     ResultFun = result_fun_ack(Bucket, Sender),
-    BufferMod = riak_kv_query_buffer,    
+    BufferMod = riak_kv_query_buffer,
     Buffer = riak_kv_query_buffer:new(BufferSize, AccType, ResultFun),
     BackendMod = State#state.mod,
     {ok, Capabilities} = BackendMod:capabilities(State#state.modstate),

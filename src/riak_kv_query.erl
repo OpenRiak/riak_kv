@@ -292,7 +292,7 @@ add_accumulation_option(
             (
                 AccumulationOption == <<"keys">> orelse
                 AccumulationOption == <<"raw_keys">> orelse
-                AccumulationOption == <<"count">>
+                AccumulationOption == <<"raw_count">>
             ) ->
     {
         ok,

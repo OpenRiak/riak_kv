@@ -620,7 +620,7 @@ complex_query(
                 leveled_bookie:book_multiindexfold(
                     State#state.bookie,
                     Bucket,
-                    FoldTermsFun,
+                    {FoldTermsFun, InitAcc},
                     SubQueries,
                     QueryComboFun
                 );
