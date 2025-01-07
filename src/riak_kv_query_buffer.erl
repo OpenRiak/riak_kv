@@ -303,8 +303,10 @@ do_flush(#buffer{type = T} = Buffer) ->
 -spec aggregate(reply_type(), reply_type()|none) -> reply_type().
 aggregate(R, none) ->
     R;
-aggregate({T, KL}, {T, AggKL}) when T == keys; T == terms ->
+aggregate({T, KL}, {T, AggKL}) when T == keys ->
     {T, lists:umerge(lists:usort(KL), AggKL)};
+aggregate({T, TKL}, {T, AggTKL}) when T == terms ->
+    {T, lists:umerge(lists:usort(lists:reverse(TKL)), AggTKL)};
 aggregate({T, KL}, {T, AggKL}) when T == raw_keys; T == raw_terms ->
     {T, KL ++ AggKL};
 aggregate({T, C}, {T, AggC}) when T == raw_count; T == count ->

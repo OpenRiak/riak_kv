@@ -624,6 +624,14 @@ complex_query(
                     SubQueries,
                     QueryComboFun
                 );
+            {IdxField, {StartTerm, ExclusiveSK}, EndTerm, TermExpression} ->
+                leveled_bookie:book_indexfold(
+                    State#state.bookie,
+                    {Bucket, leveled_codec:next_key(ExclusiveSK)},
+                    {FoldTermsFun, InitAcc},
+                    {IdxField, StartTerm, EndTerm},
+                    {ReturnTerms, TermExpression}
+                );
             {IdxField, StartTerm, EndTerm, TermExpression} ->
                 leveled_bookie:book_indexfold(
                     State#state.bookie,

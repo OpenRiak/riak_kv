@@ -28,6 +28,7 @@
         finalise_request/1,
         get_query_definition/1,
         get_bucket/1,
+        get_maxresults/1,
         get_r/1,
         get_timeout_secs/1,
         get_accumulator/1,
@@ -40,12 +41,17 @@
         add_aggregation_expression/2,
         add_accumulation_option/2,
         add_accumulation_term/2,
-        add_result_provision/2,
+        add_maxresults/2,
+        add_continuation/2,
         add_result_encodingfun/2,
         add_queries/3,
+        make_continuation/2,
         is_query/1
     ]
 ).
+
+-define(CONT_SK, <<"start_key">>).
+-define(CONT_ST, <<"start_term">>).
 
 -type query_type()
     :: single_query | combo_query.
@@ -57,8 +63,6 @@
     :: raw_terms|terms|term_with_rawcount|term_with_count.
 -type accumulation_option()
     :: smpl_accumulator()|term_accumulator().
--type result_provision()
-    :: all|{reference, binary()}.
 -type query_index_name()
     :: binary().
 -type index_limiter()
@@ -102,12 +106,20 @@
         index_limiter(),
         term_expression()
     }.
+-type continuation_query() ::
+    {
+        query_index_name(),
+        {index_limiter(), riak_object:key()},
+        index_limiter(),
+        term_expression()
+    }.
 -type query_definition() ::
     evaluated_query()|
+    continuation_query()|
     {aggregation_function(), list({aggregation_tag(), evaluated_query()})}.
 -type validation_stage() ::
     aggregation_expression|accumulation_option|accumulation_term|
-        result_provision|query_evaluation.
+        max_results|query_evaluation|apply_continuation.
 -type validation_error() ::
     {error, validation_stage(), binary()}.
 -type encoding_fun() ::
@@ -127,14 +139,15 @@
             :: accumulation_option(),
         accumulation_term = <<"$term">>
             :: binary(),
-        result_provision = all
-            :: result_provision(),
+        max_results = unlimited
+            :: pos_integer()|unlimited,
         r = 1
             :: pos_integer(),
         query
             :: 
                 undefined |
                 evaluated_query() |
+                continuation_query() |
                 list({aggregation_tag(), evaluated_query()}),
         client_pid
             :: pid() | undefined,
@@ -153,7 +166,6 @@
         aggregation_function/0,
         aggregation_tag/0,
         accumulation_option/0,
-        result_provision/0,
         query_expression/0,
         term_expression/0,
         evaluated_query/0,
@@ -224,8 +236,13 @@ get_accumulator(#riak_kv_query{accumulation_option= AccO}) ->
     AccO.
 
 -spec get_returnterms(complex_query_definition()) -> boolean()|binary().
-get_returnterms(Query) ->
-    case get_accumulator(Query) of
+get_returnterms(#riak_kv_query{max_results = MR}) when is_integer(MR) ->
+    true;
+get_returnterms(
+    #riak_kv_query{
+        max_results = unlimited, accumulation_option = AO, accumulation_term = AT
+    }) ->
+    case AO of
         KeyOnly
             when 
                 KeyOnly == keys;
@@ -234,13 +251,16 @@ get_returnterms(Query) ->
                 KeyOnly == raw_count ->
             false;
         _ ->
-            case Query#riak_kv_query.accumulation_term of
+            case AT of
                 Term when Term == <<"$term">> ->
                     true;
                 Term when is_binary(Term) ->
                     Term
             end
     end.
+
+-spec get_maxresults(complex_query_definition()) -> unlimited|pos_integer().
+get_maxresults(Query) -> Query#riak_kv_query.max_results.
 
 -spec get_r(complex_query_definition()) -> pos_integer().
 get_r(Query) -> Query#riak_kv_query.r.
@@ -370,19 +390,53 @@ add_accumulation_term(
         
     }.
 
--spec add_result_provision(
-    complex_query_definition(), result_provision())
-        -> {ok, complex_query_definition()}|validation_error().
-add_result_provision(Query, all) ->
-    {ok, Query#riak_kv_query{result_provision = all}};
-add_result_provision(Query, {reference, Ref}) when is_binary(Ref) ->
-    {ok, Query#riak_kv_query{result_provision = {reference, Ref}}};
-add_result_provision(_Query, _BadProvision) ->
+-spec add_maxresults(complex_query_definition(), pos_integer()) ->
+    {ok, complex_query_definition()}|validation_error().
+add_maxresults(#riak_kv_query{accumulation_option = AccOpt, type = T} = Q, MR)
+        when is_integer(MR), MR > 0 ->
+    case {AccOpt, T} of
+        {AccOpt, single_query} when AccOpt == raw_keys; AccOpt == terms ->
+            {ok, Q#riak_kv_query{max_results = MR}};
+        {MaybeBadAccOpt, MaybeBadType} ->
+            {
+                error,
+                max_results,
+                list_to_binary(
+                    io_lib:format(
+                        "Invalid combination max_results ~0p "
+                        "query_type ~w accumulation_option ~0p",
+                        [MR, MaybeBadType, MaybeBadAccOpt]))
+            }
+    end;
+add_maxresults(_Query, InvalidMax) ->
     {
         error,
-        result_provision,
-        <<"Invalid result provision">>
+        max_results,
+        list_to_binary(
+            io_lib:format(<<"Invalid max_results ~0p">>, [InvalidMax]))
     }.
+
+-spec add_continuation(complex_query_definition(), binary()) ->
+    {ok, complex_query_definition()}|validation_error().
+add_continuation(#riak_kv_query{type = T, query = Q} = Query, Cont) ->
+    try
+        true = T == single_query,
+        case riak_kv_wm_json:decode(base64:decode(Cont)) of
+            QMap when is_map(QMap) ->
+                {Idx, _ST, ET, Expr} = Q,
+                case {maps:get(?CONT_SK, QMap), maps:get(?CONT_ST, QMap)} of
+                    {SK, ST0} when is_binary(SK), is_binary(ST0) ->
+                        {ok, Query#riak_kv_query{query = {Idx, {ST0, SK}, ET, Expr}}}
+                end
+        end
+    catch
+        error:Reason ->
+            ?LOG_WARNING(
+                "Invalid continuation failed due to Reason ~0p",
+                [Reason]
+            ),
+            {error, apply_continuation, <<"Invalid continuation">>}
+    end.
 
 -spec add_result_encodingfun(complex_query_definition(), encoding_fun())
         -> {ok, complex_query_definition()}.
@@ -429,6 +483,11 @@ add_queries(Query, Queries, Subs) ->
         Error ->
             Error
     end.
+
+-spec make_continuation(index_limiter(), riak_object:key()) -> string().
+make_continuation(StartTerm, StartKeyExclusive) ->
+    M = #{?CONT_ST => StartTerm, ?CONT_SK => StartKeyExclusive},
+    base64:encode_to_string(iolist_to_binary(riak_kv_wm_json:encode(M))).
 
 -spec validate_substitutions(substitutions()) -> ok|validation_error().
 validate_substitutions(Subs) ->
@@ -618,6 +677,22 @@ bad_accumulation_option_test() ->
         add_accumulation_option(QS, <<"trms">>)
     ).
 
+bad_maxresults_test() ->
+    QS = new(<<"bucket">>, single_query),
+    {ok, QS1} = add_accumulation_option(QS, <<"term_with_count">>),
+    ?assertMatch(
+        {
+            error,
+            max_results,
+            <<
+                "Invalid combination max_results 1000 "
+                "query_type single_query "
+                "accumulation_option term_with_count"
+            >>
+        },
+        add_maxresults(QS1, 1000)
+    ).
+
 bad_accumulation_term_test() ->
     QS = new(<<"bucket">>, single_query),
     {ok, QS1} = add_accumulation_option(QS, <<"term_with_count">>),
@@ -637,17 +712,6 @@ bad_accumulation_term_test() ->
             <<"Bad term <<\"$term\">> with option count">>
         },
         add_accumulation_term(QS2, <<"$term">>)
-    ).
-
-bad_result_provision_test() ->
-    QS = new(<<"bucket">>, single_query),
-    ?assertMatch(
-        {
-            error,
-            result_provision,
-            <<"Invalid result provision">>
-        },
-        add_result_provision(QS, 1)
     ).
 
 bad_singlequery_test() ->

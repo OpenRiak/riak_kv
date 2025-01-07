@@ -49,7 +49,7 @@
 %% - accumulation_term (optional - default = $term)
 %% When using an accumulation option of term_with_keys, term_with_matchcount or
 %% term_with_keycount which term in the evaluated index term should be used.
-%% The defualt is $term - the whole term.  However a sub-term extracted in the
+%% The default is $term - the whole term.  However a sub-term extracted in the
 %% evaluation expression may be used instead.  
 %% 
 %% - result_provision (not yet implemented)
@@ -118,6 +118,8 @@
 -define(ACCUMULATION_TERM, <<"accumulation_term">>).
 -define(SUBSTITUTIONS, <<"substitutions">>).
 -define(TIMEOUT, <<"timeout">>).
+-define(MAX_RESULTS, <<"max_results">>).
+-define(CONTINUATION, <<"continuation">>).
 -define(QUERY_LIST, <<"query_list">>).
 -define(QL_AGGREGATION_TAG, <<"aggregation_tag">>).
 -define(QL_INDEX_NAME, <<"index_name">>).
@@ -145,7 +147,9 @@
         ?ACCUMULATION_TERM,
         ?SUBSTITUTIONS,
         ?TIMEOUT,
-        ?QUERY_LIST
+        ?QUERY_LIST,
+        ?MAX_RESULTS,
+        ?CONTINUATION
     ]
 ).
 -define(REQUIRED_QL_KEYS,
@@ -171,6 +175,8 @@
 
 -define(QUERY_TIMEOUT, 60).
 
+-define(HEAD_CONTINUATION, "X-Riak-Continuation").
+
 -type query_map() ::
     #{binary() => binary()|non_neg_integer()|list(map())}.
 
@@ -190,7 +196,8 @@ init(Props) ->
 %%      can be established. Also, extract query params.
 service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     Ctx = riak_kv_wm_utils:ensure_bucket_type(RD, Ctx0, #ctx.bucket_type),
-    case riak_kv_wm_utils:get_riak_client(RiakProps, riak_kv_wm_utils:get_client_id(RD)) of
+    ClientID = riak_kv_wm_utils:get_client_id(RD),
+    case riak_kv_wm_utils:get_riak_client(RiakProps, ClientID) of
         {ok, C} ->
             {true, RD, Ctx#ctx { client=C }};
         Error ->
@@ -415,21 +422,16 @@ make_query(BucketType, QueryMap) ->
                     QueryList when length(QueryList) > 1 ->
                         riak_kv_query:new(BucketType, combo_query, Timeout)
                 end,
-            case make_accumulation(QueryMap, InitQuery) of
+            case add_accumulation(QueryMap, InitQuery) of
                 {ok, Q1} ->
-                    AggExpr =
-                        maps:get(
-                            ?AGGREGATION_EXPRESSION, QueryMap, undefined
-                        ),
-                    case riak_kv_query:add_aggregation_expression(Q1, AggExpr) of
+                    case add_queries(QueryMap, Q1, QueryList) of
                         {ok, Q2} ->
-                            Subs =
-                                maps:get(?SUBSTITUTIONS, QueryMap, maps:new()),
-                            riak_kv_query:add_queries(
-                                Q2, 
-                                lists:map(fun convert_query/1, QueryList),
-                                Subs
-                            );
+                            case maps:get(?CONTINUATION, QueryMap, none) of
+                                none ->
+                                    {ok, Q2};
+                                Continuation ->
+                                    riak_kv_query:add_continuation(Q2, Continuation)
+                            end;
                         Error ->
                             Error
                     end;
@@ -440,17 +442,50 @@ make_query(BucketType, QueryMap) ->
             {error, init, <<"Bad timeout">>}
     end.
                     
--spec make_accumulation(
+-spec add_accumulation(
     query_map(), riak_kv_query:complex_query_definition())
         -> 
             {ok, riak_kv_query:complex_query_definition()} |
             riak_kv_query:validation_error().
-make_accumulation(QueryMap, InitQuery) ->
+add_accumulation(QueryMap, InitQuery) ->
     AccOpt = maps:get(?ACCUMULATION_OPTION, QueryMap, undefined),
     AccTerm = maps:get(?ACCUMULATION_TERM, QueryMap, undefined),
+    MaxResults = maps:get(?MAX_RESULTS, QueryMap, undefined),
     case riak_kv_query:add_accumulation_option(InitQuery, AccOpt) of
-        {ok, UpdQuery} ->
-            riak_kv_query:add_accumulation_term(UpdQuery, AccTerm);
+        {ok, UpdQuery0} ->
+            case riak_kv_query:add_accumulation_term(UpdQuery0, AccTerm) of
+                {ok, UpdQuery1} ->
+                    case MaxResults of
+                        undefined ->
+                            {ok, UpdQuery1};
+                        MR ->
+                            riak_kv_query:add_maxresults(UpdQuery1, MR)
+                    end;
+                Error ->
+                    Error
+            end;
+        Error ->
+            Error
+    end.
+
+-spec add_queries(
+    query_map(),
+    riak_kv_query:complex_query_definition(),
+    list(#{binary() => binary()})) ->
+        {ok, riak_kv_query:complex_query_definition()}|
+        riak_kv_query:validation_error().
+add_queries(QueryMap, Query, QueryList) ->
+    AggExpr =
+        maps:get(?AGGREGATION_EXPRESSION, QueryMap, undefined),
+    case riak_kv_query:add_aggregation_expression(Query, AggExpr) of
+        {ok, Q2} ->
+            Subs =
+                maps:get(?SUBSTITUTIONS, QueryMap, maps:new()),
+            riak_kv_query:add_queries(
+                Q2, 
+                lists:map(fun convert_query/1, QueryList),
+                Subs
+            );
         Error ->
             Error
     end.
@@ -490,12 +525,34 @@ process_post(RD, Ctx) ->
                     )
                 ),
             {{halt, 500}, return_json_error(Error, RD), Ctx};
-        JsonEncodedResults ->
+        {JsonEncodedResults, none} when is_binary(JsonEncodedResults) ->
             {
                 true,
                 wrq:append_to_resp_body(
                     JsonEncodedResults,
                     wrq:set_resp_header(?HEAD_CTYPE, "application/json", RD)
+                ),
+                Ctx
+            };
+        {JsonEncodedResults, {{LT,  LK}}}
+                when
+                    is_binary(JsonEncodedResults),
+                    is_binary(LT),
+                    is_binary(LK) ->
+            Continuation = riak_kv_query:make_continuation(LT, LK),
+            {
+                true,
+                wrq:append_to_resp_body(
+                    JsonEncodedResults,
+                    wrq:set_resp_header(
+                        ?HEAD_CONTINUATION,
+                        Continuation,
+                        wrq:set_resp_header(
+                            ?HEAD_CTYPE,
+                            "application/json",
+                            RD
+                        )
+                    )
                 ),
                 Ctx
             }
@@ -512,13 +569,14 @@ encode_results(keys, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
             #{?ACCKEY_KEYS => Results},
-            fun encode_key/2
+            fun riak_kv_wm_query:encode_key/2
         )
     );
 encode_results(raw_keys, Results) ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
-            #{?ACCKEY_RAWKEYS => Results}
+            #{?ACCKEY_RAWKEYS => Results},
+            fun riak_kv_wm_query:encode_key/2
         )
     );
 encode_results(terms, Results) ->
@@ -552,6 +610,8 @@ encode_results(term_with_count, CountMap) ->
         riak_kv_wm_json:encode(#{?ACCKEY_TERMCOUNT => CountMap})
     ).
 
+encode_key({{_Term, Key}}, Encode) when is_binary(Key) ->
+    encode_key(Key, Encode);
 encode_key({Key}, Encode) when is_binary(Key) ->
     encode_key(Key, Encode);
 encode_key(Key, Encode) ->

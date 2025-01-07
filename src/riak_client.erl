@@ -1036,12 +1036,16 @@ hotbackup(BackupPath, DefaultNVal, PlanNVal, {?MODULE, [Node, _ClientId]}) ->
     wait_for_fold_results(ReqId, TimeOut).
 
 
--spec query(
-    riak_kv_query:complex_query_definition(), riak_client()) ->
+-type query_result()
+    ::
         [riak_object:key()] |
         [{binary(), riak_object:key()}] |
         #{binary() => non_neg_integer()} |
-        binary() |
+        binary().
+
+-spec query(
+    riak_kv_query:complex_query_definition(), riak_client()) ->
+        {query_result(), none|{{binary(), riak_object:key()}}} |
         {error, timeout} |
         {error, term()}.
 query(Query, {?MODULE, [Node, _ClientId]}) ->

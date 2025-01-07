@@ -27,7 +27,15 @@
 -type fold_buckets_fun()
     :: fun((binary(), any()) -> any() | no_return()).
 -type fold_keys_fun()
-    :: fun((binary(), binary(), any()) -> any() | no_return()).
+    :: 
+        fun(
+            (riak_object:bucket(), riak_object:key(), fold_acc())
+                -> fold_acc() | no_return()
+            ) |
+        fun(
+            (riak_object:bucket(), {binary(), riak_object:key()}, fold_acc()
+                ) -> fold_acc() | no_return()
+            ).
 -type fold_objects_fun()
     :: fun((binary(), binary(), term(), any()) -> any() | no_return()).
 

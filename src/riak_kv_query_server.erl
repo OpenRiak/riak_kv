@@ -75,7 +75,9 @@
 % -define(START_OPTS, [{spawn_opt, [{min_heap_size, ?MIN_HEAP_SIZE}]}]).
 -define(START_OPTS, []).
 -define(DEFAULT_BUFFER_SIZE, 320).
+-define(MINIMUM_BUFFER_SIZE, 16).
 -define(DBTYPE_KEYS, ordered_set).
+-define(ETS_SELECT_KEYS, [{{'$1'}, [], ['$1']}]).
 
 -record(timings, 
     {
@@ -101,6 +103,7 @@
         vnode_monitor :: vnode_monitor(),
         vnodes_ongoing :: sets:set(vnode_id()),
         acc :: result_record()|redacted,
+        max_results = unlimited :: pos_integer()|unlimited,
         result_table = none :: none|ets:table(),
         result_encoding_fun :: riak_kv_query:encoding_fun()|raw
     }
@@ -168,18 +171,10 @@ init(Query) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
     NVal = proplists:get_value(n_val, BucketProps),
     R = riak_kv_query:get_r(Query),
-    AccType = riak_kv_query:get_accumulator(Query),
     EvaluatedQuery = riak_kv_query:get_query_definition(Query),
-    Request =
-        riak_kv_requests:new_query_request(
-            Bucket,
-            none,
-            riak_kv_query:get_querytype(Query),
-            AccType,
-            riak_kv_query:get_returnterms(Query),
-            calculate_buffer_size(Query),
-            EvaluatedQuery),
     TimeoutS = riak_kv_query:get_timeout_secs(Query),
+    MaxResults = riak_kv_query:get_maxresults(Query),
+    AccType = accumulation_type(Query, MaxResults),
     From = riak_kv_query:get_clientpid(Query),
     ReqID = riak_kv_query:get_reqid(Query),
     ClientMonitorRef = erlang:monitor(process, From),
@@ -190,6 +185,16 @@ init(Query) ->
             {stop, insufficient_vnodes};
         {CoverageVnodes, FilterVnodes} ->
             Sender = {raw, ReqID, self()},
+            Request =
+                riak_kv_requests:new_query_request(
+                    Bucket,
+                    none,
+                    riak_kv_query:get_querytype(Query),
+                    AccType,
+                    riak_kv_query:get_returnterms(Query),
+                    calculate_buffer_size(length(CoverageVnodes), MaxResults),
+                    EvaluatedQuery
+                ),
             riak_core_vnode_master:coverage(
                 Request,
                 CoverageVnodes,
@@ -230,6 +235,7 @@ init(Query) ->
                     vnode_monitor = InitMonitor,
                     vnodes_ongoing = VnodesOngoing,
                     acc = Acc,
+                    max_results = MaxResults,
                     result_encoding_fun
                         = riak_kv_query:get_result_encodingfun(Query)
                 }
@@ -256,6 +262,82 @@ handle_info(
         noreply,
         State#state{
             vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor)}
+    };
+handle_info(
+    {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
+    #state{req_id = ReqID, result_table = none, max_results = MR} = State)
+        when AccOpt == terms, is_integer(MR) ->
+    {AccOpt, UpdResults} =
+        riak_kv_query_buffer:aggregate(
+            {AccOpt, Results},
+            {AccOpt, (State#state.acc)#list_acc.results}
+        ),
+    {NextResults, ResultTable} =
+        case length(UpdResults) of
+            CountSoFar when CountSoFar < MR, CountSoFar < ?ETS_THRESHOLD ->
+                riak_kv_vnode:ack_keys(From),
+                {UpdResults, none};
+            CountSoFar when CountSoFar < MR, CountSoFar >= ?ETS_THRESHOLD ->
+                riak_kv_vnode:ack_keys(From),
+                NewTable = ets:new(query_results, [?DBTYPE_KEYS, private]),
+                true = ets:insert_new(NewTable, UpdResults),
+                {#list_acc{}, NewTable};
+            _CountSoFar ->
+                {CandidateResults, _Discards} = lists:split(MR, UpdResults),
+                case {hd(Results), lists:last(CandidateResults)} of
+                    {LastR, LastCandidate} when LastR >= LastCandidate ->
+                        riak_kv_vnode:stop_fold(From),
+                        self() ! {{ReqID, Vnode}, done};
+                    _ ->
+                        riak_kv_vnode:ack_keys(From)
+                end,
+                {CandidateResults, none}
+        end,
+    {
+        noreply,
+        State#state{
+            vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor),
+            acc = #list_acc{results = NextResults},
+            result_table = ResultTable
+        }
+    };
+handle_info(
+    {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
+    #state{req_id = ReqID, result_table = Table, max_results = MR} = State)
+        when AccOpt == terms, is_integer(MR) ->
+    LastResult = hd(Results),
+    true = ets:insert(Table, lists:reverse(Results)),
+    case ets:info(Table, size) of
+        TableSize when TableSize =< MR ->
+            % Maybe done, but code is simpler to ignore optimisation as limit
+            % on select_reverse =/= 0
+            riak_kv_vnode:ack_keys(From);
+        TableSize ->
+            Excess = TableSize - MR,
+            {TrimList, _Continuation} =
+                ets:select_reverse(
+                    Table,
+                    ?ETS_SELECT_KEYS,
+                    Excess
+                ),
+            lists:foreach(
+                fun(TermKey) -> ets:delete(Table, TermKey) end,
+                TrimList
+            ),
+            case ets:last(Table) of
+                LastTermKey when LastTermKey =< LastResult ->
+                    riak_kv_vnode:stop_fold(From),
+                    self() ! {{ReqID, Vnode}, done};
+                _LastTermKey ->
+                    riak_kv_vnode:ack_keys(From)
+            end
+    end,
+    {
+        noreply,
+        State#state{
+            vnode_monitor =
+                update_monitor(Vnode, State#state.vnode_monitor)
+        }
     };
 handle_info(
         {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
@@ -400,12 +482,24 @@ handle_info(
                     RT0 ->
                         ets:tab2list(RT0)
                 end,
+            LastResult =
+                case State#state.max_results of
+                    MR when
+                            is_integer(MR),
+                            is_list(Results),
+                            MR == length(Results) ->
+                        lists:last(Results);
+                    _ ->
+                        none
+                    end,
             {raw, ClientReqID, ClientPid} = State#state.from,
             case State#state.result_encoding_fun of
                 raw ->
-                    ClientPid ! {ClientReqID, Results};
+                    ClientPid !
+                        {ClientReqID, {Results, LastResult}};
                 EncodingFun ->
-                    ClientPid ! {ClientReqID, EncodingFun(Results)}
+                    ClientPid !
+                        {ClientReqID, {EncodingFun(Results), LastResult}}
             end,
             ResultsSent =
                 case State#state.result_table of
@@ -438,7 +532,9 @@ handle_info(
     {stop, shutdown, State};
 handle_info(Msg, State) ->
     ?LOG_INFO("Receieved unexpected message ~0p", [Msg]),
-    {noreply, State}.
+    {raw, ClientReqID, ClientPid} = State#state.from,
+    ClientPid ! {ClientReqID, {error, <<"unexepected_event">>}},
+    {stop, shutdown, State}.
 
 terminate(_Reason, #state{result_table = none}) ->
     ok;
@@ -472,18 +568,37 @@ code_change(_OldVsn, State, _Extra) ->
 update_monitor(Vnode, VnodeMonitor) ->
     maps:update_with(Vnode, fun(V) -> V + 1 end, VnodeMonitor).
 
--spec calculate_buffer_size(
-    riak_kv_query:complex_query_definition())
-        -> {pos_integer(), non_neg_integer()}.
-calculate_buffer_size(_Query) ->
-    %% May need to change when adding support for max_results
+-spec calculate_buffer_size(pos_integer(), unlimited|pos_integer()) ->
+    {pos_integer(), non_neg_integer()}.
+calculate_buffer_size(_VnodeCount, unlimited) ->
     ConfiguredSize =
         application:get_env(riak_kv, query_buffer_size, ?DEFAULT_BUFFER_SIZE),
     BufferSize = max(ConfiguredSize, riak_kv_query_buffer:min_buffer()),
     {
         BufferSize,
         BufferSize div 2
-    }.
+    };
+calculate_buffer_size(VnodeCount, MaxResults) ->
+    {SBS, SJS} = calculate_buffer_size(VnodeCount, unlimited),
+    ResultsPerVnode = (MaxResults div VnodeCount) div 2,
+    case calculate_buffer_size(VnodeCount, unlimited) of
+        {SBS, SJS} when SBS < ResultsPerVnode ->
+            {SBS, SJS};
+        _ when ResultsPerVnode > ?MINIMUM_BUFFER_SIZE ->
+            % Using the default may lead to a big overshoot, so
+            % use a smaller buffer size based on the max_results
+            {ResultsPerVnode, ResultsPerVnode div 2};
+        _ ->
+            {?MINIMUM_BUFFER_SIZE, ?MINIMUM_BUFFER_SIZE div 2}
+    end.
+
+-spec accumulation_type(
+    riak_kv_query:complex_query_definition(), pos_integer()|unlimited)
+        -> riak_kv_query:accumulation_option().
+accumulation_type(Query, unlimited) ->
+    riak_kv_query:get_accumulator(Query);
+accumulation_type(_Query, MaxResults) when is_integer(MaxResults) ->
+    terms.
 
 -spec extract_results(result_record()) -> results().
 extract_results(Acc) when is_record(Acc, list_acc) ->
@@ -546,3 +661,18 @@ log_timings(Timings, Bucket, ResultCount, true) ->
                     Timings#timings.sum, Timings#timings.count,
                     Timings#timings.slow_count, Timings#timings.fast_count,
                     ResultCount]).
+
+%%%============================================================================
+%%% Test
+%%%============================================================================
+
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
+buffer_size_test() ->
+    ?assertMatch({320, 160}, calculate_buffer_size(171, unlimited)),
+    ?assertMatch({16, 8}, calculate_buffer_size(171, 1000)),
+    ?assertMatch({29, 14}, calculate_buffer_size(171, 10000)).
+
+-endif.
