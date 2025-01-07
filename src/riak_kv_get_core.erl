@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_kv_get_core).
--export([init/10, update_init/2, head_merge/1,
+-export([init/11, update_init/2, head_merge/1,
             add_result/4, update_result/5, result_shortcode/1,
             enough/1, response/1, has_all_results/1, final_action/1, info/1]).
 -export_type([getcore/0, result/0, reply/0, final_action/0]).
@@ -76,6 +76,7 @@
                   head_merge = false :: boolean(),
                   expected_fetchclock = false :: boolean()|vclock:vclock(),
                   node_confirms = 0 :: non_neg_integer(),
+                  return_body = true :: boolean(),
                   confirmed_nodes = []}).
 -opaque getcore() :: #getcore{}.
 
@@ -89,26 +90,30 @@
            AllowMult::boolean(), DeletedVClock::boolean(),
            IdxType::idx_type(),
            ExpClock::false|vclock:vclock(),
-           NodeConfirms::non_neg_integer()) -> getcore().
+           NodeConfirms::non_neg_integer(),
+           ReturnBody::boolean()
+        ) -> getcore().
 init(N, R, PR, FailThreshold, NotFoundOk, AllowMult,
-        DeletedVClock, IdxType, ExpClock, NodeConfirms) ->
-    #getcore{n = N,
-             r = case ExpClock of false -> R; _ -> N end,
-             pr = PR,
-             ur = 0,
-             fail_threshold = FailThreshold,
-             notfound_ok = NotFoundOk,
-             allow_mult = AllowMult,
-             deletedvclock = DeletedVClock,
-             idx_type = IdxType,
-             expected_fetchclock = ExpClock,
-             node_confirms = NodeConfirms}.
+        DeletedVClock, IdxType, ExpClock, NodeConfirms, ReturnBody) ->
+    #getcore{
+        n = N,
+        r = case ExpClock of false -> R; _ -> N end,
+        pr = PR,
+        ur = 0,
+        fail_threshold = FailThreshold,
+        notfound_ok = NotFoundOk,
+        allow_mult = AllowMult,
+        deletedvclock = DeletedVClock,
+        idx_type = IdxType,
+        expected_fetchclock = ExpClock,
+        node_confirms = NodeConfirms,
+        return_body = ReturnBody
+    }.
 
 %% Re-initialise a get to a restricted number of vnodes (that must all respond)
 -spec update_init(N::pos_integer(), getcore()) -> getcore().
 update_init(N, PrevGetCore) ->
-    PrevGetCore#getcore{ur = N,
-                        head_merge = true}.
+    PrevGetCore#getcore{ur = N, head_merge = true}.
 
 %% Convert the get so that it is expecting to potentially receive the
 %% responses to head requests (though for backwards compatibility these may
@@ -279,7 +284,7 @@ response(#getcore{r = R, num_ok = NumOK, pr= PR, num_pok = NumPOK,
         when (NumOK >= R andalso NumPOK >= PR) orelse ExpClock == true ->
     #getcore{results = Results, allow_mult=AllowMult,
         deletedvclock = DeletedVClock} = GetCore,
-    Merged = merge_heads(Results, AllowMult),
+    Merged = merge_heads(Results, AllowMult, GetCore#getcore.return_body),
     case Merged of
         {ok, _MergedObj} ->
             {Merged, GetCore#getcore{merged = Merged}}; % {ok, MObj}
@@ -430,11 +435,11 @@ merge(Replies, AllowMult) ->
 %% a backend not supporting HEAD was called, or the operation was an UPDATE),
 %% or body-less objects.
 %%
--spec merge_heads(list(result()), boolean()) ->
+-spec merge_heads(list(result()), boolean(), boolean()) ->
         {notfound, undefined}|
         {tombstone, riak_object:riak_object()}|{ok, riak_object:riak_object()}|
         {fetch, list(non_neg_integer())}.
-merge_heads(Replies, AllowMult) ->
+merge_heads(Replies, AllowMult, ReturnBody) ->
     % Replies should be a list of [{Idx, {ok, RObj}]
     IdxObjs = [{I, {ok, RObj}} || {I, {ok, RObj}} <- Replies],
     % Those that don't pattern match will be not_found
@@ -443,16 +448,15 @@ merge_heads(Replies, AllowMult) ->
             {notfound, undefined};
         _ ->
             {BestReplies, FetchIdxObjL} = riak_object:find_bestobject(IdxObjs),
-            case FetchIdxObjL of
-                [] ->
+            case {FetchIdxObjL, ReturnBody} of
+                {_, false} ->
+                    merge(BestReplies ++ FetchIdxObjL, AllowMult);
+                {[], true} ->
                     merge(BestReplies, AllowMult);
-                IdxL ->
+                {IdxL, true} ->
                     {fetch, lists:map(fun({Idx, _Rsp}) ->  Idx end, IdxL)}
             end
     end.
-
-
-
 
 %% @private Checks IdxType to see if Idx is a primary.
 %% If the Idx is not in the IdxType the world must be
@@ -474,36 +478,6 @@ num_pr(GetCore = #getcore{num_pok=NumPOK, idx_type=IdxType}, Idx) ->
             GetCore
     end.
 
-%% @private Print a warning if objects are not equal. Only called on case of no read-repair
-%% This situation could happen with pre 2.1 vclocks in very rare cases. Fixing the object
-%% requires the user to rewrite the object in 2.1+ of Riak. Logic is enabled when capabilities
-%% returns a version(all nodes at least 2.2) and the entropy_manager is not yet version 0
-% maybe_log_old_vclock(Results) ->
-%     case riak_core_capability:get({riak_kv, object_hash_version}, legacy) of
-%         legacy ->
-%             ok;
-%         0 ->
-%             Version = riak_kv_entropy_manager:get_version(),
-%             case [RObj || {_Idx, {ok, RObj}} <- Results] of
-%                 [] ->
-%                     ok;
-%                 [_] ->
-%                     ok;
-%                 _ when Version == 0 ->
-%                     ok;
-%                 [R1|Rest] ->
-%                     case [RObj || RObj <- Rest, not riak_object:equal(R1, RObj)] of
-%                         [] ->
-%                             ok;
-%                         _ ->
-%                             object:warning("Bucket: ~p Key: ~p should be rewritten to guarantee
-%                               compatability with AAE version 0",
-%                                 [riak_object:bucket(R1),riak_object:key(R1)])
-%                     end
-%             end;
-%         _ ->
-%             ok
-%     end.
 
 -ifdef(TEST).
 

@@ -346,11 +346,16 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
             NFOk0 = get_option(notfound_ok, Options, default),
             NotFoundOk = riak_kv_util:expand_value(notfound_ok, NFOk0, BucketProps),
             DeletedVClock = get_option(deletedvclock, Options, false),
-            GetCore = riak_kv_get_core:init(N, R, PR, FailThreshold,
-                                            NotFoundOk, AllowMult,
-                                            DeletedVClock, IdxType,
-                                            ExpClock,
-                                            NodeConfirms),
+            ReturnBody = get_option(return_body, Options, true),
+            GetCore =
+                riak_kv_get_core:init(
+                    N, R, PR, FailThreshold,
+                    NotFoundOk, AllowMult,
+                    DeletedVClock, IdxType,
+                    ExpClock,
+                    NodeConfirms,
+                    ReturnBody
+                ),
             new_state_timeout(execute, StateData#state{get_core = GetCore,
                                                        timeout = Timeout,
                                                        req_id = ReqId});

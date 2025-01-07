@@ -155,36 +155,39 @@
          delete_resource/2
         ]).
 
--record(ctx, {api_version,  %% integer() - Determine which version of the API to use.
-              bucket_type,  %% binary() - Bucket type (from uri)
-              type_exists,  %% bool() - Type exists as riak_core_bucket_type
-              bucket,       %% binary() - Bucket name (from uri)
-              key,          %% binary() - Key (from uri)
-              client,       %% riak_client() - the store client
-              r,            %% integer() - r-value for reads
-              w,            %% integer() - w-value for writes
-              dw,           %% integer() - dw-value for writes
-              rw,           %% integer() - rw-value for deletes
-              pr,           %% integer() - number of primary nodes required in preflist on read
-              pw,           %% integer() - number of primary nodes required in preflist on write
-              node_confirms,%% integer() - number of physically diverse nodes required in preflist on write
-              basic_quorum, %% boolean() - whether to use basic_quorum
-              notfound_ok,  %% boolean() - whether to treat notfounds as successes
-              asis,         %% boolean() - whether to send the put without modifying the vclock
-              sync_on_write,%% string() - sync on write behaviour to pass to backend
-              prefix,       %% string() - prefix for resource uris
-              riak,         %% local | {node(), atom()} - params for riak client
-              doc,          %% {ok, riak_object()}|{error, term()} - the object found
-              vtag,         %% string() - vtag the user asked for
-              bucketprops,  %% proplist() - properties of the bucket
-              links,        %% [link()] - links of the object
-              index_fields, %% [index_field()]
-              method,       %% atom() - HTTP method for the request
-              ctype,        %% string() - extracted content-type provided
-              charset,      %% string() | undefined - extracted character set provided
-              timeout,      %% integer() - passed-in timeout value in ms
-              security      %% security context
-             }).
+-record(ctx,
+    {
+        api_version,  %% integer() - Determine which version of the API to use.
+        bucket_type,  %% binary() - Bucket type (from uri)
+        type_exists,  %% bool() - Type exists as riak_core_bucket_type
+        bucket,       %% binary() - Bucket name (from uri)
+        key,          %% binary() - Key (from uri)
+        client,       %% riak_client() - the store client
+        r,            %% integer() - r-value for reads
+        w,            %% integer() - w-value for writes
+        dw,           %% integer() - dw-value for writes
+        rw,           %% integer() - rw-value for deletes
+        pr,           %% integer() - number of primary nodes required in preflist on read
+        pw,           %% integer() - number of primary nodes required in preflist on write
+        node_confirms,%% integer() - number of physically diverse nodes required in preflist on write
+        basic_quorum, %% boolean() - whether to use basic_quorum
+        notfound_ok,  %% boolean() - whether to treat notfounds as successes
+        asis,         %% boolean() - whether to send the put without modifying the vclock
+        sync_on_write,%% string() - sync on write behaviour to pass to backend
+        prefix,       %% string() - prefix for resource uris
+        riak,         %% local | {node(), atom()} - params for riak client
+        doc,          %% {ok, riak_object()}|{error, term()} - the object found
+        vtag,         %% string() - vtag the user asked for
+        links,        %% [link()] - links of the object
+        index_fields, %% [index_field()]
+        method,       %% atom() - HTTP method for the request
+        ctype,        %% string() - extracted content-type provided
+        charset,      %% string() | undefined - extracted character set provided
+        timeout,      %% integer() - passed-in timeout value in ms
+        security,     %% security context
+        not_modified  %% decoded vector clock to be used in not_modified check
+    }
+).
 
 -ifdef(namespaced_types).
 -type riak_kv_wm_object_dict() :: dict:dict().
@@ -204,7 +207,6 @@
 
 -type link() :: {{Bucket::binary(), Key::binary()}, Tag::binary()}.
 
--define(DEFAULT_TIMEOUT, 60000).
 -define(V1_BUCKET_REGEX, "/([^/]+)>; ?rel=\"([^\"]+)\"").
 -define(V1_KEY_REGEX, "/([^/]+)/([^/]+)>; ?riaktag=\"([^\"]+)\"").
 -define(V2_BUCKET_REGEX, "</buckets/([^/]+)>; ?rel=\"([^\"]+)\"").
@@ -324,7 +326,7 @@ validate_resource(RD, Ctx, _Perm) ->
 %% @doc Detects whether fetching the requested object results in an
 %% error.
 validate_doc(RD, Ctx) ->
-    DocCtx = ensure_doc(Ctx),
+    DocCtx = ensure_doc(RD, Ctx),
     case DocCtx#ctx.doc of
         {error, Reason} ->
             handle_common_error(Reason, RD, DocCtx);
@@ -637,7 +639,7 @@ content_types_provided(RD, Ctx=#ctx{method=Method})
             when Method =:= 'DELETE' ->
     {[{"text/html", to_html}], RD, Ctx};
 content_types_provided(RD, Ctx0) ->
-    DocCtx = ensure_doc(Ctx0),
+    DocCtx = ensure_doc(RD, Ctx0),
     %% we can assume DocCtx#ctx.doc is {ok,Doc} because of malformed_request
     case select_doc(DocCtx) of
         {MD, V} ->
@@ -666,7 +668,7 @@ charsets_provided(RD, Ctx=#ctx{method=Method})
             when Method =:= 'DELETE' ->
     {no_charset, RD, Ctx};
 charsets_provided(RD, Ctx0) ->
-    DocCtx = ensure_doc(Ctx0),
+    DocCtx = ensure_doc(RD, Ctx0),
     case DocCtx#ctx.doc of
         {ok, _} ->
             case select_doc(DocCtx) of
@@ -691,13 +693,7 @@ charsets_provided(RD, Ctx0) ->
 %%      used in the PUT request that stored the document in Riak, or
 %%      "identity" and "gzip" if no encoding was specified at PUT-time.
 encodings_provided(RD, Ctx0) ->
-    DocCtx =
-        case Ctx0#ctx.method of
-            UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
-                Ctx0;
-            _ ->
-                ensure_doc(Ctx0)
-        end,
+    DocCtx = ensure_doc(RD, Ctx0),
     case DocCtx#ctx.doc of
         {ok, _} ->
             case select_doc(DocCtx) of
@@ -753,18 +749,10 @@ content_types_accepted(RD, Ctx) ->
 %%      Documents exists if a read request to Riak returns {ok, riak_object()},
 %%      and either no vtag query parameter was specified, or the value of the
 %%      vtag param matches the vtag of some value of the Riak object.
-resource_exists(RD, Ctx0) ->
-    Method = Ctx0#ctx.method,
-    ToFetch =
-        case Method of
-            UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
-                conditional_headers_present(RD) == true;
-            _ ->
-                true
-        end,
-    case ToFetch of
+resource_exists(RD, Ctx0) -> 
+    case element(1, doc_required(RD, Ctx0)) of
         true ->
-            DocCtx = ensure_doc(Ctx0),
+            DocCtx = ensure_doc(RD, Ctx0),
             case DocCtx#ctx.doc of
                 {ok, Doc} ->
                     case DocCtx#ctx.vtag of
@@ -789,13 +777,23 @@ resource_exists(RD, Ctx0) ->
         false ->
             % Fake it - rather than fetch to see.  If we're deleting we assume
             % it does exist, and if PUT/POST, assume it doesn't
-            case Method of
+            case Ctx0#ctx.method of
                 'DELETE' ->
                     {true, RD, Ctx0};
                 _ ->
                     {false, RD, Ctx0}
             end
     end.
+
+-spec doc_required(request_data(), context()) -> {boolean(), boolean()}.
+doc_required(RD, Context) ->
+    case Context#ctx.method of
+        UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
+            {conditional_headers_present(RD) == true, false};
+        _ ->
+            {true, true}
+    end.
+
 
 -spec is_conflict(request_data(), context()) ->
         {boolean(), request_data(), context()}.
@@ -811,7 +809,10 @@ is_conflict(RD, Ctx) ->
                             base64:decode(NotModifiedClock)),
                     CurrentClock =
                         riak_object:vclock(Obj),
-                    {not vclock:equal(InClock, CurrentClock), RD, Ctx};
+                    {not vclock:equal(InClock, CurrentClock),
+                        RD,
+                        Ctx#ctx{not_modified = InClock}
+                    };
                 _ ->
                     {true, RD, Ctx}
             end;
@@ -873,7 +874,9 @@ accept_doc_body(
         Ctx=#ctx{
             bucket_type=T, bucket=B, key=K, client=C,
             links=L, ctype=CType, charset=Charset,
-            index_fields=IF}) ->
+            index_fields=IF,
+            not_modified = IfNotModified
+        }) ->
     Doc0 = riak_object:new(riak_kv_wm_utils:maybe_bucket_type(T,B), K, <<>>),
     VclockDoc = riak_object:set_vclock(Doc0, decode_vclock_header(RD)),
     UserMeta = extract_user_meta(RD),
@@ -902,14 +905,68 @@ accept_doc_body(
             _ -> []
         end,
     Options = make_options(Options0, Ctx),
-    NoneMatch = (wrq:get_req_header("If-None-Match", RD) =/= undefined),
-    Options2 = case riak_kv_util:consistent_object(B) and NoneMatch of
-                   true ->
-                       [{if_none_match, true}|Options];
-                   false ->
-                       Options
-               end,
-    case riak_client:put(Doc, Options2, C) of
+    IfNoneMatch = (wrq:get_req_header("If-None-Match", RD) =/= undefined),
+    IsConsistent = riak_kv_util:consistent_object(B),
+    CondPutMode =
+        application:get_env(riak_kv, conditional_put_mode, api_only),
+    MakeTokenRequest = CondPutMode =/= api_only,
+
+    {CondPutOptions, SessionToken} =
+        case {IfNotModified, IfNoneMatch, IsConsistent, MakeTokenRequest} of
+            {_, true, true, _} ->
+                {[{if_none_match, true}], none};
+            {undefined, false, false, _} ->
+                {[], none};
+            {NotMod, NoneMatch, _, true} ->
+                TokenResult =
+                    riak_kv_token_session:session_request_retry({B, K}),
+                case TokenResult of
+                    {true, Token} ->
+                        GetOpts =
+                            [
+                                {basic_quorum, true},
+                                {return_body, false},
+                                {deleted_vclock, true}
+                            ],
+                        Condition =
+                            case NotMod of
+                                undefined ->
+                                    {undefined, true, GetOpts};
+                                InClock ->
+                                    {{true, InClock}, undefined, GetOpts}
+                            end,
+                        {[{condition_check, Condition}], Token};
+                    _ ->
+                        %% Pass the condition downstream, but currently that
+                        %% condition is ignored
+                        case {NotMod, NoneMatch} of
+                            {_, true} ->
+                                {[{if_none_match, true}], none};
+                            {InClock, _} ->
+                                {[{if_not_modified, InClock}], none}
+                        end
+                end;
+            {NotMod, NoneMatch, _, false} ->
+                %% Pass the condition downstream, but currently that
+                %% condition is ignored
+                case {NotMod, NoneMatch} of
+                    {_, true} ->
+                        {[{if_none_match, true}], none};
+                    {InClock, _} ->
+                        {[{if_not_modified, InClock}], none}
+                end
+        end,
+    PutRsp =
+        case SessionToken of
+            none ->
+                riak_client:put(Doc, CondPutOptions ++ Options, C);
+            _ ->
+                riak_kv_token_session:session_use(
+                    SessionToken, put, [Doc, CondPutOptions ++ Options]
+                )
+        end,
+    riak_kv_token_session:session_release(SessionToken),
+    case PutRsp of
         {error, Reason} ->
             handle_common_error(Reason, RD, Ctx);
         ok ->
@@ -1146,29 +1203,37 @@ decode_vclock_header(RD) ->
              Head -> riak_object:decode_vclock(base64:decode(Head))
     end.
 
--spec ensure_doc(context()) -> context().
+-spec ensure_doc(request_data(), context()) -> context().
 %% @doc Ensure that the 'doc' field of the context() has been filled
 %%      with the result of a riak_client:get request.  This is a
 %%      convenience for memoizing the result of a get so it can be
 %%      used in multiple places in this resource, without having to
 %%      worry about the order of executing of those places.
-ensure_doc(Ctx=#ctx{doc=undefined, key=undefined}) ->
+ensure_doc(_RD, Ctx=#ctx{doc=undefined, key=undefined}) ->
     Ctx#ctx{doc={error, notfound}};
-ensure_doc(Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
+ensure_doc(RD, Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
                     basic_quorum=Quorum, notfound_ok=NotFoundOK}) ->
     case Ctx#ctx.type_exists of
         true ->
-            Options0 =
-                [deletedvclock,
-                {basic_quorum, Quorum},
-                {notfound_ok, NotFoundOK}],
-            Options = make_options(Options0, Ctx),
-            BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
-            Ctx#ctx{doc=riak_client:get(BT, K, Options, C)};
+            case doc_required(RD, Ctx) of
+                {true, BodyRequired} ->
+                    Options0 =
+                        [
+                        deletedvclock,
+                        {basic_quorum, Quorum},
+                        {return_body, BodyRequired},
+                        {notfound_ok, NotFoundOK}
+                    ],
+                    Options = make_options(Options0, Ctx),
+                    BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
+                    Ctx#ctx{doc=riak_client:get(BT, K, Options, C)};
+                _ ->
+                    Ctx
+            end;
         false ->
             Ctx#ctx{doc={error, bucket_type_unknown}}
     end;
-ensure_doc(Ctx) -> Ctx.
+ensure_doc(_RD, Ctx) -> Ctx.
 
 -spec delete_resource(#wm_reqdata{}, context()) ->
     {true, #wm_reqdata{}, context()}.
@@ -1419,6 +1484,11 @@ handle_common_error(Reason, RD, Ctx) ->
             {{halt, 503}, wrq:append_to_response_body(Msg, RD), Ctx};
         {error, failed} ->
             {{halt, 412}, RD, Ctx};
+        {error, "match_found"} ->
+            {{halt, 412}, RD, Ctx};
+        {error, "modified"} ->
+            {{halt, 409}, RD, Ctx};
+
         {error, Err} ->
             {{halt, 500},
                 wrq:set_resp_header(?HEAD_CTYPE, "text/plain",

@@ -671,13 +671,15 @@ get_fsm_proc(ReqId, #params{n = N, r = R}) ->
     DeletedVclock = true,
     ExpectedVclock = false,
     NodeConfirms = 0,
+    ReturnBody = true,
     GetCore = riak_kv_get_core:init(N, R,
                                     0, %% SLF hack
                                     FailThreshold,
                                     NotFoundOk, AllowMult, DeletedVclock,
                                     [{Idx, primary} || Idx <- lists:seq(1, N)], %% SLF hack
                                     ExpectedVclock,
-                                    NodeConfirms
+                                    NodeConfirms,
+                                    ReturnBody
                                    ),
     #proc{name = {get_fsm, ReqId}, handler = get_fsm,
           procst = #getfsmst{getcore = GetCore}}.
