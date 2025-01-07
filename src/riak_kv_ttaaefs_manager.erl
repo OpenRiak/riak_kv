@@ -1060,7 +1060,7 @@ local_sender({fetch_clocks_range, B0, KR, SF, MR}, C, ReturnFun, _NVal) ->
 
 
 -spec run_localfold(
-    riak_kv_aaefold:query_definition(),
+    riak_kv_clusteraae_fsm:query_definition(),
     riak_client:riak_client(),
     fun((any()) -> ok)) ->  fun(() -> ok).
 run_localfold(Query, Client, ReturnFun) ->

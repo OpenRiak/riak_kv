@@ -90,7 +90,7 @@
 -type item_filter() :: function().
 -type coverage_filter() :: riak_kv_coverage_filter:filter().
 -type query() :: riak_index:query_def().
--type aae_query() :: riak_kv_aaefold:query_definition().
+-type aae_query() :: riak_kv_clusteraae_fsm:query_definition().
 
 -record(riak_kv_put_req_v1,
         { bkey :: bucket_key(),
