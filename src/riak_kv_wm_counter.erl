@@ -68,8 +68,6 @@
 %%    </dl>
 %% Please see [http://docs.basho.com] for details of all the quorum values and there effect.
 
-
-
 -module(riak_kv_wm_counter).
 
 %% webmachine resource exports
@@ -114,7 +112,7 @@
 -include_lib("webmachine/include/webmachine.hrl").
 -include("riak_kv_wm_raw.hrl").
 -include("riak_kv_types.hrl").
-
+-include("riak_kv_capability.hrl").
 
 -spec init(proplists:proplist()) -> {ok, context()}.
 %% @doc Initialize this resource.  This function extracts the
@@ -125,7 +123,7 @@ init(Props) ->
               riak=proplists:get_value(riak, Props)}}.
 
 service_available(RD, Ctx=#ctx{riak=RiakProps}) ->
-    case lists:member(pncounter, riak_core_capability:get({riak_kv, crdt}, [])) of
+    case lists:member(pncounter, ?CAP_CRDT_TYPES) of
         true ->
             case riak_kv_wm_utils:get_riak_client(RiakProps, riak_kv_wm_utils:get_client_id(RD)) of
                 {ok, C} ->

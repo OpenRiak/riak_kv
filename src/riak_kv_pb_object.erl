@@ -53,6 +53,7 @@
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 
 -ifdef(TEST).
@@ -110,7 +111,7 @@ encode(Message) ->
 %% @doc process/2 callback. Handles an incoming request message.
 process(rpbgetclientidreq, #state{client=C, client_id=CID} = State) ->
     ClientId =
-        case riak_core_capability:get({riak_kv, vnode_vclocks}) of
+        case ?CAP_VNODE_VCLOCKS of
             true ->
                 CID;
             false ->
@@ -120,12 +121,14 @@ process(rpbgetclientidreq, #state{client=C, client_id=CID} = State) ->
     {reply, Resp, State};
 
 process(#rpbsetclientidreq{client_id = ClientId}, State) ->
-    NewState = case riak_core_capability:get({riak_kv, vnode_vclocks}) of
-                   true -> State#state{client_id=ClientId};
-                   false ->
-                       {ok, C} = riak:local_client(ClientId),
-                       State#state{client = C}
-               end,
+    NewState =
+        case ?CAP_VNODE_VCLOCKS of
+            true ->
+                State#state{client_id=ClientId};
+            false ->
+                {ok, C} = riak:local_client(ClientId),
+                State#state{client = C}
+        end,
     {reply, rpbsetclientidresp, NewState};
 
 process(#rpbgetreq{bucket = <<>>}, State) ->

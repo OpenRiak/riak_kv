@@ -95,6 +95,7 @@
 -include_lib("riak_kv_map_phase.hrl").
 -include_lib("riak_core_pb.hrl").
 -include("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -2488,9 +2489,8 @@ encode_handoff_item({B, K}, V) ->
     %% before sending data to another node change binary version
     %% to one supported by the cluster. This way we don't send
     %% unsupported formats to old nodes
-    ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
     try
-        Value  = riak_object:to_binary_version(ObjFmt, B, K, V),
+        Value  = riak_object:to_binary_version(?CAP_OBJECT_FORMAT, B, K, V),
         encode_binary_object(B, K, Value)
     catch Error:Reason ->
             ?LOG_WARNING("Handoff encode failed: ~p:~p",
@@ -4068,7 +4068,7 @@ object_info({Bucket, _Key}=BKey) ->
 %% Encoding and decoding selection:
 
 handoff_data_encoding_method() ->
-    riak_core_capability:get({riak_kv, handoff_data_encoding}, encode_zlib).
+    ?CAP_HANDOFF_DATA_ENCODING.
 
 %% Decode a binary object. Assumes data is in new format, legacy no longer 
 %% format supported
@@ -4177,7 +4177,7 @@ object_format(Mod, ModState) ->
         true ->
             v1;
         false ->
-            riak_core_capability:get({riak_kv, object_format}, v0)
+            ?CAP_OBJECT_FORMAT
     end.
 
 sanitize_bkey({{<<"default">>, B}, K}) ->

@@ -70,6 +70,7 @@
          handle_corrupted_object/4]).
 
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), non_neg_integer()}.
@@ -547,7 +548,7 @@ check_upgrade_env() ->
 
 -spec get_cap_hash_version() -> version().
 get_cap_hash_version() ->
-    riak_core_capability:get({riak_kv, object_hash_version}, legacy).
+    ?CAP_OBJECT_HASH_VERSION.
 
 -spec find_version(list(), index()) -> version().
 find_version(Root, Index) ->

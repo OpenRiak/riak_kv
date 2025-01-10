@@ -28,6 +28,7 @@
 -endif.
 -include_lib("riak_kv_vnode.hrl").
 -include("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -compile({nowarn_deprecated_function, 
             [{gen_fsm, start_link, 3},
@@ -189,7 +190,7 @@ get_put_coordinator_failure_timeout() ->
 
 make_ack_options(Options) ->
     AckOption = get_option(ack_execute, Options),
-    AckCap = riak_core_capability:get({riak_kv, put_fsm_ack_execute}, disabled),
+    AckCap = ?CAP_PUTFSM_ACK,
     RetryCoord =
         app_helper:get_env(riak_kv, retry_put_coordinator_failure, true) andalso
         get_option(retry_put_coordinator_failure, Options, true),
@@ -1298,7 +1299,7 @@ get_soft_limit_option(Options) ->
     %% The logic here is to be as safe as possible. If caps system is
     %% unavailble, then assume soft-limits are unsupported. If
     %% capability _is_ available AND supported, then the value will be true
-    SoftLimitSupported = riak_core_capability:get({riak_kv, put_soft_limit}, false),
+    SoftLimitSupported = ?CAP_PUTFSM_SOFTLIMIT,
     %% both the system (post forward) and the client (via options) can
     %% turn off soft-limit checking. However, by default, we should
     %% use them (if supported) - unless it is explicitly disabled by toggling the

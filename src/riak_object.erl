@@ -28,6 +28,7 @@
 -endif.
 -include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
+-include("riak_kv_capability.hrl").
 
 -export_type([riak_object/0, proxy_object/0, bucket/0, key/0, value/0, binary_version/0, index_value/0]).
 
@@ -1674,7 +1675,7 @@ get_last_modified(MD) ->
 %% Fetch the preferred vclock encoding method:
 -spec vclock_encoding_method() -> atom().
 vclock_encoding_method() ->
-    riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib).
+    ?CAP_VCLOCK_ENCODING.
 
 %% Encode a vclock in accordance with our capability setting:
 encode_vclock(VClock) ->

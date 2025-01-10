@@ -61,6 +61,7 @@
          terminate/2, code_change/3]).
 
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 -ifdef(TEST).
 -export([query_and_set_aae_throttle/1]).        % for eunit twiddle-testing
@@ -636,7 +637,7 @@ schedule_tick() ->
 maybe_tick(State) ->
     case enabled() of
         true ->
-            case riak_core_capability:get({riak_kv, anti_entropy}, disabled) of
+            case ?CAP_LEGACY_AAE of
                 disabled ->
                     NextState = State;
                 enabled_v1 ->
@@ -676,7 +677,7 @@ maybe_poke_tree(State) ->
 -spec maybe_start_upgrade(riak_core_ring(),state()) -> state().
 maybe_start_upgrade(Ring, State=#state{trees=Trees, version=legacy, pending_version=legacy}) ->
     Indices = riak_core_ring:my_indices(Ring),
-    case riak_core_capability:get({riak_kv, object_hash_version}, legacy) of
+    case ?CAP_OBJECT_HASH_VERSION of
         0 when length(Trees) == length(Indices) ->
             maybe_upgrade(State);
         _ ->

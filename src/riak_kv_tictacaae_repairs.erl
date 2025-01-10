@@ -25,6 +25,7 @@
 -export([prompt_tictac_exchange/7, log_tictac_result/4, aae_loglevels/0]).
 
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 -define(EXCHANGE_PAUSE_MS, 1000).
 -define(AAE_MAX_RESULTS, 128).
@@ -290,8 +291,7 @@ analyse_repairs(KeyClockList, MaxRepairs) ->
     RepairList = lists:foldl(fun analyse_repair/2, [], KeyClockList),
     EnableKeyRange =
         app_helper:get_env(riak_kv, tictacaae_enablekeyrange, false),
-    ClusterCapable =
-        riak_core_capability:get({riak_kv, tictacaae_prompted_repairs}, false),
+    ClusterCapable = ?CAP_TICTACAAE_REPAIRS,
     analyse_repairs(RepairList, MaxRepairs, EnableKeyRange, ClusterCapable).
 
 -spec analyse_repairs(repair_list(), non_neg_integer(), boolean(), boolean())
