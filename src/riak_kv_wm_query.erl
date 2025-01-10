@@ -620,7 +620,7 @@ encode_key(Key, Encode) ->
 encode_key_withterm({TermKeyTuple}, Encode) when is_tuple(TermKeyTuple) ->
     encode_key_withterm(TermKeyTuple, Encode);
 encode_key_withterm({Term, Key}, Encode) when is_binary(Term), is_binary(Key) ->
-    ["{", [Encode(Term, Encode), $: | Encode(Key, Encode)], "}"];
+    [123, [Encode(Term, Encode), $: | Encode(Key, Encode)], 125];
 encode_key_withterm(Result, Encode) ->
     riak_kv_wm_json:encode_value(Result, Encode).
 
