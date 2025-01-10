@@ -561,9 +561,11 @@ check_root_version(Root, Index, Version) when is_integer(Version) ->
             Version;
         false ->
             legacy
-    end;
-check_root_version(_Root, _Index, Version) ->
-    Version.
+    end
+%     ;
+% check_root_version(_Root, _Index, Version) ->
+%     Version
+    .
 
 %% @doc Init the trees.
 %%

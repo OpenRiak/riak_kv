@@ -20,8 +20,6 @@
 %%
 %% -------------------------------------------------------------------
 
--define(DEFAULT_RT, head).
-
 -define(CAP_VNODE_VCLOCKS, riak_core_capability:get({riak_kv, vnode_vclocks})).
 -define(CAP_RPC_VNODE_VCLOCKS(Node), 
     case rpc:call(Node, riak_core_capability, get, [{riak_kv, vnode_vclocks}]) of
@@ -39,38 +37,46 @@
     riak_core_capability:get({riak_kv, crdt}, [])
 ).
 
--define(CAP_2I_VERSION,
-    riak_core_capability:get({riak_kv, secondary_index_version}, v1)
-).
+% -define(CAP_2I_VERSION,
+%     riak_core_capability:get({riak_kv, secondary_index_version}, v1)
+% ).
+-define(CAP_2I_VERSION, v3).
 -define(CAP_KEYS_BACKPRESSURE,
     riak_core_capability:get({riak_kv, listkeys_backpressure}, false)
 ).
--define(CAP_INDEX_BACKPRESSURE,
-    riak_core_capability:get({riak_kv, index_backpressure}, false)
-).
+% -define(CAP_INDEX_BACKPRESSURE,
+%     riak_core_capability:get({riak_kv, index_backpressure}, false)
+% ).
+-define(CAP_INDEX_BACKPRESSURE, true).
 
--define(CAP_OBJECT_FORMAT,
-    riak_core_capability:get({riak_kv, object_format}, v0)
-).
--define(CAP_VCLOCK_ENCODING,
-    riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib)
-).
--define(CAP_HANDOFF_DATA_ENCODING,
-    riak_core_capability:get({riak_kv, handoff_data_encoding}, encode_zlib)
-).
--define(CAP_OBJECT_HASH_VERSION,
-    riak_core_capability:get({riak_kv, object_hash_version}, legacy)
-).
+% -define(CAP_OBJECT_FORMAT,
+%     riak_core_capability:get({riak_kv, object_format}, v0)
+% ).
+-define(CAP_OBJECT_FORMAT, app_helper:get_env(riak_kv, object_format, v1)).
 
--define(CAP_GETREQUEST_TYPE,
-    riak_core_capability:get({riak_kv, get_request_type}, ?DEFAULT_RT)
-).
+% -define(CAP_VCLOCK_ENCODING,
+%     riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib)
+% ).
+-define(CAP_VCLOCK_ENCODING, encode_raw).
+% -define(CAP_HANDOFF_DATA_ENCODING,
+%     riak_core_capability:get({riak_kv, handoff_data_encoding}, encode_zlib)
+% ).
+-define(CAP_HANDOFF_DATA_ENCODING, encode_raw).
+% -define(CAP_OBJECT_HASH_VERSION,
+%     riak_core_capability:get({riak_kv, object_hash_version}, legacy)
+% ).
+-define(CAP_OBJECT_HASH_VERSION, 0).
+% -define(CAP_GETREQUEST_TYPE,
+%     riak_core_capability:get({riak_kv, get_request_type}, head)
+% ).
+-define(CAP_GETREQUEST_TYPE, head).
 -define(CAP_MAPRED_2I_PIPE,
     riak_core_capability:get({riak_kv, mapred_2i_pipe}, false)
 ).
--define(CAP_PUTFSM_ACK,
-    riak_core_capability:get({riak_kv, put_fsm_ack_execute}, disabled)
-).
+% -define(CAP_PUTFSM_ACK,
+%     riak_core_capability:get({riak_kv, put_fsm_ack_execute}, disabled)
+% ).
+-define(CAP_PUTFSM_ACK, enabled).
 -define(CAP_PUTFSM_SOFTLIMIT,
     riak_core_capability:get({riak_kv, put_soft_limit}, false)
 ).

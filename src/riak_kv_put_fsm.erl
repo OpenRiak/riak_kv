@@ -190,17 +190,16 @@ get_put_coordinator_failure_timeout() ->
 
 make_ack_options(Options) ->
     AckOption = get_option(ack_execute, Options),
-    AckCap = ?CAP_PUTFSM_ACK,
     RetryCoord =
         app_helper:get_env(riak_kv, retry_put_coordinator_failure, true) andalso
         get_option(retry_put_coordinator_failure, Options, true),
-    case {AckOption, AckCap, RetryCoord} of
+    case {AckOption, ?CAP_PUTFSM_ACK, RetryCoord} of
         {Pid, _, _} when is_pid(Pid) ->
             %% Some process (probably on another node) is already waiting
             %% for an ack, no need to monitor here.
             {false, Options};
-        {undefined, disabled, _} ->
-            {false, Options};
+        % {undefined, disabled, _} ->
+        %     {false, Options};
         {undefined, _, false} ->
             {false, Options};
         {undefined, enabled, true} ->
