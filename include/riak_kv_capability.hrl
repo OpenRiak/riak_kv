@@ -57,7 +57,7 @@
 % -define(CAP_VCLOCK_ENCODING,
 %     riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib)
 % ).
--define(CAP_VCLOCK_ENCODING, encode_raw).
+-define(CAP_VCLOCK_ENCODING, encode_zlib).
 % -define(CAP_HANDOFF_DATA_ENCODING,
 %     riak_core_capability:get({riak_kv, handoff_data_encoding}, encode_zlib)
 % ).
