@@ -2460,14 +2460,14 @@ handoff_started(SrcPartition, WorkerPid) ->
             MaybeFoldHeads =
                 application:get_env(riak_kv, repair_deferred, false)
                 andalso
-                ?CAP_OBJECT_FORMAT,
+                ?CAP_OBJECT_FORMAT == v1,
             RepairOpts =
                 case MaybeFoldHeads of
                     true ->
                         [
                             {
                                 repair,
-                                [{fold_heads, true}, {check_presence, false}]
+                                [{fold_heads, true}, {check_presence, true}]
                             }
                         ];
                     _ ->
@@ -2510,7 +2510,7 @@ encode_handoff_item({B, K}, V) ->
         encode_binary_object(B, K, Value)
     catch Error:Reason ->
             ?LOG_WARNING(
-                "Handoff encode failed: ~p:~p", [Error, Reason]),
+                "Handoff encode failed: ~0p:~0p", [Error, Reason]),
             riak_kv_reader:request_read({B, K}),
             corrupted
     end.
