@@ -2457,7 +2457,23 @@ handoff_starting({_HOType, TargetNode}=HandoffDest, State=#state{handoffs_reject
 handoff_started(SrcPartition, WorkerPid) ->
     case maybe_get_vnode_lock(SrcPartition, WorkerPid) of
         ok ->
-            FoldOpts = [{iterator_refresh, true}],
+            MaybeFoldHeads =
+                application:get_env(riak_kv, repair_deferred, false)
+                andalso
+                ?CAP_OBJECT_FORMAT,
+            RepairOpts =
+                case MaybeFoldHeads of
+                    true ->
+                        [
+                            {
+                                repair,
+                                [{fold_heads, true}, {check_presence, false}]
+                            }
+                        ];
+                    _ ->
+                        []
+                end,
+            FoldOpts = [{iterator_refresh, true}|RepairOpts],
             {ok, FoldOpts};
         max_concurrency -> {error, max_concurrency}
     end.
@@ -2493,8 +2509,9 @@ encode_handoff_item({B, K}, V) ->
         Value  = riak_object:to_binary_version(?CAP_OBJECT_FORMAT, B, K, V),
         encode_binary_object(B, K, Value)
     catch Error:Reason ->
-            ?LOG_WARNING("Handoff encode failed: ~p:~p",
-                          [Error,Reason]),
+            ?LOG_WARNING(
+                "Handoff encode failed: ~p:~p", [Error, Reason]),
+            riak_kv_reader:request_read({B, K}),
             corrupted
     end.
 
@@ -3648,7 +3665,7 @@ do_fold(Fun, Acc0, Sender, ReqOpts, State=#state{async_folding=AsyncFolding,
 %% then the fold_heads function can be used on the backend if it suppports that
 %% capability.
 maybe_use_fold_heads(Capabilities, Opts, Mod) ->
-    case lists:member(fold_heads, Opts) of
+    case proplists:get_value(fold_heads, Opts) of
         true ->
             case lists:member(fold_heads, Capabilities) of
                 true ->
@@ -3656,7 +3673,7 @@ maybe_use_fold_heads(Capabilities, Opts, Mod) ->
                 false ->
                     fun Mod:fold_objects/4
             end;
-        false ->
+        _ ->
             fun Mod:fold_objects/4
     end.
 

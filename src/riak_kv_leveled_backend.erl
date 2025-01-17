@@ -537,31 +537,37 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
                 KeyRange = 
                     {IdxQuery#riak_kv_index_v3.start_term,
                         IdxQuery#riak_kv_index_v3.end_term},
-                leveled_bookie:book_headfold(Bookie, 
-                                                ?RIAK_TAG, 
-                                                {range, Bucket, KeyRange},
-                                                {FoldHeadsFun, Acc}, 
-                                                CheckPresence, 
-                                                SnapPreFold, 
-                                                SegmentList);
+                leveled_bookie:book_headfold(
+                    Bookie, 
+                    ?RIAK_TAG, 
+                    {range, Bucket, KeyRange},
+                    {FoldHeadsFun, Acc}, 
+                    CheckPresence, 
+                    SnapPreFold, 
+                    SegmentList
+                );
             false ->
                 case proplists:get_value(bucket, Opts) of
                     undefined ->
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
-                                                        {FoldHeadsFun, Acc}, 
-                                                        CheckPresence,
-                                                        SnapPreFold,
-                                                        SegmentList);
+                        leveled_bookie:book_headfold(
+                            Bookie, 
+                            ?RIAK_TAG, 
+                            {FoldHeadsFun, Acc}, 
+                            CheckPresence,
+                            SnapPreFold,
+                            SegmentList
+                        );
                     B ->
                         % Equivalent to a $key query, but without the key range
-                        leveled_bookie:book_headfold(Bookie, 
-                                                        ?RIAK_TAG, 
-                                                        {range, B, all},
-                                                        {FoldHeadsFun, Acc}, 
-                                                        CheckPresence, 
-                                                        SnapPreFold, 
-                                                        SegmentList)
+                        leveled_bookie:book_headfold(
+                            Bookie, 
+                            ?RIAK_TAG, 
+                            {range, B, all},
+                            {FoldHeadsFun, Acc}, 
+                            CheckPresence, 
+                            SnapPreFold, 
+                            SegmentList
+                        )
                 end
         end,
 
