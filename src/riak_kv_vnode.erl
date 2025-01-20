@@ -2467,7 +2467,7 @@ handoff_started(SrcPartition, WorkerPid) ->
                         [
                             {
                                 repair,
-                                [{fold_heads, true}, {check_presence, true}]
+                                [{fold_heads, true}, {check_presence, defer}]
                             }
                         ];
                     _ ->
