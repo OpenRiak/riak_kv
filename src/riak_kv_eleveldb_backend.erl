@@ -365,10 +365,12 @@ delete(Bucket, PrimaryKey, IndexSpecs, #state{ref=Ref,
     end.
 
 %% @doc Fold over all the buckets
--spec fold_buckets(riak_kv_backend:fold_buckets_fun(),
-                   any(),
-                   [],
-                   state()) -> {ok, any()} | {async, fun()}.
+-spec fold_buckets(
+    riak_kv_backend:fold_buckets_fun(),
+    any(),
+    [],
+    state()) ->
+        {ok, any()} | {async, fun(() -> any())}.
 fold_buckets(FoldBucketsFun, Acc, Opts, #state{fold_opts=FoldOpts,
                                                ref=Ref}) ->
     FoldFun = fold_buckets_fun(FoldBucketsFun),
@@ -393,10 +395,12 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{fold_opts=FoldOpts,
     end.
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, term()} | {async, fun()}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, term()} | {async, fun(() -> any())}.
 fold_keys(FoldKeysFun, Acc, Opts, #state{fold_opts=FoldOpts,
                                          fixed_indexes=FixedIdx,
                                          legacy_indexes=WriteLegacyIdx,
@@ -508,10 +512,12 @@ legacy_key_fold(_Ref, _FoldFun, Acc, _FoldOpts, _Query) ->
     Acc.
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) -> 
+        {ok, any()} | {async, fun(() -> any())}.
 fold_objects(FoldObjectsFun, Acc, Opts, #state{fold_opts=FoldOpts,
                                                ref=Ref}) ->
     %% Figure out how we should limit the fold: by bucket, by

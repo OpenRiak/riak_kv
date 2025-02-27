@@ -329,10 +329,12 @@ fold_keys(FoldKeysFun, Accum, Opts, State) ->
     end.
 
 %% @doc Fold over all the objects for one or all buckets, yes, sir!
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) -> 
+        {ok, any()} | {async, fun(() -> any())}.
 fold_objects(FoldObjectsFun, Accum, Opts, State) ->
     KeyCount = State#state.key_count,
     ValueSize = State#state.default_size,

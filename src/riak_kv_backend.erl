@@ -24,12 +24,12 @@
 
 -export([callback_after/3]).
 
--type fold_buckets_fun() :: fun((binary(), any()) -> any() | no_return()).
--type fold_keys_fun() :: fun((binary(), binary(), any()) -> any() |
-                                                            no_return()).
--type fold_objects_fun() :: fun((binary(), binary(), term(), any()) ->
-                                       any() |
-                                       no_return()).
+-type fold_buckets_fun() ::
+    fun((binary(), any()) -> any() | no_return()).
+-type fold_keys_fun() :: 
+    fun((binary(), binary(), any()) -> any() | no_return()).
+-type fold_objects_fun() :: 
+    fun((binary(), binary(), term(), any()) -> any() | no_return()).
 
 -type index_spec() :: {add | remove, binary(), riak_object:index_value()}.
 
@@ -43,7 +43,13 @@
 -type state() :: term().
 -type fold_acc() :: term().
 -type fold_opts() :: [term()]. %% TODO maybe more specific? [{atom(), term()}]?
--type fold_result() :: {ok, fold_acc()} | {async, fun()} | {error, term()}.
+-type fold_result() :: 
+    {ok, fold_acc()} | {async, fun(() -> any())} | {error, term()}.
+
+-type data_size_fun() ::
+    fun(() -> {non_neg_integer(), bytes | objects} | undefined).
+
+-optional_callbacks([data_size/1]).
 
 -callback api_version() -> {ok, number()}.
 
@@ -77,6 +83,11 @@
 -callback status(state()) -> [{atom(), term()}].
 
 -callback callback(reference(), Msg :: term(), state()) -> {ok, state()}.
+
+-callback data_size(state()) -> 
+    {non_neg_integer(), bytes | objects} |
+    {data_size_fun(), dynamic | async} |
+    undefined.
 
 %% Queue a callback for the backend after Time ms.
 -spec callback_after(integer(), reference(), term()) -> reference().
