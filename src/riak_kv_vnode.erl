@@ -3829,7 +3829,7 @@ aae_update(Bucket, Key, UpdObj, PrevObj, UpdObjBin,
                     use_binary ->
                         {VC, _Sz, _Sc, _LMDs, _SibBin} = 
                             riak_object:summary_from_binary(UpdObjBin),
-                        lists:usort(VC);
+                        lists:sort(VC);
                     _ ->
                         get_clock(UpdObj)
                 end,

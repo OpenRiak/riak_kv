@@ -551,4 +551,11 @@ riak_kv_ttaaefs_manager:trigger_tree_repairs() % Trigger tree repairs on this no
 riak_kv_ttaaefs_manager:disable_tree_repairs() % Reverse
 ```
 
-Normally bad caches are a result of a tree rebuilds.  It such triggered repairs are required frequently, consider reducing the frequency of aae tree cache rebuilds: `tictacaae_rebuildwait = 1344` - increases the wait between rebuilds to 1344 hours (8 weeks).
+Bad caches are normally discovered via tree rebuilds, as tree rebuilds correct the bad cache (and prior to the rebuild all caches are calculated in the same incorrect way).  If such triggered repairs are required frequently, consider reducing the frequency of aae tree cache rebuilds: `tictacaae_rebuildwait = 1344` - increases the wait between rebuilds to 1344 hours (8 weeks), or upgrade to a version where the root cause is fixed.
+
+Handling of tree repairs differs by version of Riak:
+
+- version < 3.0.10 => there is no workaround other than to rebuild trees entriely that are in need of repair, and the complete repair must be manually triggered (the trigger_tree_repairs/0 function is not available). In these versions this requires a restart of each node, wiping the tree cache from disk whilst it is stopped - or simply waiting for the next scheduled rebuild to complete.  It is strongly recommended to upgrade to at least 3.0.10 before runnning full-sync with nextgenrepl.
+- version < 3.2.3 => there is an automatic workaround, in that full-sync will call trigger_tree_repairs automatically; however it is inefficient (in that some vnodes may unnecessarily rebuild for the broken segments on mulitple occasions).
+- version < 3.2.5 => there is a relatively efficient workaround.
+- version >= 3.2.5 => it is expected that the root cause has been fixed, but the workaround remains in place.
