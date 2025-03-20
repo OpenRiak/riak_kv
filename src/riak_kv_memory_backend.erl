@@ -429,7 +429,8 @@ status(#state{data_ref=DataRef,
 %% @doc Get the size of the memory backend. Returns a dynamic size
 %%      since new writes may appear in an ets fold
 -spec data_size(
-    state()) -> {fun(() -> {non_neg_integer(), objects}|undefined), dynamic}.
+    state()) -> 
+        {fun(() -> {non_neg_integer(), objects} | undefined), dynamic}.
 data_size(#state{data_ref=DataRef}) ->
     F = 
         fun() ->

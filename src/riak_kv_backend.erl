@@ -65,6 +65,8 @@
     {async, fun(() -> fold_acc())} |
     {queue, fun(() -> fold_acc())} |
     {error, term()}.
+-type data_size_fun() ::
+    fun(() -> {non_neg_integer(), bytes | objects} | undefined).
 
 -callback api_version() -> {ok, number()}.
 
@@ -170,6 +172,11 @@
     ) -> fold_result().
 
 -callback callback(reference(), Msg :: term(), state()) -> {ok, state()}.
+
+-callback data_size(state()) -> 
+    {non_neg_integer(), bytes | objects} |
+    {data_size_fun(), dynamic | async} |
+    undefined.
 
 -optional_callbacks(
     [data_size/1, hot_backup/2, flush_put/5, fold_heads/4, complex_query/7]
