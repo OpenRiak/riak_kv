@@ -577,9 +577,9 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
 
 %% @doc Delete all objects from this leveled backend
 -spec drop(state()) -> {ok, state()} | {error, term(), state()}.
-drop(#state{bookie=Bookie, partition=Partition, config=Config}=_State) ->
+drop(#state{bookie=Bookie}=State) ->
     ok = leveled_bookie:book_destroy(Bookie),
-    start(Partition, Config).
+    {ok, State}.
 
 %% @doc Returns true if this leveled backend contains any
 %% non-tombstone values; otherwise returns false.
