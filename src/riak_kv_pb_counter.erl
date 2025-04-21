@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_pb_counter: Expose counters over Protocol Buffers
-%%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -49,7 +48,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -81,12 +82,15 @@ decode(Code, Bin) ->
 encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
-%% @doc process/2 callback. Handles an incoming request message.
+%% @doc process/2,3 callback. Handles an incoming request message.
+process(Req=#rpbcountergetreq{}, State) ->
+    process(Req, State, []).
+
 process(#rpbcountergetreq{bucket=B, key=K, r=R0, pr=PR0,
-                            notfound_ok=NFOk, 
+                            notfound_ok=NFOk,
                             node_confirms=NC,
                             basic_quorum=BQ},
-        #state{client=C} = State) ->
+        #state{client=C} = State, _Options) ->
     case lists:member(pncounter, riak_core_capability:get({riak_kv, crdt}, [])) of
         true ->
             R = decode_quorum(R0),
@@ -112,7 +116,7 @@ process(#rpbcounterupdatereq{bucket=B, key=K,  w=W0, dw=DW0, pw=PW0,
                              node_confirms=NodeConfirms0,
                              amount=CounterOp,
                              returnvalue=RetVal},
-        #state{client=C} = State) ->
+        #state{client=C} = State, _Options) ->
     case {allow_mult(B), lists:member(pncounter, riak_core_capability:get({riak_kv, crdt}, []))} of
         {true, true} ->
             O = riak_kv_crdt:new(B, K, ?V1_COUNTER_TYPE),
@@ -155,9 +159,12 @@ return_value(_) ->
 allow_mult(Bucket) ->
     proplists:get_value(allow_mult, riak_core_bucket:get_bucket(Bucket)).
 
-%% @doc process_stream/3 callback. This service does not create any
+%% @doc process_stream/3,4 callback. This service does not create any
 %% streaming responses and so ignores all incoming messages.
 process_stream(_,_,State) ->
+    {ignore, State}.
+
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 %% ===================================================================

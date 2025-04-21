@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2014 Basho Technologies, Inc.
-%% Copyright (c) 2024 Workday, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -26,11 +26,13 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
--include("riak_kv_wm_raw.hrl").
 
--export([start_link/6, start_link/7, start_link/8, delete/8, generate_tombstone/2]).
+-export([start_link/5, start_link/6, start_link/7, delete/7, generate_tombstone/2]).
 -export_type([option/0, options/0]).
 
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
+-include_lib("kernel/include/logger.hrl").
+-include("riak_kv_wm_raw.hrl").
 -include("riak_kv_dtrace.hrl").
 
 -type option() ::
@@ -52,32 +54,32 @@
 
 
 
-start_link(ReqId, Bucket, Key, Options, Timeout, Client) ->
+start_link(ReqId, Bucket, Key, Options, Client) ->
     {ok, proc_lib:spawn_link(?MODULE, delete, [ReqId, Bucket, Key,
-                                               Options, Timeout, Client, undefined,
+                                               Options, Client, undefined,
                                                undefined])}.
 
-start_link(ReqId, Bucket, Key, Options, Timeout, Client, ClientId) ->
+start_link(ReqId, Bucket, Key, Options, Client, ClientId) ->
     {ok, proc_lib:spawn_link(?MODULE, delete, [ReqId, Bucket, Key,
-                                               Options, Timeout, Client, ClientId,
+                                               Options, Client, ClientId,
                                                undefined])}.
 
-start_link(ReqId, Bucket, Key, Options, Timeout, Client, ClientId, VClock) ->
+start_link(ReqId, Bucket, Key, Options, Client, ClientId, VClock) ->
     {ok, proc_lib:spawn_link(?MODULE, delete, [ReqId, Bucket, Key,
-                                               Options, Timeout, Client, ClientId,
+                                               Options, Client, ClientId,
                                                VClock])}.
 
 -spec delete(
     ReqId :: riak_client:req_id(),
     Bucket :: riak_object:bucket(), Key :: riak_object:key(),
-    Options :: options(), Timeout :: timeout(),
+    Options :: options(),
     Client :: pid() | undefined, ClientId :: riak_client:client_id(),
     VClock :: vclock:vclock() | undefined ) -> term().
 %% @doc Delete the object at Bucket/Key.
 %%
 %% Direct return value is uninteresting; see {@link riak_client:delete/3}
 %% for expected gen_server replies to Client.
-delete(ReqId, Bucket, Key, Options, Timeout, Client, ClientId, undefined) ->
+delete(ReqId, Bucket, Key, Options, Client, ClientId, undefined) ->
     riak_core_dtrace:put_tag(io_lib:format("~p,~p", [Bucket, Key])),
     ?DTRACE(?C_DELETE_INIT1, [0], []),
     case get_r_options(Bucket, Options) of
@@ -85,35 +87,33 @@ delete(ReqId, Bucket, Key, Options, Timeout, Client, ClientId, undefined) ->
             ?DTRACE(?C_DELETE_INIT1, [-1], []),
             send_reply(Client, ReqId, Err1);
         {R, PR, PassThruOpts} ->
-            RealStartTime = Timeout =:= infinity orelse erlang:monotonic_time(),
-            {ok, C} = riak:local_client(),
-            GetOpts = [{r,R}, {pr,PR}, {timeout,Timeout}] ++ PassThruOpts,
-            case riak_client:get(Bucket, Key, GetOpts, C) of
-                {ok, OrigObj} ->
-                    RemainingTime = case Timeout of
-                        infinity ->
-                            Timeout;
-                        _ ->
-                            Timeout - erlang:convert_time_unit(
-                                (erlang:monotonic_time() - RealStartTime),
-                                native, millisecond)
-                    end,
-                    case RemainingTime =:= infinity orelse RemainingTime > 0 of
-                        true ->
-                            delete(ReqId, Bucket, Key, Options, RemainingTime,
-                                Client, ClientId, riak_object:vclock(OrigObj));
-                        _ ->
-                            {error, timeout}
+            case riak_core_util:evaluate_timeouts(Options) of
+                {true, UpdatedOptions} ->
+                    {ok, C} = riak:local_client(),
+                    % PassThruOpts contains timeout options
+                    GetOpts = [{r,R}, {pr,PR}] ++ PassThruOpts,
+                    case riak_client:get(Bucket, Key, GetOpts, C) of
+                        {ok, OrigObj} ->
+                            case riak_core_util:evaluate_timeouts(UpdatedOptions) of
+                                {true, DeleteOpts} ->
+                                    delete(ReqId, Bucket, Key, DeleteOpts,
+                                        Client, ClientId, riak_object:vclock(OrigObj));
+                                {false, _} ->
+                                    send_reply(Client, ReqId, {error, timeout})
+                            end;
+                        {error, notfound} = Err2 ->
+                            ?DTRACE(?C_DELETE_INIT1, [-2], []),
+                            send_reply(Client, ReqId, Err2);
+                        X ->
+                            ?DTRACE(?C_DELETE_INIT1, [-3], []),
+                            send_reply(Client, ReqId, X)
                     end;
-                {error, notfound} = Err2 ->
-                    ?DTRACE(?C_DELETE_INIT1, [-2], []),
-                    send_reply(Client, ReqId, Err2);
-                X ->
-                    ?DTRACE(?C_DELETE_INIT1, [-3], []),
-                    send_reply(Client, ReqId, X)
+                {false, _} ->
+                    ?LOG_DEBUG("Not bothering to continue delete(get) because of timeout"),
+                    send_reply(Client, ReqId, {error, timeout})
             end
     end;
-delete(ReqId, Bucket, Key, Options, Timeout, Client, ClientId, VClock) ->
+delete(ReqId, Bucket, Key, Options, Client, ClientId, VClock) ->
     riak_core_dtrace:put_tag(io_lib:format("~p,~p", [Bucket, Key])),
     TombPause = app_helper:get_env(riak_kv, tombstone_pause, ?TOMB_PAUSE),
     ?DTRACE(?C_DELETE_INIT2, [0], []),
@@ -124,9 +124,17 @@ delete(ReqId, Bucket, Key, Options, Timeout, Client, ClientId, VClock) ->
         {W, PW, DW, PassThruOptions} ->
             Obj0 = generate_tombstone(Bucket, Key),
             Tombstone = riak_object:set_vclock(Obj0, VClock),
+
             {ok, C} = riak:local_client(ClientId),
-            PutOpts = [{w,W}, {pw,PW}, {dw, DW}, {timeout,Timeout}] ++ PassThruOptions,
-            Reply = riak_client:put(Tombstone, PutOpts, C),
+            Reply = case riak_core_util:evaluate_timeouts(Options) of
+                {true, _} ->
+                    % PassThruOptions contains timeout options
+                    PutOpts = [{w,W}, {pw,PW}, {dw, DW}] ++ PassThruOptions,
+                    riak_client:put(Tombstone, PutOpts, C);
+                {false, _} ->
+                    ?LOG_DEBUG("Not bothering to continue delete(put) because of timeout"),
+                    {error, timeout}
+            end,
             send_reply(Client, ReqId, Reply),
             HasCustomN_val = proplists:get_value(n_val, Options) /= undefined,
             case Reply of
@@ -250,8 +258,8 @@ get_w_options(Bucket, Options) ->
 %%       appear as {sloppy_quorum, boolean()}.
 
 extract_passthru_options(Options) ->
-    [Opt || {K, _} = Opt <- Options,
-            K == sloppy_quorum orelse K == n_val].
+    L = [sloppy_quorum, n_val, ?INTERNAL_TIMEOUT_BY, timeout],
+    [Opt || {K, _} = Opt <- Options, lists:member(K, L)].
 
 -spec generate_tombstone(riak_object:bucket(), riak_object:key())
                                                 -> riak_object:riak_object().

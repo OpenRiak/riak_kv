@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2018-2024 Workday, Inc.
+%% Copyright (c) 2018-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -429,7 +429,13 @@ do_update(coord_redir_least_loaded) ->
 do_update(soft_loaded_vnode_mbox) ->
     exometer:update([?PFX, ?APP, node, puts, soft_loaded_vnode_mbox], 1);
 do_update(vnode_mbox_check_timeout) ->
-    exometer:update([?PFX, ?APP, node, puts, vnode_mbox_check_timeout], 1).
+    exometer:update([?PFX, ?APP, node, puts, vnode_mbox_check_timeout], 1);
+do_update(vnode_put_timeout) ->
+    exometer:update([?PFX, ?APP, node, puts, vnode_put_timeout], 1);
+do_update(vnode_get_timeout) ->
+    exometer:update([?PFX, ?APP, node, gets, vnode_get_timeout], 1);
+do_update(vnode_head_timeout) ->
+    exometer:update([?PFX, ?APP, node, heads, vnode_head_timeout], 1).
 
 %% private
 
@@ -646,6 +652,11 @@ stats() ->
                                                           {count, node_pb_client_copy_errors_total}]},
      {[node, pb_client, copies, errors, timeout], spiral, [], [{one, node_pb_client_copy_errors_timeouts},
                                                           {count, node_pb_client_copy_errors_timeouts_total}]},
+
+     %% node stats: timeouts
+     {[node, puts, vnode_put_timeout], counter, [], [{value, vnode_put_timeout_total}]},
+     {[node, gets, vnode_get_timeout], counter, [], [{value, vnode_get_timeout_total}]},
+     {[node, heads, vnode_head_timeout], counter, [], [{value, vnode_head_timeout_total}]},
 
      %% node stats: gets
      {[node, gets], spiral, [], [{one  , node_gets},

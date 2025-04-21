@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2013-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -43,7 +44,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -record(state, {client, req_id, req, continuation, result_count=0}).
 
@@ -98,7 +101,11 @@ ensure_compiled_re(TermRe) ->
     end.
 
 %% @doc process/2 callback. Handles an incoming request message.
-process(#rpbindexreq{stream = S} = Req, State) ->
+process(#rpbindexreq{} = Req, State) ->
+    process(Req, State, []).
+
+%% @doc process/3 callback. Handles an incoming request message.
+process(#rpbindexreq{stream = S} = Req, State, _Options) ->
     Class = case S of
         true ->
             {riak_kv, stream_secondary_index};
@@ -210,10 +217,14 @@ make_continuation(_, _, _)  ->
     undefined.
 
 %% @doc process_stream/3 callback. Handle streamed responses
+process_stream(Msg, ReqId, State) ->
+    process_stream(Msg, ReqId, State, []).
+
+%% @doc process_stream/4 callback. Handle streamed responses
 process_stream({ReqId, done}, ReqId, State=#state{req_id=ReqId,
                                                   continuation=Continuation,
                                                   req=Req,
-                                                  result_count=Count}) ->
+                                                  result_count=Count}, _Options) ->
     %% Only add the continuation if there (may) be more results to send
     #rpbindexreq{max_results=MaxResults} = Req,
     Resp = case is_integer(MaxResults) andalso Count >= MaxResults of
@@ -221,17 +232,20 @@ process_stream({ReqId, done}, ReqId, State=#state{req_id=ReqId,
                false -> #rpbindexresp{done=1}
            end,
     {done, Resp, State};
-process_stream({ReqId, {results, []}}, ReqId, State=#state{req_id=ReqId}) ->
+process_stream({ReqId, {results, []}}, ReqId, State=#state{req_id=ReqId}, _Options) ->
     {ignore, State};
-process_stream({ReqId, {results, Results}}, ReqId, State=#state{req_id=ReqId, req=Req, result_count=Count}) ->
+process_stream({ReqId, {results, Results}},
+                ReqId,
+                State=#state{req_id=ReqId, req=Req, result_count=Count},
+                _Options) ->
     #rpbindexreq{return_terms=ReturnTerms, max_results=MaxResults} = Req,
     Count2 = length(Results) + Count,
     Continuation = make_continuation(MaxResults, Results, Count2),
     Response = encode_results(ReturnTerms, Results, undefined),
     {reply, Response, State#state{continuation=Continuation, result_count=Count2}};
-process_stream({ReqId, Error}, ReqId, State=#state{req_id=ReqId}) ->
+process_stream({ReqId, Error}, ReqId, State=#state{req_id=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req_id=undefined}};
-process_stream(_,_,State) ->
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 %% Construct a {Type, Bucket} tuple, if not working with the default bucket

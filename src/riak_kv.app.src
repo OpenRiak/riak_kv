@@ -20,7 +20,7 @@
 %% -------------------------------------------------------------------
 {application, riak_kv, [
     {description, "Riak Key/Value Store"},
-    {vsn, "3.2.0.5"},
+    {vsn, "3.2.0.6"},
     {applications, [
         kernel,
         stdlib,

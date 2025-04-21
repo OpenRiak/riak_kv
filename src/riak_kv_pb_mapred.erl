@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2012-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -44,7 +45,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -82,7 +85,10 @@ encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
 %% Start map/reduce job - results will be processed in handle_info
-process(#rpbmapredreq{request=MrReq, content_type=ContentType}=Req, State) ->
+process(Req=#rpbmapredreq{}, State) ->
+    process(Req, State, []).
+
+process(#rpbmapredreq{request=MrReq, content_type=ContentType}=Req, State, _Options) ->
     Class = {riak_kv, map_reduce},
     Accept = riak_core_util:job_class_enabled(Class),
     _ = riak_core_util:report_job_request_disposition(
@@ -113,6 +119,9 @@ process(#rpbmapredreq{request=MrReq, content_type=ContentType}=Req, State) ->
                 State}
     end.
 
+process_stream(Req=#kv_mrc_sink{}, ReqId, State) ->
+    process_stream(Req, ReqId, State, []).
+
 process_stream(#kv_mrc_sink{ref=ReqId,
                              results=Results,
                              logs=Logs,
@@ -120,7 +129,8 @@ process_stream(#kv_mrc_sink{ref=ReqId,
                ReqId,
                State=#state{req=#rpbmapredreq{},
                             req_ctx=#pipe_ctx{ref=ReqId,
-                                              mrc=Mrc}=PipeCtx}) ->
+                                              mrc=Mrc}=PipeCtx},
+               _Options) ->
     case riak_kv_mrc_pipe:error_exists(Logs) of
         false ->
             case msgs_for_results(Results, State) of
@@ -155,7 +165,7 @@ process_stream(#kv_mrc_sink{ref=ReqId,
 
 process_stream({'DOWN', Ref, process, Pid, Reason}, _PipeRef,
                State=#state{req=#rpbmapredreq{},
-                            req_ctx=#pipe_ctx{sender={Pid, Ref}}=PipeCtx}) ->
+                            req_ctx=#pipe_ctx{sender={Pid, Ref}}=PipeCtx}, _Options) ->
     %% the async input sender exited
     if Reason == normal ->
             %% just reached the end of the input sending - all is
@@ -172,7 +182,7 @@ process_stream({'DOWN', Ref, process, Pid, Reason}, _PipeRef,
     end;
 process_stream({'DOWN', Mon, process, Pid, Reason}, _PipeRef,
                State=#state{req=#rpbmapredreq{},
-                            req_ctx=#pipe_ctx{sink={Pid, Mon}}=PipeCtx}) ->
+                            req_ctx=#pipe_ctx{sink={Pid, Mon}}=PipeCtx}, _Options) ->
     %% the sink died, which it shouldn't be able to do before
     %% delivering our final results
     destroy_pipe(PipeCtx),
@@ -182,11 +192,11 @@ process_stream({'DOWN', Mon, process, Pid, Reason}, _PipeRef,
      clear_state_req(State)};
 process_stream({pipe_timeout, Ref}, Ref,
                State=#state{req=#rpbmapredreq{},
-                            req_ctx=#pipe_ctx{ref=Ref}=PipeCtx}) ->
+                            req_ctx=#pipe_ctx{ref=Ref}=PipeCtx}, _Options) ->
     destroy_pipe(PipeCtx),
     {error, "timeout", clear_state_req(State)};
 
-process_stream(_,_,State) -> % Ignore any late replies from gen_servers/messages from fsms
+process_stream(_,_,State,_) -> % Ignore any late replies from gen_servers/messages from fsms
     {ignore, State}.
 
 

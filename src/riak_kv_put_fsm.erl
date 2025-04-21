@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2019-2024 Workday, Inc.
+%% Copyright (c) 2019-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -26,6 +26,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 -include_lib("riak_kv_vnode.hrl").
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
 -include("riak_kv_wm_raw.hrl").
 -include("riak_kv_types.hrl").
 
@@ -123,7 +124,6 @@
                 req_id :: pos_integer()  | undefined,
                 starttime = riak_core_util:moment()
                         :: pos_integer(), % start time to send to vnodes
-                timeout = infinity :: pos_integer()|infinity,
                 tref :: reference() | undefined,
                 vnode_options=[] :: list(),
                 returnbody = false :: boolean(),
@@ -178,7 +178,7 @@ start(From, Object, PutOptions) ->
     end.
 
 %% Included for backward compatibility, in case someone is, say, passing around
-%% a riak_client instace between nodes during a rolling upgrade. The old
+%% a riak_client instance between nodes during a rolling upgrade. The old
 %% `start_link' function has been renamed `start' since it doesn't actually link
 %% to the caller.
 start_link(From, Object, PutOptions) -> start(From, Object, PutOptions).
@@ -225,7 +225,8 @@ spawn_coordinator_proc(CoordNode, Mod, Fun, Args) ->
 
 monitor_remote_coordinator(false = _UseAckP, _MiddleMan, _CoordNode, StateData) ->
     {stop, normal, StateData};
-monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode, StateData) ->
+monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode,
+                            StateData=#state{options=Options}) ->
     receive
         {ack, CoordNodeFinal, now_executing} ->
             case CoordNodeFinal of
@@ -241,7 +242,10 @@ monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode, StateData) ->
             Bad = StateData#state.bad_coordinators,
             ?LOG_WARNING("timed out waiting for forward-ack, adding ~p to bad coordinators",
                           [CoordNode]),
-            prepare(timeout, StateData#state{bad_coordinators=[CoordNode|Bad]})
+            % Here, we need to reduce the FSM timeout to account for time spent waiting
+            {_, UpdatedOptions} = riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
+            prepare(timeout, StateData#state{bad_coordinators=[CoordNode|Bad],
+                                             options=UpdatedOptions})
     end.
 
 %% ===================================================================
@@ -270,7 +274,7 @@ test_link(From, Object, PutOptions, StateProps) ->
 %% @private
 init([From, RObj, Options0]) ->
     BKey = {Bucket, Key} = {riak_object:bucket(RObj), riak_object:key(RObj)},
-    CoordTimeout = get_put_coordinator_failure_timeout(),
+    CoordTimeout = get_put_coordinator_failure_timeout(), % default. may get overridden in prepare.
     Trace = app_helper:get_env(riak_kv, fsm_trace_enabled),
     Options = proplists:unfold(Options0),
     StateData = #state{from = From,
@@ -315,12 +319,43 @@ init({test, Args, StateProps}) ->
     {ok, validate, TestStateData}.
 
 %% @private
-prepare(timeout, State = #state{robj = RObj, options=Options}) ->
+%% @spec get_timeout_from_finish_time(FinishBy :: nativetime()) -> timeout().
+%% @doc Convert a finish time to a timeout.
+get_timeout_from_finish_time(FinishBy) ->
+    EntryTime = erlang:monotonic_time(),
+    Diff = FinishBy - EntryTime,
+    case Diff of
+        Remain when Remain > 0 ->
+            erlang:convert_time_unit(Remain, native, millisecond);
+        _ ->
+            0
+    end.
+
+%% @private
+prepare(timeout, State = #state{robj = RObj, options=Options,
+                                coordinator_timeout = CoordTimeout0}) ->
     Bucket = riak_object:bucket(RObj),
     BucketProps = get_bucket_props(Bucket),
     StatTracked = get_option(stat_tracked, BucketProps, false),
     N = get_n_val(Options, BucketProps),
-    get_preflist(N, State#state{tracked_bucket=StatTracked, bucket_props=BucketProps}).
+    % the coordinator timeout is the time we wait for the coordinator to
+    % respond before we try another one. It can't be more than the
+    % timeout for the whole operation.
+    {_, UpdatedOptions} = riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
+    Timing = case proplists:get_value(?INTERNAL_TIMEOUT_BY, UpdatedOptions) of
+        undefined -> proplists:get_value(timeout, UpdatedOptions, ?DEFAULT_TIMEOUT);
+        FinishBy -> get_timeout_from_finish_time(FinishBy)
+    end,
+    CoordTimeout = case Timing of
+        Timeout when is_integer(CoordTimeout0), Timeout < CoordTimeout0 ->
+            Timeout;
+        _ ->
+            CoordTimeout0
+    end,
+    get_preflist(N, State#state{tracked_bucket=StatTracked,
+                                coordinator_timeout = CoordTimeout,
+                                bucket_props=BucketProps,
+                                options=UpdatedOptions}).
 
 %% @private
 validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
@@ -329,7 +364,6 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                                       n=N, bucket_props = BucketProps,
                                       trace = Trace,
                                       preflist2 = Preflist2}) ->
-    Timeout = get_option(timeout, Options0, ?DEFAULT_TIMEOUT),
     PW0 = get_option(pw, Options0, default),
     NodeConfirms0 = get_option(node_confirms, Options0, default),
     W0 = get_option(w, Options0, default),
@@ -416,8 +450,7 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                                          req_id = ReqId,
                                          robj = apply_updates(RObj0, Options),
                                          putcore = PutCore,
-                                         vnode_options = VNodeOpts,
-                                         timeout = Timeout},
+                                         vnode_options = VNodeOpts},
             ?DTRACE(Trace, ?C_PUT_FSM_VALIDATE, [N, W, PW, NodeConfirms, DW], []),
             case Precommit of
                 [] -> % Nothing to run, spare the timing code
@@ -461,7 +494,7 @@ precommit(timeout, State = #state{precommit = [Hook | Rest],
     end.
 
 %% @private
-execute(State=#state{options = Options, timeout = Timeout, coord_pl_entry = CPL, robj = RObj}) ->
+execute(State=#state{options = Options, coord_pl_entry = CPL, robj = RObj}) ->
     case riak_kv_util:is_x_deleted(RObj) of
         true  ->
             riak_kv_stat:update(tombstone_put);
@@ -475,13 +508,25 @@ execute(State=#state{options = Options, timeout = Timeout, coord_pl_entry = CPL,
         Pid ->
             Pid ! {ack, node(), now_executing}
     end,
-    TRef = schedule_timeout(Timeout),
-    NewState = State#state{tref = TRef},
-    case CPL of
-        undefined ->
-            execute_remote(NewState);
-        _ ->
-            execute_local(NewState)
+    case riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT) of
+        {true, UpdatedOptions} ->
+            TRef = case proplists:get_value(?INTERNAL_TIMEOUT_BY, UpdatedOptions) of
+                undefined ->
+                    Timeout = proplists:get_value(timeout, UpdatedOptions),
+                    schedule_timeout(Timeout, false);
+                FinishBy ->
+                    schedule_timeout(FinishBy, true)
+                end,
+            NewState = State#state{tref = TRef},
+            case CPL of
+                undefined ->
+                    execute_remote(NewState);
+                _ ->
+                    execute_local(NewState)
+            end;
+        {false, UpdatedOptions} ->
+            ?LOG_DEBUG("Not bothering to execute put because of timeout"),
+            process_reply({error, timeout}, State#state{options = UpdatedOptions})
     end.
 
 %% @private
@@ -490,8 +535,10 @@ execute(State=#state{options = Options, timeout = Timeout, coord_pl_entry = CPL,
 %% N.B. Not actually a state - here in the source to make reading the flow easier
 execute_local(StateData=#state{robj=RObj, req_id = ReqId, bkey=BKey,
                                coord_pl_entry = {_Index, Node} = CoordPLEntry,
-                               vnode_options=VnodeOptions,
+                               vnode_options=VnodeOptions0,
                                trace = Trace,
+                               options = Options,
+                               tref = TRef,
                                starttime = StartTime}) ->
     StateData1 =
         case Trace of
@@ -501,17 +548,35 @@ execute_local(StateData=#state{robj=RObj, req_id = ReqId, bkey=BKey,
             _ ->
                 StateData
         end,
-    riak_kv_vnode:coord_put(CoordPLEntry, BKey, RObj, ReqId, StartTime, VnodeOptions),
-    StateData2 = StateData1#state{robj = RObj},
-    %% Must always wait for local vnode - it contains the object with updated vclock
-    %% to use for the remotes. (Ignore optimization for N=1 case for now).
-    new_state(waiting_local_vnode, StateData2).
+    case riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            Timeout = get_option(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            VnodeOptions = lists:keystore(timeout, 1, VnodeOptions0, {timeout, Timeout}),
+            riak_kv_vnode:coord_put(CoordPLEntry, BKey, RObj, ReqId, StartTime, VnodeOptions),
+            %% Must always wait for local vnode - it contains the object with updated vclock
+            %% to use for the remotes. (Ignore optimization for N=1 case for now).
+            new_state(waiting_local_vnode, StateData1#state{robj = RObj,
+                                                    options = UpdatedOptions});
+        {false, UpdatedOptions} ->
+            % next state is waiting_local_vnode which will be triggered by the timeout
+            cancel_timeout(TRef),
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call riak_kv_vnode because of timeout (local)"),
+            new_state_timeout(waiting_local_vnode, StateData1#state{robj = RObj,
+                                                    options = UpdatedOptions})
+    end.
 
 %% @private
-waiting_local_vnode(request_timeout, StateData=#state{trace = Trace}) ->
+waiting_local_vnode({timeout, TRef, request_timeout}, StateData = #state{tref=TRef0})
+        when TRef =:= TRef0 ->
+    % Our timer expired. Immediately go to the below timeout state
+    new_state_timeout(waiting_local_vnode, StateData);
+waiting_local_vnode(timeout, StateData=#state{trace = Trace}) ->
     ?DTRACE(Trace, ?C_PUT_FSM_WAITING_LOCAL_VNODE, [-1], []),
     process_reply({error,timeout}, StateData);
 waiting_local_vnode(Result, StateData = #state{putcore = PutCore,
+                                               tref = TRef,
                                                trace = Trace}) ->
     UpdPutCore1 = riak_kv_put_core:add_result(Result, PutCore),
     case Result of
@@ -519,6 +584,7 @@ waiting_local_vnode(Result, StateData = #state{putcore = PutCore,
             ?DTRACE(Trace, ?C_PUT_FSM_WAITING_LOCAL_VNODE, [-1],
                     [integer_to_list(Idx)]),
             %% Local vnode failure is enough to sink whole operation
+            cancel_timeout(TRef),
             process_reply({error, Reason}, StateData#state{putcore = UpdPutCore1});
         {w, Idx, _ReqId} ->
             ?DTRACE(Trace, ?C_PUT_FSM_WAITING_LOCAL_VNODE, [1],
@@ -545,9 +611,11 @@ waiting_local_vnode(Result, StateData = #state{putcore = PutCore,
 execute_remote(StateData=#state{robj=RObj, req_id = ReqId,
                                 preflist2 = Preflist2, bkey = BKey,
                                 coord_pl_entry = CoordPLEntry,
-                                vnode_options = VnodeOptions,
+                                vnode_options = VnodeOptions0,
                                 putcore = PutCore,
                                 trace = Trace,
+                                options = Options,
+                                tref = TRef,
                                 starttime = StartTime}) ->
     Preflist = [IndexNode || {IndexNode, _Type} <- Preflist2,
                              IndexNode /= CoordPLEntry],
@@ -561,21 +629,42 @@ execute_remote(StateData=#state{robj=RObj, req_id = ReqId,
             _ ->
                 StateData
         end,
-    riak_kv_vnode:put(Preflist, BKey, RObj, ReqId, StartTime, VnodeOptions),
-    case riak_kv_put_core:enough(PutCore) of
-        true ->
-            {Reply, UpdPutCore} = riak_kv_put_core:response(PutCore),
-            process_reply(Reply, StateData1#state{putcore = UpdPutCore});
-        false ->
-            new_state(waiting_remote_vnode, StateData1)
+    % Update timeout to account for time spent so far before calling vnode
+    case riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            Timeout = get_option(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            VnodeOptions = lists:keystore(timeout, 1, VnodeOptions0, {timeout, Timeout}),
+            riak_kv_vnode:put(Preflist, BKey, RObj, ReqId, StartTime, VnodeOptions),
+            case riak_kv_put_core:enough(PutCore) of
+                true ->
+                    cancel_timeout(TRef),
+                    {Reply, UpdPutCore} = riak_kv_put_core:response(PutCore),
+                    process_reply(Reply, StateData1#state{putcore = UpdPutCore});
+                false ->
+                    StateData2 = StateData1#state{options = UpdatedOptions},
+                    new_state(waiting_remote_vnode, StateData2)
+            end;
+        {false, UpdatedOptions} ->
+            cancel_timeout(TRef),
+            % next state is waiting_remote_vnode which will be triggered by the timeout
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call riak_kv_vnode because of timeout (remote)"),
+            new_state_timeout(waiting_remote_vnode,
+                                    StateData1#state{options = UpdatedOptions})
     end.
 
 
 %% @private
+waiting_remote_vnode({timeout, TRef, request_timeout}, StateData = #state{tref=TRef0})
+        when TRef =:= TRef0 ->
+    % Our timer expired. Immediately go to the below timeout state
+    new_state_timeout(waiting_remote_vnode, StateData);
 waiting_remote_vnode(request_timeout, StateData=#state{trace = Trace}) ->
     ?DTRACE(Trace, ?C_PUT_FSM_WAITING_REMOTE_VNODE, [-1], []),
     process_reply({error,timeout}, StateData);
 waiting_remote_vnode(Result, StateData = #state{putcore = PutCore,
+                                                tref = TRef,
                                                 trace = Trace}) ->
     case Trace of
         true ->
@@ -588,6 +677,7 @@ waiting_remote_vnode(Result, StateData = #state{putcore = PutCore,
     UpdPutCore1 = riak_kv_put_core:add_result(Result, PutCore),
     case riak_kv_put_core:enough(UpdPutCore1) of
         true ->
+            cancel_timeout(TRef),
             {Reply, UpdPutCore2} = riak_kv_put_core:response(UpdPutCore1),
             process_reply(Reply, StateData#state{putcore = UpdPutCore2});
         false ->
@@ -606,11 +696,13 @@ postcommit(timeout, StateData = #state{postcommit = [Hook | Rest],
     %% take a long time.
     {ReplyObj, UpdPutCore} =  riak_kv_put_core:final(PutCore),
     decode_postcommit(invoke_hook(Hook, ReplyObj), Trace),
-    new_state_timeout( postcommit, StateData#state{postcommit = Rest,
+    new_state_timeout(postcommit, StateData#state{postcommit = Rest,
                                              trace = Trace,
                                              putcore = UpdPutCore});
 %% still process hooks even if request timed out
-postcommit(request_timeout, StateData = #state{trace = Trace}) ->
+postcommit({timeout, TRef, request_timeout},
+        StateData = #state{trace=Trace, tref=TRef0})
+        when TRef =:= TRef0 ->
     ?DTRACE(Trace, ?C_PUT_FSM_POSTCOMMIT, [-3], []),
     new_state_timeout(postcommit, StateData);
 postcommit(Reply, StateData = #state{putcore = PutCore,
@@ -673,7 +765,7 @@ handle_sync_event(_Event, _From, _StateName, StateData) ->
 
 %% @private
 
-handle_info(request_timeout, StateName, StateData) ->
+handle_info({timeout, _TRef, request_timeout}, StateName, StateData) ->
     ?MODULE:StateName(request_timeout, StateData);
 handle_info({ack, Node, now_executing}, StateName, StateData) ->
     late_put_fsm_coordinator_ack(Node),
@@ -915,10 +1007,26 @@ get_option(Name, Options, Default) ->
             Default
     end.
 
-schedule_timeout(infinity) ->
+-spec schedule_timeout(FinishBy::integer() | infinity, Absolute::boolean()) ->
+    undefined | reference().
+schedule_timeout(FinishBy, Absolute) when is_integer(FinishBy) ->
+    FinishByMillis = case Absolute of
+      true ->
+        erlang:convert_time_unit(FinishBy, native, millisecond);
+      false ->
+        FinishBy
+    end,
+    erlang:start_timer(FinishByMillis, self(), request_timeout, [{abs, Absolute}]);
+schedule_timeout(infinity, _) ->
     undefined;
-schedule_timeout(Timeout) ->
-    erlang:send_after(Timeout, self(), request_timeout).
+schedule_timeout(_, _) ->
+    schedule_timeout(?DEFAULT_TIMEOUT, false).
+
+-spec cancel_timeout(reference() | undefined) -> ok.
+cancel_timeout(TRef) when is_reference(TRef) ->
+    erlang:cancel_timer(TRef);
+cancel_timeout(_) ->
+    ok.
 
 client_reply(Reply, State = #state{from = {raw, ReqId, Pid},
                                    timing = Timing0,
@@ -1291,13 +1399,23 @@ forward(CoordNode, State) ->
                                  %% picked the "best"
                                  {mbox_check, false}
                                  | Options]),
-        MiddleMan = spawn_coordinator_proc(
-                      CoordNode, riak_kv_put_fsm, start_link,
-                      [From, RObj, Options2]),
-        ?DTRACE(Trace, ?C_PUT_FSM_PREPARE, [2],
-                ["prepare", atom2list(CoordNode)]),
-        monitor_remote_coordinator(UseAckP, MiddleMan,
-                                   CoordNode, State)
+
+        case riak_core_util:evaluate_timeouts(Options2) of
+            {true, UpdatedOptions} ->
+                ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                MiddleMan = spawn_coordinator_proc(
+                            CoordNode, riak_kv_put_fsm, start_link,
+                            [From, RObj, ExternalOptions]),
+                ?DTRACE(Trace, ?C_PUT_FSM_PREPARE, [2],
+                        ["prepare", atom2list(CoordNode)]),
+                monitor_remote_coordinator(UseAckP, MiddleMan,
+                                        CoordNode, State#state{options=ExternalOptions});
+            {false, UpdatedOptions} ->
+                ?LOG_ERROR("Not bothering to forward put for ~p to ~p @ ~p because of timeout\n",
+                            [BKey, CoordNode, node()]),
+                process_reply({error, {coord_handoff_failed, timeout}},
+                                State#state{options=UpdatedOptions})
+        end
     catch
         _Class:Reason:Stacktrace ->
             ?DTRACE(Trace, ?C_PUT_FSM_PREPARE, [-2],

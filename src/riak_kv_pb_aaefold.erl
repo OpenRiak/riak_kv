@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) Martin Sumner
+%% Copyright (c) 2019-2021 Martin Sumner.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -50,7 +51,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -record(state, {client :: riak_client:riak_client()}).
 
@@ -70,27 +73,30 @@ encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
 
-%% @doc process/2 callback. Handles an incoming request message.
-process(#rpbaaefoldmergerootnvalreq{n_val = N}, State) ->
+%% @doc process/2,3 callback. Handles an incoming request message.
+process(Req=#rpbaaefoldmergerootnvalreq{}, State) ->
+    process(Req, State, []).
+
+process(#rpbaaefoldmergerootnvalreq{n_val = N}, State, _Options) ->
     Query  = {merge_root_nval, N},
     process_query(Query, State);
-process(#rpbaaefoldmergebranchnvalreq{n_val = N, id_filter = BF}, State) ->
+process(#rpbaaefoldmergebranchnvalreq{n_val = N, id_filter = BF}, State, _Options) ->
     Query = {merge_branch_nval, N, BF},
     process_query(Query, State);
 process(#rpbaaefoldfetchclocksnvalreq{n_val = N,
                                         id_filter = SF,
                                         modified_range = IsModR,
                                         last_mod_start = LMS,
-                                        last_mod_end = LME}, State)
+                                        last_mod_end = LME}, State, _Options)
                                             when IsModR == true ->
     Query = {fetch_clocks_nval, N, SF, {date, LMS, LME}},
     process_query(Query, State);
 process(#rpbaaefoldfetchclocksnvalreq{n_val = N,
-                                        id_filter = SF}, State) ->
+                                        id_filter = SF}, State, _Options) ->
     Query = {fetch_clocks_nval, N, SF},
     process_query(Query, State);
 process(#rpbaaefoldmergetreesrangereq{type = T,
-                                        bucket = B, 
+                                        bucket = B,
                                         key_range = IsKR,
                                         start_key = SK,
                                         end_key = EK,
@@ -101,8 +107,8 @@ process(#rpbaaefoldmergetreesrangereq{type = T,
                                         modified_range = IsModR,
                                         last_mod_start = LMS,
                                         last_mod_end = LME,
-                                        use_prehash = IsPH, 
-                                        init_vector = IV}, State) ->
+                                        use_prehash = IsPH,
+                                        init_vector = IV}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     SF = case IsSF of true -> {segments, SFL, FTS}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
@@ -110,7 +116,7 @@ process(#rpbaaefoldmergetreesrangereq{type = T,
     Query = {merge_tree_range, maybe_bucket_type(T, B), KR, TS, SF, MR, HM},
     process_query(Query, State);
 process(#rpbaaefoldfetchclocksrangereq{type = T,
-                                        bucket = B, 
+                                        bucket = B,
                                         key_range = IsKR,
                                         start_key = SK,
                                         end_key = EK,
@@ -119,40 +125,40 @@ process(#rpbaaefoldfetchclocksrangereq{type = T,
                                         filter_tree_size = FTS,
                                         modified_range = IsModR,
                                         last_mod_start = LMS,
-                                        last_mod_end = LME}, State) ->
+                                        last_mod_end = LME}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     SF = case IsSF of true -> {segments, SFL, FTS}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     Query = {fetch_clocks_range, maybe_bucket_type(T, B), KR, SF, MR},
     process_query(Query, State);
 process(#rpbaaefoldreplkeysreq{type = T,
-                                bucket = B, 
+                                bucket = B,
                                 key_range = IsKR,
                                 start_key = SK,
                                 end_key = EK,
                                 modified_range = IsModR,
                                 last_mod_start = LMS,
                                 last_mod_end = LME,
-                                queuename = QN}, State) ->
+                                queuename = QN}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     QueueName = binary_to_atom(QN, utf8),
     Query = {repl_keys_range, maybe_bucket_type(T, B), KR, MR, QueueName},
     process_query(Query, State);
 process(#rpbaaefoldrepairkeysreq{type = T,
-                                    bucket = B, 
+                                    bucket = B,
                                     key_range = IsKR,
                                     start_key = SK,
                                     end_key = EK,
                                     modified_range = IsModR,
                                     last_mod_start = LMS,
-                                    last_mod_end = LME}, State) ->
+                                    last_mod_end = LME}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     Query = {repair_keys_range, maybe_bucket_type(T, B), KR, MR, all},
     process_query(Query, State);
 process(#rpbaaefoldfindkeysreq{type = T,
-                                bucket = B, 
+                                bucket = B,
                                 key_range = IsKR,
                                 start_key = SK,
                                 end_key = EK,
@@ -160,13 +166,13 @@ process(#rpbaaefoldfindkeysreq{type = T,
                                 last_mod_start = LMS,
                                 last_mod_end = LME,
                                 finder = FT,
-                                find_limit = FL}, State) ->
+                                find_limit = FL}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     Query = {find_keys, maybe_bucket_type(T, B), KR, MR, {FT, FL}},
     process_query(Query, State);
 process(#rpbaaefoldfindtombsreq{type = T,
-                                bucket = B, 
+                                bucket = B,
                                 key_range = IsKR,
                                 start_key = SK,
                                 end_key = EK,
@@ -175,14 +181,14 @@ process(#rpbaaefoldfindtombsreq{type = T,
                                 filter_tree_size = FTS,
                                 modified_range = IsModR,
                                 last_mod_start = LMS,
-                                last_mod_end = LME}, State) ->
+                                last_mod_end = LME}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     SF = case IsSF of true -> {segments, SFL, FTS}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     Query = {find_tombs, maybe_bucket_type(T, B), KR, SF, MR},
     process_query(Query, State);
 process(#rpbaaefoldreaptombsreq{type = T,
-                                bucket = B, 
+                                bucket = B,
                                 key_range = IsKR,
                                 start_key = SK,
                                 end_key = EK,
@@ -193,15 +199,15 @@ process(#rpbaaefoldreaptombsreq{type = T,
                                 last_mod_start = LMS,
                                 last_mod_end = LME,
                                 change_method = CM,
-                                job_id = JID}, State) ->
+                                job_id = JID}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     SF = case IsSF of true -> {segments, SFL, FTS}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
-    CM0 = case CM of job -> {job, JID}; _ -> CM end, 
+    CM0 = case CM of job -> {job, JID}; _ -> CM end,
     Query = {reap_tombs, maybe_bucket_type(T, B), KR, SF, MR, CM0},
     process_query(Query, State);
 process(#rpbaaefolderasekeysreq{type = T,
-                                bucket = B, 
+                                bucket = B,
                                 key_range = IsKR,
                                 start_key = SK,
                                 end_key = EK,
@@ -212,29 +218,29 @@ process(#rpbaaefolderasekeysreq{type = T,
                                 last_mod_start = LMS,
                                 last_mod_end = LME,
                                 change_method = CM,
-                                job_id = JID}, State) ->
+                                job_id = JID}, State, _Options) ->
     KR = case IsKR of true -> {SK, EK}; false -> all end,
     SF = case IsSF of true -> {segments, SFL, FTS}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
-    CM0 = case CM of job -> {job, JID}; _ -> CM end, 
+    CM0 = case CM of job -> {job, JID}; _ -> CM end,
     Query = {erase_keys, maybe_bucket_type(T, B), KR, SF, MR, CM0},
     process_query(Query, State);
 process(#rpbaaefoldobjectstatsreq{type = T,
-                                    bucket = B, 
+                                    bucket = B,
                                     key_range = IsKR,
                                     start_key = SK,
                                     end_key = EK,
                                     modified_range = IsModR,
                                     last_mod_start = LMS,
-                                    last_mod_end = LME}, State) ->
+                                    last_mod_end = LME}, State, _Options) ->
                                     KR = case IsKR of true -> {SK, EK}; false -> all end,
     MR = case IsModR of true -> {date, LMS, LME}; false -> all end,
     Query = {object_stats, maybe_bucket_type(T, B), KR, MR},
     process_query(Query, State);
-process(#rpbaaefoldlistbucketsreq{n_val = N}, State) ->
+process(#rpbaaefoldlistbucketsreq{n_val = N}, State, _Options) ->
     N0 = case is_integer(N) and (N > 0) of true -> N; false -> 1 end,
     process_query({list_buckets, N0}, State);
-process(rpbaaefoldlistbucketsreq, State) ->
+process(rpbaaefoldlistbucketsreq, State, _Options) ->
     process_query({list_buckets, 1}, State).
 
 
@@ -250,6 +256,9 @@ process_query(Query, State) ->
     end.
 
 process_stream(_,_,State) ->
+    {ignore, State}.
+
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 %% Construct a {Type, Bucket} tuple, if not working with the default bucket

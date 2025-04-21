@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -32,8 +33,10 @@
          start_vnodes/1,
          get/3,
          get/4,
+         get/5,
          head/3,
          head/4,
+         head/5,
          del/3,
          reap/3,
          put/6,
@@ -66,7 +69,9 @@
 -export([init/1,
          terminate/2,
          handle_command/3,
+         handle_command/4,
          handle_overload_command/3,
+         handle_overload_command/4,
          handle_coverage/4,
          is_empty/1,
          delete/1,
@@ -74,6 +79,7 @@
          object_info/1,
          nval_map/1,
          handle_handoff_command/3,
+         handle_handoff_command/4,
          handoff_starting/2,
          handoff_started/2,     %% Note: optional function of the behaviour
          handoff_cancelled/1,
@@ -566,25 +572,37 @@ tictacexchange_complete(Vnode, StartTime, ExchangeResult) ->
 get(Preflist, BKey, ReqId) ->
     %% Assuming this function is called from a FSM process
     %% so self() == FSM pid
-    get(Preflist, BKey, ReqId, {fsm, undefined, self()}).
+    get(Preflist, BKey, ReqId, {fsm, undefined, self()}, []).
 
 get(Preflist, BKey, ReqId, Sender) ->
+    get(Preflist, BKey, ReqId, Sender, []).
+
+get(Preflist, BKey, ReqId, undefined, Options) ->
+    get(Preflist, BKey, ReqId, {fsm, undefined, self()}, Options);
+get(Preflist, BKey, ReqId, Sender, Options) ->
     Req = riak_kv_requests:new_get_request(sanitize_bkey(BKey), ReqId),
     riak_core_vnode_master:command(Preflist,
                                    Req,
                                    Sender,
+                                   Options,
                                    riak_kv_vnode_master).
 
 head(Preflist, BKey, ReqId) ->
     %% Assuming this function is called from a FSM process
     %% so self() == FSM pid
-    head(Preflist, BKey, ReqId, {fsm, undefined, self()}).
+    head(Preflist, BKey, ReqId, {fsm, undefined, self()}, []).
 
 head(Preflist, BKey, ReqId, Sender) ->
+    head(Preflist, BKey, ReqId, Sender, []).
+
+head(Preflist, BKey, ReqId, undefined, Options) ->
+    head(Preflist, BKey, ReqId, {fsm, undefined, self()}, Options);
+head(Preflist, BKey, ReqId, Sender, Options) ->
     Req = riak_kv_requests:new_head_request(sanitize_bkey(BKey), ReqId),
     riak_core_vnode_master:command(Preflist,
                                    Req,
                                    Sender,
+                                   Options,
                                    riak_kv_vnode_master).
 
 del(Preflist, BKey, ReqId) ->
@@ -613,11 +631,13 @@ put(Preflist, BKey, Obj, ReqId, StartTime, Options) when is_integer(StartTime) -
 
 put(Preflist, BKey, Obj, ReqId, StartTime, Options, Sender)
   when is_integer(StartTime) ->
+    % PUT requests come in with a {timeout, Timeout} option already set.
     Req = riak_kv_requests:new_put_request(
         sanitize_bkey(BKey), Obj, ReqId, StartTime, Options),
     riak_core_vnode_master:command(Preflist,
                                    Req,
                                    Sender,
+                                   Options,
                                    riak_kv_vnode_master).
 
 local_put(Index, Obj) ->
@@ -877,22 +897,24 @@ init([Index]) ->
     end.
 
 handle_overload_command(Req, Sender, Idx) ->
-    handle_overload_request(riak_kv_requests:request_type(Req), Req, Sender, Idx).
+    handle_overload_command(Req, Sender, Idx, []).
+handle_overload_command(Req, Sender, Idx, Options) ->
+    handle_overload_request(riak_kv_requests:request_type(Req), Req, Sender, Idx, Options).
 
-handle_overload_request(kv_put_request, _Req, Sender, Idx) ->
+handle_overload_request(kv_put_request, _Req, Sender, Idx, _Options) ->
     riak_core_vnode:reply(Sender, {fail, Idx, overload});
-handle_overload_request(kv_get_request, Req, Sender, Idx) ->
+handle_overload_request(kv_get_request, Req, Sender, Idx, _Options) ->
     ReqId = riak_kv_requests:get_request_id(Req),
     riak_core_vnode:reply(Sender, {r, {error, overload}, Idx, ReqId});
-handle_overload_request(kv_head_request, Req, Sender, Idx) ->
+handle_overload_request(kv_head_request, Req, Sender, Idx, _Options) ->
     ReqId = riak_kv_requests:get_request_id(Req),
     riak_core_vnode:reply(Sender, {r, {error, overload}, Idx, ReqId});
-handle_overload_request(kv_w1c_put_request, Req, Sender, _Idx) ->
+handle_overload_request(kv_w1c_put_request, Req, Sender, _Idx, _Options) ->
     Type = riak_kv_requests:get_replica_type(Req),
     riak_core_vnode:reply(Sender, ?KV_W1C_PUT_REPLY{reply={error, overload}, type=Type});
-handle_overload_request(kv_vnode_status_request, _Req, Sender, Idx) ->
+handle_overload_request(kv_vnode_status_request, _Req, Sender, Idx, _Options) ->
     riak_core_vnode:reply(Sender, {vnode_status, Idx, [{error, overload}]});
-handle_overload_request(_, _Req, Sender, _Idx) ->
+handle_overload_request(_, _Req, Sender, _Idx, _Options) ->
     riak_core_vnode:reply(Sender, {error, mailbox_overload}).
 
 
@@ -912,7 +934,10 @@ handle_overload_info(_, _) ->
     ok.
 
 
-handle_command({aae, AAERequest, IndexNs, Colour}, Sender, State) ->
+handle_command(Command, Sender, State) ->
+    handle_command(Command, Sender, [], State).
+
+handle_command({aae, AAERequest, IndexNs, Colour}, Sender, _Options, State) ->
     ReturnFun =
         fun(R) ->
             riak_core_vnode:reply(Sender, {reply, R, Colour})
@@ -956,7 +981,7 @@ handle_command({aae, AAERequest, IndexNs, Colour}, Sender, State) ->
     end,
     {noreply, State};
 handle_command(#riak_kv_listkeys_req_v2{bucket=Input, req_id=ReqId, caller=Caller}, _Sender,
-               State=#state{key_buf_size=BufferSize,
+               _Options, State=#state{key_buf_size=BufferSize,
                             mod=Mod,
                             modstate=ModState,
                             idx=Idx}) ->
@@ -1001,11 +1026,11 @@ handle_command(#riak_kv_listkeys_req_v2{bucket=Input, req_id=ReqId, caller=Calle
             {noreply, State}
     end;
 handle_command(#riak_core_fold_req_v1{} = ReqV1,
-               Sender, State) ->
+               Sender, Options, State) ->
     %% Use make_fold_req() to upgrade to the most recent ?FOLD_REQ
-    handle_command(riak_core_util:make_newest_fold_req(ReqV1), Sender, State);
+    handle_command(riak_core_util:make_newest_fold_req(ReqV1), Sender, Options, State);
 handle_command(?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
-                         forwardable=_Forwardable, opts=Opts}, Sender, State) ->
+                         forwardable=_Forwardable, opts=Opts}, Sender, _Options, State) ->
     %% The riak_core layer takes care of forwarding/not forwarding, so
     %% we ignore forwardable here.
     %%
@@ -1019,7 +1044,7 @@ handle_command(?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
     do_fold(FoldWrapper, Acc0, Sender, Opts, State);
 
 %% entropy exchange commands
-handle_command({hashtree_pid, Node}, _, State=#state{hashtrees=HT}) ->
+handle_command({hashtree_pid, Node}, _, _, State=#state{hashtrees=HT}) ->
     %% Handle riak_core request forwarding during ownership handoff.
     case node() of
         Node ->
@@ -1040,7 +1065,7 @@ handle_command({hashtree_pid, Node}, _, State=#state{hashtrees=HT}) ->
         _ ->
             {reply, {error, wrong_node}, State}
     end;
-handle_command({rehash, Bucket, Key}, _, State=#state{mod=Mod, modstate=ModState}) ->
+handle_command({rehash, Bucket, Key}, _, _, State=#state{mod=Mod, modstate=ModState}) ->
     case do_get_binary(Bucket, Key, Mod, ModState) of
         {ok, Bin, _UpdModState} ->
             aae_update(Bucket, Key, use_binary, unknown_no_old_object, Bin, State);
@@ -1050,7 +1075,7 @@ handle_command({rehash, Bucket, Key}, _, State=#state{mod=Mod, modstate=ModState
     end,
     {noreply, State};
 
-handle_command({refresh_index_data, BKey, OldIdxData}, Sender,
+handle_command({refresh_index_data, BKey, OldIdxData}, Sender, _Options,
                State=#state{mod=Mod, modstate=ModState}) ->
     {Bucket, Key} = BKey,
     {ok, Caps} = Mod:capabilities(Bucket, ModState),
@@ -1089,7 +1114,8 @@ handle_command({refresh_index_data, BKey, OldIdxData}, Sender,
             {reply, {error, {indexes_not_supported, Mod}}, State}
     end;
 
-handle_command({fold_indexes, FoldIndexFun, Acc}, Sender, State=#state{mod=Mod, modstate=ModState}) ->
+handle_command({fold_indexes, FoldIndexFun, Acc}, Sender, _Options,
+        State=#state{mod=Mod, modstate=ModState}) ->
     {ok, Caps} = Mod:capabilities(ModState),
     case lists:member(indexes, Caps) of
         true ->
@@ -1103,7 +1129,7 @@ handle_command({fold_indexes, FoldIndexFun, Acc}, Sender, State=#state{mod=Mod, 
     end;
 
 
-handle_command({rebuild_complete, store, ST}, _Sender, State) ->
+handle_command({rebuild_complete, store, ST}, _Sender, _Options, State) ->
     %% If store rebuild complete - then need to rebuild trees
     AAECntrl = State#state.aae_controller,
     Partition = State#state.idx,
@@ -1116,7 +1142,7 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
     {noreply, State};
 
-handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
+handle_command({rebuild_complete, trees, _ST}, _Sender, _Options, State) ->
     % Rebuilding the trees now complete, so change the status of the
     % rebuilding state so other rebuilds may be prompted
     Partition = State#state.idx,
@@ -1133,7 +1159,7 @@ handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
     end;
 
 handle_command({exchange_complete, ExchangeResult, ST},
-                                                    _Sender, State) ->
+                                                    _Sender, _Options, State) ->
     %% Record how many deltas were seen in the exchange
     %% Revert the skip_count to 0 so that exchanges can be made at the next
     %% prompt.
@@ -1149,7 +1175,7 @@ handle_command({exchange_complete, ExchangeResult, ST},
                             tictac_exchangetime = XT,
                             tictac_skiptick = 0}};
 
-handle_command({upgrade_hashtree, Node}, _, State=#state{hashtrees=HT}) ->
+handle_command({upgrade_hashtree, Node}, _, _, State=#state{hashtrees=HT}) ->
     %% Make sure we dont kick off an upgrade during a possible handoff
     case node() of
         Node ->
@@ -1176,11 +1202,11 @@ handle_command({upgrade_hashtree, Node}, _, State=#state{hashtrees=HT}) ->
     end;
 
 %% Commands originating from inside this vnode
-handle_command({backend_callback, Ref, Msg}, _Sender,
+handle_command({backend_callback, Ref, Msg}, _Sender, _Options,
                State=#state{mod=Mod, modstate=ModState}) ->
     Mod:callback(Ref, Msg, ModState),
     {noreply, State};
-handle_command(tictacaae_exchangepoke, _Sender, State) ->
+handle_command(tictacaae_exchangepoke, _Sender, _Options, State) ->
     XTick = app_helper:get_env(riak_kv, tictacaae_exchangetick),
     riak_core_vnode:send_command_after(XTick, tictacaae_exchangepoke),
     Idx = State#state.idx,
@@ -1285,7 +1311,7 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
             {noreply, State#state{tictac_skiptick = max(0, SkipCount - 1)}}
     end;
 
-handle_command(tictacaae_rebuildpoke, _Sender, State=#state{tictac_startup=TS})
+handle_command(tictacaae_rebuildpoke, _Sender, _Options, State=#state{tictac_startup=TS})
                                 when TS == true ->
     % On startup the first poke should check if the trees need rebuilding, e.g.
     % as the tree was not persisted when shutdown.  This won't rebuild unless
@@ -1300,7 +1326,7 @@ handle_command(tictacaae_rebuildpoke, _Sender, State=#state{tictac_startup=TS})
                             tictac_startup = false}};
 
 
-handle_command(tictacaae_rebuildpoke, Sender, State) ->
+handle_command(tictacaae_rebuildpoke, Sender, _Options, State) ->
     NRT = aae_controller:aae_nextrebuild(State#state.aae_controller),
     RTick = app_helper:get_env(riak_kv, tictacaae_rebuildtick),
     riak_core_vnode:send_command_after(RTick, tictacaae_rebuildpoke),
@@ -1371,7 +1397,7 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
                     end
             end
     end;
-handle_command({mapexec_error_noretry, JobId, Err}, _Sender, #state{mrjobs=Jobs}=State) ->
+handle_command({mapexec_error_noretry, JobId, Err}, _Sender, _Options, #state{mrjobs=Jobs}=State) ->
     NewState = case dict:find(JobId, Jobs) of
                    {ok, Job} ->
                        Jobs1 = dict:erase(JobId, Jobs),
@@ -1382,7 +1408,7 @@ handle_command({mapexec_error_noretry, JobId, Err}, _Sender, #state{mrjobs=Jobs}
                        State
                end,
     {noreply, NewState};
-handle_command({mapexec_reply, JobId, Result}, _Sender, #state{mrjobs=Jobs}=State) ->
+handle_command({mapexec_reply, JobId, Result}, _Sender, _Options, #state{mrjobs=Jobs}=State) ->
     NewState = case dict:find(JobId, Jobs) of
                    {ok, Job} ->
                        Jobs1 = dict:erase(JobId, Jobs),
@@ -1393,10 +1419,10 @@ handle_command({mapexec_reply, JobId, Result}, _Sender, #state{mrjobs=Jobs}=Stat
                        State
                end,
     {noreply, NewState};
-handle_command({reformat_object, BKey}, _Sender, State) ->
+handle_command({reformat_object, BKey}, _Sender, _Options, State) ->
     {Reply, UpdState} = do_reformat(BKey, State),
     {reply, Reply, UpdState};
-handle_command({fix_incorrect_index_entry, {done, ForUpgrade}}, _Sender,
+handle_command({fix_incorrect_index_entry, {done, ForUpgrade}}, _Sender, _Options,
                State=#state{mod=Mod, modstate=ModState}) ->
     case Mod:mark_indexes_fixed(ModState, ForUpgrade) of %% only defined for eleveldb backend
         {ok, NewModState} ->
@@ -1405,7 +1431,7 @@ handle_command({fix_incorrect_index_entry, {done, ForUpgrade}}, _Sender,
             {reply, error, State}
     end;
 handle_command({fix_incorrect_index_entry, Keys, ForUpgrade},
-               _Sender,
+               _Sender, _Options,
                State=#state{mod=Mod,
                             modstate=ModState}) ->
     Reply =
@@ -1421,7 +1447,7 @@ handle_command({fix_incorrect_index_entry, Keys, ForUpgrade},
         end,
     {reply, Reply, State};
 handle_command({get_index_entries, Opts},
-               Sender,
+               Sender, _Options,
                State=#state{mod=Mod,
                             modstate=ModState0}) ->
     ForUpgrade = not proplists:get_value(downgrade, Opts, false),
@@ -1469,9 +1495,9 @@ handle_command({get_index_entries, Opts},
             {reply, ignore, State}
     end;
 
-handle_command(report_hashtree_tokens, _Sender, State) ->
+handle_command(report_hashtree_tokens, _Sender, _Options, State) ->
     {reply, get(hashtree_tokens), State};
-handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, State) ->
+handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, _Options, State) ->
     case MaxToken > MinToken of
         true ->
             put(hashtree_tokens,
@@ -1481,24 +1507,24 @@ handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, State) ->
     end,
     {reply, ok, State};
 
-handle_command(Req, Sender, State) ->
-    handle_request(riak_kv_requests:request_type(Req), Req, Sender, State).
+handle_command(Req, Sender, Options, State) ->
+    handle_request(riak_kv_requests:request_type(Req), Req, Sender, Options, State).
 
 
 %% @todo: pre record encapsulation there was no catch all clause in handle_command,
 %%        so crashing on unknown should work.
-handle_request(kv_put_request, Req, Sender, #state{idx = Idx} = State) ->
+handle_request(kv_put_request, Req, Sender, Options, #state{idx = Idx} = State) ->
     StartTS = os:timestamp(),
     ReqId = riak_kv_requests:get_request_id(Req),
     riak_core_vnode:reply(Sender, {w, Idx, ReqId}),
-    {_Reply, UpdState} = do_put(Sender, Req, State),
+    {_Reply, UpdState} = do_put(Sender, Req, State, Options),
     update_vnode_stats(vnode_put, Idx, StartTS),
     {noreply, UpdState};
-handle_request(kv_get_request, Req, Sender, State) ->
+handle_request(kv_get_request, Req, Sender, Options, State) ->
     BKey = riak_kv_requests:get_bucket_key(Req),
     ReqId = riak_kv_requests:get_request_id(Req),
-    do_get(Sender, BKey, ReqId, State);
-handle_request(kv_head_request, Req, Sender, State) ->
+    do_get(Sender, BKey, ReqId, State, Options);
+handle_request(kv_head_request, Req, Sender, Options, State) ->
     Mod = State#state.mod,
     ModState = State#state.modstate,
     {BT, _K} = BKey = riak_kv_requests:get_bucket_key(Req),
@@ -1506,12 +1532,12 @@ handle_request(kv_head_request, Req, Sender, State) ->
     {ok, Capabilities} = Mod:capabilities(BT, ModState),
     case maybe_support_head_requests(Capabilities) of
         true ->
-            do_head(Sender, BKey, ReqId, State);
+            do_head(Sender, BKey, ReqId, State, Options);
         _ ->
-            do_get(Sender, BKey, ReqId, State)
+            do_get(Sender, BKey, ReqId, State, Options)
     end;
 %% NB. The following two function clauses discriminate on the async_put State field
-handle_request(kv_w1c_put_request, Req, Sender, State=#state{async_put=true}) ->
+handle_request(kv_w1c_put_request, Req, Sender, _Options, State=#state{async_put=true}) ->
     {Bucket, Key} = riak_kv_requests:get_bucket_key(Req),
     EncodedVal = riak_kv_requests:get_encoded_obj(Req),
     ReplicaType = riak_kv_requests:get_replica_type(Req),
@@ -1523,9 +1549,11 @@ handle_request(kv_w1c_put_request, Req, Sender, State=#state{async_put=true}) ->
         {ok, UpModState} ->
             {noreply, State#state{modstate=UpModState}};
         {error, Reason, UpModState} ->
-            {reply, ?KV_W1C_PUT_REPLY{reply={error, Reason}, type=ReplicaType}, State#state{modstate=UpModState}}
+            {reply, ?KV_W1C_PUT_REPLY{reply={error, Reason}, type=ReplicaType},
+                State#state{modstate=UpModState}}
     end;
-handle_request(kv_w1c_put_request, Req, _Sender, State=#state{async_put=false, update_hook=UpdateHook}) ->
+handle_request(kv_w1c_put_request, Req, _Sender, _Options,
+         State=#state{async_put=false, update_hook=UpdateHook}) ->
     {Bucket, Key} = riak_kv_requests:get_bucket_key(Req),
     EncodedVal = riak_kv_requests:get_encoded_obj(Req),
     ReplicaType = riak_kv_requests:get_replica_type(Req),
@@ -1544,7 +1572,7 @@ handle_request(kv_w1c_put_request, Req, _Sender, State=#state{async_put=false, u
         {error, Reason, UpModState} ->
             {reply, ?KV_W1C_PUT_REPLY{reply={error, Reason}, type=ReplicaType}, State#state{modstate=UpModState}}
     end;
-handle_request(kv_vnode_status_request, _Req, _Sender, State=#state{idx=Index,
+handle_request(kv_vnode_status_request, _Req, _Sender, _Options, State=#state{idx=Index,
                                                                    mod=Mod,
                                                                    modstate=ModState,
                                                                    counter=CS,
@@ -1555,17 +1583,16 @@ handle_request(kv_vnode_status_request, _Req, _Sender, State=#state{idx=Index,
                      {counter_lease_size, LeaseSize}, {counter_leasing, Leasing}],
     VNodeStatus = [BackendStatus, {vnodeid, VId} | CounterStatus],
     {reply, {vnode_status, Index, VNodeStatus}, State};
-handle_request(kv_delete_request, Req, _Sender, State) ->
+handle_request(kv_delete_request, Req, _Sender, _Options, State) ->
     BKey = riak_kv_requests:get_bucket_key(Req),
     do_delete(BKey, State);
-handle_request(kv_vclock_request, Req, _Sender, State) ->
+handle_request(kv_vclock_request, Req, _Sender, _Options, State) ->
     BKeys = riak_kv_requests:get_bucket_keys(Req),
     {reply, do_get_vclocks(BKeys, State), State};
-handle_request(kv_reap_request, Req, _Sender, State) ->
+handle_request(kv_reap_request, Req, _Sender, _Options, State) ->
     BKey = riak_kv_requests:get_bucket_key(Req),
     DeleteHash = riak_kv_requests:get_delete_hash(Req),
     {reply, ok, final_delete(BKey, DeleteHash, State)}.
-
 
 handle_coverage_request(kv_listkeys_request, Req, FilterVNodes, Sender, State) ->
     Bucket = riak_kv_requests:get_bucket(Req),
@@ -2285,13 +2312,16 @@ handle_coverage_fold(FoldType, Bucket, ItemFilter, ResultFun,
 %% eventually be re-deleted. NOTE: this makes write requests N+M where
 %% M is the number of vnodes forwarding.
 handle_handoff_command(Req, Sender, State) ->
-    ReqType = riak_kv_requests:request_type(Req),
-    handle_handoff_request(ReqType, Req, Sender, State).
+    handle_handoff_command(Req, Sender, [], State).
 
-handle_handoff_request(kv_put_request, Req, Sender, State) ->
+handle_handoff_command(Req, Sender, Options, State) ->
+    ReqType = riak_kv_requests:request_type(Req),
+    handle_handoff_request(ReqType, Req, Sender, Options, State).
+
+handle_handoff_request(kv_put_request, Req, Sender, Options, State) ->
     case riak_kv_requests:is_coordinated_put(Req) of
         false ->
-            {noreply, NewState} = handle_command(Req, Sender, State),
+            {noreply, NewState} = handle_command(Req, Sender, Options, State),
             {forward, NewState};
         true ->
             %% riak_kv#1046 - don't make fake siblings. Perform the
@@ -2302,7 +2332,7 @@ handle_handoff_request(kv_put_request, Req, Sender, State) ->
             ReqId = riak_kv_requests:get_request_id(Req),
             StartTS = os:timestamp(),
             riak_core_vnode:reply(Sender, {w, Idx, ReqId}),
-            {Reply, UpdState} = do_put(Sender, Req, State),
+            {Reply, UpdState} = do_put(Sender, Req, State, Options),
             update_vnode_stats(vnode_put, Idx, StartTS),
 
             case Reply of
@@ -2318,8 +2348,8 @@ handle_handoff_request(kv_put_request, Req, Sender, State) ->
                     {noreply, UpdState}
             end
     end;
-handle_handoff_request(kv_w1c_put_request, Request, Sender, State) ->
-    NewState0 = case handle_command(Request, Sender, State) of
+handle_handoff_request(kv_w1c_put_request, Request, Sender, Options, State) ->
+    NewState0 = case handle_command(Request, Sender, Options, State) of
         {noreply, NewState} ->
             NewState;
         {reply, Reply, NewState} ->
@@ -2329,19 +2359,19 @@ handle_handoff_request(kv_w1c_put_request, Request, Sender, State) ->
             NewState
     end,
     {forward, NewState0};
-handle_handoff_request(kv_delete_request, Request, Sender, State) ->
+handle_handoff_request(kv_delete_request, Request, Sender, Options, State) ->
     HandoffDeletes = app_helper:get_env(riak_kv, handoff_deletes),
-    case {HandoffDeletes, handle_command(Request, Sender, State)} of
+    case {HandoffDeletes, handle_command(Request, Sender, Options, State)} of
         {true, {reply, {del, Idx, Reason}, NewState}} ->
             riak_core_vnode:reply(Sender, {del, Idx, Reason}),
             {forward, NewState};
         {_, Result} ->
             Result
     end;
-handle_handoff_request(_Other, Req, Sender, State) ->
+handle_handoff_request(_Other, Req, Sender, Options, State) ->
     %% @todo: this should be based on the type of the request when the
     %%        hiding of records is complete.
-    handle_command(Req, Sender, State).
+    handle_command(Req, Sender, Options, State).
 
 %% callback used by dynamic ring sizing to determine where requests should be forwarded.
 request_hash(Req) ->
@@ -2506,7 +2536,7 @@ handle_info({ensemble_ping, From}, State) ->
 handle_info({ensemble_get, Key, From}, State=#state{idx=Idx, forward=Fwd}) ->
     case Fwd of
         undefined ->
-            {reply, {r, Retval, _, _}, State2} = do_get(undefined, Key, undefined, State),
+            {reply, {r, Retval, _, _}, State2} = do_get(undefined, Key, undefined, State, []),
             Reply = case Retval of
                         {ok, Obj} ->
                             Obj;
@@ -2555,7 +2585,7 @@ handle_info({raw_forward_put, Key, Obj, From}, State) ->
     riak_kv_ensemble_backend:reply(From, Reply),
     {ok, State2};
 handle_info({raw_forward_get, Key, From}, State) ->
-    {reply, {r, Retval, _, _}, State2} = do_get(undefined, Key, undefined, State),
+    {reply, {r, Retval, _, _}, State2} = do_get(undefined, Key, undefined, State, []),
     Reply = case Retval of
                 {ok, Obj} ->
                     Obj;
@@ -2688,17 +2718,19 @@ raw_put({Idx, Node}, Key, Obj) ->
     ok.
 
 %% @private
-do_put(Sender, Request, State) ->
+do_put(Sender, Request, State, Options0) ->
     BKey = riak_kv_requests:get_bucket_key(Request),
     Object = riak_kv_requests:get_object(Request),
     RequestId = riak_kv_requests:get_request_id(Request),
     StartTime = riak_kv_requests:get_start_time(Request),
-    Options = riak_kv_requests:get_options(Request),
+    % Combine incoming options (from the proxy in this case) with req options
+    Options = riak_kv_requests:get_options(Request) ++ Options0,
     do_put(Sender, BKey, Object, RequestId, StartTime, Options, State).
 
 %% @private
 %% upon receipt of a client-initiated put
-do_put(Sender, {Bucket, _Key}=BKey, RObj, ReqID, StartTime, Options, State) ->
+do_put(Sender, {Bucket, _Key}=BKey, RObj,
+       ReqID, StartTime, Options, State=#state{idx = Idx}) ->
     BProps =  case proplists:get_value(bucket_props, Options) of
                   undefined ->
                       riak_core_bucket:get_bucket(Bucket);
@@ -2731,13 +2763,28 @@ do_put(Sender, {Bucket, _Key}=BKey, RObj, ReqID, StartTime, Options, State) ->
             crdt_op = CRDTOp,
             sync_on_write = SyncOnWrite,
             reason = put},
-    {PrepPutRes, UpdPutArgs, State2} = prepare_put(State, PutArgs),
-    {Reply, UpdState} = perform_put(PrepPutRes, State2, UpdPutArgs),
-    riak_core_vnode:reply(Sender, Reply),
-
-    update_index_write_stats(UpdPutArgs#putargs.is_index, UpdPutArgs#putargs.index_specs),
-    {Reply, UpdState}.
-
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            {PrepPutRes, UpdPutArgs, State2} = prepare_put(State, PutArgs),
+            case riak_core_util:evaluate_timeouts(UpdatedOptions) of
+                {true, _} ->
+                    {Reply, UpdState} = perform_put(PrepPutRes, State2, UpdPutArgs),
+                    riak_core_vnode:reply(Sender, Reply),
+                    update_index_write_stats(UpdPutArgs#putargs.is_index,
+                                             UpdPutArgs#putargs.index_specs),
+                    {Reply, UpdState};
+                _ ->
+                    % this log output is used by riak_test
+                    ?LOG_DEBUG("Not bothering to call perform_put because of timeout"),
+                    riak_kv_stat:update(vnode_put_timeout),
+                    {{fail, Idx, {error, timeout}}, State2}
+                end;
+        _ ->
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call prepare_put because of timeout"),
+            riak_kv_stat:update(vnode_put_timeout),
+            {{fail, Idx, {error, timeout}}, State}
+    end.
 
 %% @doc Remove a tombstone, assuming the state of the object currently in the
 %% store is the same tombstone from when the removal decision was made
@@ -3210,24 +3257,44 @@ put_merge(true, LWW, CurObj, UpdObj, {_NewEpoch, VId}, StartTime) ->
     {newobj, riak_object:update(LWW, CurObj, UpdObj, VId, StartTime)}.
 
 %% @private
-do_get(_Sender, BKey, ReqID,
-       State=#state{idx=Idx, mod=Mod, modstate=ModState}) ->
+do_get(_Sender, BKey, ReqID, State=#state{idx=Idx,
+                                          mod=Mod,
+                                          modstate=ModState}, Options) ->
     StartTS = os:timestamp(),
-    {Retval, ModState1} = do_get_term(BKey, Mod, ModState),
-    State1 = State#state{modstate=ModState1},
-    {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
-    update_vnode_stats(vnode_get, Idx, StartTS),
-    {reply, {r, Retval1, Idx, ReqID}, State3}.
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, _} ->
+            {Retval, ModState1} = do_get_term(BKey, Mod, ModState),
+            State1 = State#state{modstate=ModState1},
+            {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
+            update_vnode_stats(vnode_get, Idx, StartTS),
+            {reply, {r, Retval1, Idx, ReqID}, State3};
+        _ ->
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call do_get_term because of timeout"),
+            riak_kv_stat:update(vnode_get_timeout),
+            update_vnode_stats(vnode_get, Idx, StartTS),
+            {reply, {r, {error, timeout}, Idx, ReqID}, State}
+    end.
 
 %% @private
-do_head(_Sender, BKey, ReqID,
-       State=#state{idx=Idx, mod=Mod, modstate=ModState}) ->
+do_head(_Sender, BKey, ReqID, State=#state{idx=Idx,
+                                           mod=Mod,
+                                           modstate=ModState}, Options) ->
     StartTS = os:timestamp(),
-    {Retval, ModState1} = do_head_term(BKey, Mod, ModState),
-    State1 = State#state{modstate=ModState1},
-    {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
-    update_vnode_stats(vnode_head, Idx, StartTS),
-    {reply, {r, Retval1, Idx, ReqID}, State3}.
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, _} ->
+            {Retval, ModState1} = do_head_term(BKey, Mod, ModState),
+            State1 = State#state{modstate=ModState1},
+            {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
+            update_vnode_stats(vnode_head, Idx, StartTS),
+            {reply, {r, Retval1, Idx, ReqID}, State3};
+        _ ->
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call do_head_term because of timeout"),
+            riak_kv_stat:update(vnode_head_timeout),
+            update_vnode_stats(vnode_head, Idx, StartTS),
+            {reply, {r, {error, timeout}, Idx, ReqID}, State}
+    end.
 
 %% @private
 %% Function shared between GET and HEAD requests, so should not assume

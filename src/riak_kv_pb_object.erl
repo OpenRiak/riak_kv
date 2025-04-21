@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.
-%% Copyright (c) 2020-2024 Workday, Inc.
+%% Copyright (c) 2022-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -55,6 +55,7 @@
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
@@ -67,7 +68,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -107,8 +110,11 @@ decode(Code, Bin) ->
 encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
-%% @doc process/2 callback. Handles an incoming request message.
-process(rpbgetclientidreq, #state{client=C, client_id=CID} = State) ->
+%% @doc process/2,3 callback. Handles an incoming request message.
+process(Req, State) ->
+    process(Req, State, #{}).
+
+process(rpbgetclientidreq, #state{client=C, client_id=CID} = State, _ProcessOptions) ->
     ClientId =
         case riak_core_capability:get({riak_kv, vnode_vclocks}) of
             true ->
@@ -119,7 +125,7 @@ process(rpbgetclientidreq, #state{client=C, client_id=CID} = State) ->
     Resp = #rpbgetclientidresp{client_id = ClientId},
     {reply, Resp, State};
 
-process(#rpbsetclientidreq{client_id = ClientId}, State) ->
+process(#rpbsetclientidreq{client_id = ClientId}, State, _ProcessOptions) ->
     NewState = case riak_core_capability:get({riak_kv, vnode_vclocks}) of
                    true -> State#state{client_id=ClientId};
                    false ->
@@ -128,11 +134,11 @@ process(#rpbsetclientidreq{client_id = ClientId}, State) ->
                end,
     {reply, rpbsetclientidresp, NewState};
 
-process(#rpbgetreq{bucket = <<>>}, State) ->
+process(#rpbgetreq{bucket = <<>>}, State, _ProcessOptions) ->
     {error, "Bucket cannot be zero-length", State};
-process(#rpbgetreq{key = <<>>}, State) ->
+process(#rpbgetreq{key = <<>>}, State, _ProcessOptions) ->
     {error, "Key cannot be zero-length", State};
-process(#rpbgetreq{type = <<>>}, State) ->
+process(#rpbgetreq{type = <<>>}, State, _ProcessOptions) ->
     {error, "Type cannot be zero-length", State};
 process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
                     notfound_ok=NFOk, node_confirms=NC,
@@ -140,7 +146,10 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
                     head=Head, deletedvclock=DeletedVClock,
                     n_val=N_val, sloppy_quorum=SloppyQuorum,
                     timeout=Timeout},
-            #state{client=C} = State) ->
+            #state{client=C} = State, ProcessOptions) ->
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, add it to the options list to adjust the timeout.
+    RecvTime = maps:get(recv_time, ProcessOptions, undefined),
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
     B = maybe_bucket_type(T, B0),
@@ -148,6 +157,7 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
         make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
+        make_option(recv_time, RecvTime) ++
         make_option(timeout, Timeout) ++
         make_option(notfound_ok, NFOk) ++
         make_option(node_confirms, NC) ++
@@ -155,14 +165,17 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
     riak_kv_stat:update(pb_get_request),
-    case riak_client:get(B, K, Options, C) of
-        {ok, O} ->
-            case erlify_rpbvc(VClock) == riak_object:vclock(O) of
-                true ->
-                    {reply, #rpbgetresp{unchanged = true}, State};
-                _ ->
-                    Contents = riak_object:get_contents(O),
-                    PbContent = case Head of
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            case riak_client:get(B, K, UpdatedOptions, C) of
+                {ok, O} ->
+                    case erlify_rpbvc(VClock) == riak_object:vclock(O) of
+                        true ->
+                            {reply, #rpbgetresp{unchanged = true}, State};
+                        _ ->
+                            Contents = riak_object:get_contents(O),
+                            PbContent =
+                                case Head of
                                     true ->
                                         %% Remove all the 'value' fields from the contents
                                         %% This is a rough equivalent of a REST HEAD
@@ -172,22 +185,28 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
                                     _ ->
                                         riak_pb_kv_codec:encode_contents(Contents)
                                 end,
-                    {reply, #rpbgetresp{content = PbContent,
-                                        vclock = pbify_rpbvc(riak_object:vclock(O))}, State}
+                            {reply, #rpbgetresp{content = PbContent,
+                                                vclock = pbify_rpbvc(riak_object:vclock(O))},
+                                                State}
+                    end;
+                {error, {deleted, TombstoneVClock}} ->
+                    %% Found a tombstone - return its vector clock so it can
+                    %% be properly overwritten
+                    {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
+                {error, notfound} ->
+                    {reply, #rpbgetresp{}, State};
+                {error, Reason} = Resp ->
+                    update_error_stat(gets, Resp),
+                    {error, {format, Reason}, State}
             end;
-        {error, {deleted, TombstoneVClock}} ->
-            %% Found a tombstone - return its vector clock so it can
-            %% be properly overwritten
-            {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
-        {error, notfound} ->
-            {reply, #rpbgetresp{}, State};
-        {error, Reason} = Resp ->
-            update_error_stat(gets, Resp),
-            {error, {format, Reason}, State}
+        {false, _} ->
+            ?LOG_ERROR("Not bothering to call riak_client:get because of timeout"),
+            update_error_stat(gets, {error, timeout}),
+            {error, {format, timeout}, State}
     end;
 
 process(#rpbfetchreq{queuename = QueueName, encoding = EncodingBin},
-        #state{client=C, repl_compress=ToCompress} = State) ->
+        #state{client=C, repl_compress=ToCompress} = State, _ProcessOptions) ->
     Result =
         try
             riak_client:fetch(binary_to_existing_atom(QueueName, utf8), C)
@@ -253,7 +272,7 @@ process(#rpbfetchreq{queuename = QueueName, encoding = EncodingBin},
             {error, {format, Reason}, State}
     end;
 
-process(#rpbpushreq{queuename = QueueNameBin, keys_value = KVL}, State) ->
+process(#rpbpushreq{queuename = QueueNameBin, keys_value = KVL}, State, _ProcessOptions) ->
     QueueName = binary_to_existing_atom(QueueNameBin, utf8),
     KeyClockList = lists:map(fun unpack_keyclock_fun/1, KVL),
     ok = riak_kv_replrtq_src:replrtq_ttaaefs(QueueName, KeyClockList),
@@ -272,7 +291,7 @@ process(#rpbpushreq{queuename = QueueNameBin, keys_value = KVL}, State) ->
                 State}
     end;
 
-process(rpbmembershipreq, State) ->
+process(rpbmembershipreq, State, _ProcessOptions) ->
     MembershipList =
         lists:map(
             fun({IP, Port}) ->
@@ -281,60 +300,84 @@ process(rpbmembershipreq, State) ->
             riak_client:membership_request(pb)),
     {reply, #rpbmembershipresp{up_nodes = MembershipList}, State};
 
-process(#rpbputreq{bucket = <<>>}, State) ->
+process(#rpbputreq{bucket = <<>>}, State, _ProcessOptions) ->
     {error, "Bucket cannot be zero-length", State};
-process(#rpbputreq{key = <<>>}, State) ->
+process(#rpbputreq{key = <<>>}, State, _ProcessOptions) ->
     {error, "Key cannot be zero-length", State};
-process(#rpbputreq{type = <<>>}, State) ->
+process(#rpbputreq{type = <<>>}, State, _ProcessOptions) ->
     {error, "Type cannot be zero-length", State};
-process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC,
+process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, timeout=Timeout,
                    if_not_modified=NotMod, if_none_match=NoneMatch,
                    n_val=N_val, sloppy_quorum=SloppyQuorum} = Req,
-        #state{client=C} = State) when NotMod; NoneMatch ->
+        #state{client=C} = State, ProcessOptions) when NotMod; NoneMatch ->
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, add it to the options list to adjust the timeout.
+    RecvTime = maps:get(recv_time, ProcessOptions, undefined),
     GetOpts = make_option(n_val, N_val) ++
+              make_option(recv_time, RecvTime) ++
+              make_option(timeout, Timeout) ++
               make_option(sloppy_quorum, SloppyQuorum),
     B = maybe_bucket_type(T, B0),
-    Result =
-        case riak_kv_util:consistent_object(B) of
-            true ->
-                consistent;
-            false ->
-                riak_client:get(B, K, GetOpts, C)
-        end,
-    case Result of
-        consistent ->
-            process(Req#rpbputreq{if_not_modified=undefined,
-                                  if_none_match=undefined},
-                    State#state{is_consistent = true});
-        {ok, _} when NoneMatch ->
-            {error, "match_found", State};
-        {ok, O} when NotMod ->
-            case erlify_rpbvc(PbVC) == riak_object:vclock(O) of
+    {Result, UpdatedOptions} = case riak_core_util:evaluate_timeouts(GetOpts) of
+        {true, UpdatedOpts} ->
+            case riak_kv_util:consistent_object(B) of
                 true ->
-                    process(Req#rpbputreq{if_not_modified=undefined,
-                                          if_none_match=undefined},
-                            State);
-                _ ->
-                    {error, "modified", State}
+                    {consistent, UpdatedOpts};
+                false ->
+                    {riak_client:get(B, K, UpdatedOpts, C), UpdatedOpts}
             end;
-        {error, _} when NoneMatch ->
-            process(Req#rpbputreq{if_not_modified=undefined,
-                                  if_none_match=undefined},
-                    State);
-        {error, notfound} when NotMod ->
-            {error, "notfound", State};
-        {error, Reason} = Resp ->
-            update_error_stat(puts, Resp),
-            {error, {format, Reason}, State}
+        {false, UpdatedOpts} ->
+            ?LOG_ERROR("Not bothering to call riak_client:get because of timeout"),
+            {{error, timeout}, UpdatedOpts}
+    end,
+    % Update timeout again to account for time spent in 'get' request and
+    % remove the recv_time from process options in order to evaluate timeouts
+    % with an updated monotonic time.
+    case riak_core_util:evaluate_timeouts(UpdatedOptions) of
+        {true, UpdatedOpts2} ->
+            ExternalOpts = riak_core_util:externalize_timeouts(UpdatedOpts2),
+            UpdatedProcessOptions = maps:remove(recv_time, ProcessOptions),
+            NewTimeout = proplists:get_value(timeout, ExternalOpts, ?DEFAULT_TIMEOUT_MS),
+            case Result of
+                consistent ->
+                    process(Req#rpbputreq{timeout=NewTimeout,
+                                        if_not_modified=undefined,
+                                        if_none_match=undefined},
+                            State#state{is_consistent = true}, UpdatedProcessOptions);
+                {ok, _} when NoneMatch ->
+                    {error, "match_found", State};
+                {ok, O} when NotMod ->
+                    case erlify_rpbvc(PbVC) == riak_object:vclock(O) of
+                        true ->
+                            process(Req#rpbputreq{timeout=NewTimeout,
+                                                if_not_modified=undefined,
+                                                if_none_match=undefined},
+                                    State, UpdatedProcessOptions);
+                        _ ->
+                            {error, "modified", State}
+                    end;
+                {error, _} when NoneMatch ->
+                    process(Req#rpbputreq{timeout=NewTimeout,
+                                        if_not_modified=undefined,
+                                        if_none_match=undefined},
+                            State, UpdatedProcessOptions);
+                {error, notfound} when NotMod ->
+                    {error, "notfound", State};
+                {error, Reason} = Resp ->
+                    update_error_stat(puts, Resp),
+                    {error, {format, Reason}, State}
+            end;
+        _ ->
+            ?LOG_ERROR("Not bothering to recurse into process because of timeout"),
+            update_error_stat(puts, {error, timeout}),
+            {error, {format, timeout}, State}
     end;
-
 process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
                    w=W0, dw=DW0, pw=PW0, return_body=ReturnBody,
                    return_head=ReturnHead, timeout=Timeout, asis=AsIs,
                    n_val=N_val, sloppy_quorum=SloppyQuorum,
                    node_confirms=NodeConfirms0},
-        #state{client=C} = State0) ->
-
+        #state{client=C} = State0, ProcessOptions) ->
     case K of
         undefined ->
             %% Generate a key, the user didn't supply one
@@ -345,6 +388,14 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
             %% Don't return the key since we're not generating one
             ReturnKey = undefined
     end,
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, add it to the options list to adjust the timeout.
+    RecvTimeOptions = case maps:get(recv_time, ProcessOptions, undefined) of
+        undefined ->
+            [];
+        RecvTime ->
+            [{recv_time, RecvTime}]
+    end,
     B = maybe_bucket_type(T, B0),
     O0 = riak_object:new(B, Key, <<>>),
     O1 = update_rpbcontent(O0, RpbContent),
@@ -354,16 +405,15 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
     DW = decode_quorum(DW0),
     PW = decode_quorum(PW0),
     NodeConfirms = decode_quorum(NodeConfirms0),
-    B = maybe_bucket_type(T, B0),
     Options = case ReturnBody of
-                  1 -> [returnbody];
-                  true -> [returnbody];
-                  _ ->
-                      case ReturnHead of
-                          true -> [returnbody];
-                          _ -> []
-                      end
-              end,
+                1 -> [returnbody];
+                true -> [returnbody];
+                _ ->
+                    case ReturnHead of
+                        true -> [returnbody];
+                        _ -> []
+                    end
+            end,
     {Options2, State} =
         case State0#state.is_consistent of
             true ->
@@ -377,43 +427,60 @@ process(#rpbputreq{bucket=B0, type=T, key=K, vclock=PbVC, content=RpbContent,
                         {node_confirms, NodeConfirms},
                         {timeout, Timeout}, {asis, AsIs},
                         {n_val, N_val},
-                        {sloppy_quorum, SloppyQuorum}]) ++ Options2,
+                        {sloppy_quorum, SloppyQuorum}]) ++ Options2 ++ RecvTimeOptions,
     riak_kv_stat:update(pb_put_request),
-    case riak_client:put(O, Opts, C) of
-        ok when is_binary(ReturnKey) ->
-            PutResp = #rpbputresp{key = ReturnKey},
-            {reply, PutResp, State};
-        ok ->
-            {reply, #rpbputresp{}, State};
-        {ok, Obj} ->
-            Contents = riak_object:get_contents(Obj),
-            PbContents = case ReturnHead of
-                             true ->
-                                 %% Remove all the 'value' fields from the contents
-                                 %% This is a rough equivalent of a REST HEAD
-                                 %% request
-                                 BlankContents = [{MD, <<>>} || {MD, _} <- Contents],
-                                 riak_pb_kv_codec:encode_contents(BlankContents);
-                             _ ->
-                                 riak_pb_kv_codec:encode_contents(Contents)
-                         end,
-            PutResp = #rpbputresp{content = PbContents,
-                                  vclock = pbify_rpbvc(riak_object:vclock(Obj)),
-                                  key = ReturnKey
-                                 },
-            {reply, PutResp, State};
-        {error, notfound} ->
-            {reply, #rpbputresp{}, State};
-        {error, Reason} = Resp ->
-            update_error_stat(puts, Resp),
-            {error, {format, Reason}, State}
+    case riak_core_util:evaluate_timeouts(Opts) of
+        {true, UpdatedOpts} ->
+            case riak_client:put(O, UpdatedOpts, C) of
+                ok when is_binary(ReturnKey) ->
+                    PutResp = #rpbputresp{key = ReturnKey},
+                    {reply, PutResp, State};
+                ok ->
+                    {reply, #rpbputresp{}, State};
+                {ok, Obj} ->
+                    Contents = riak_object:get_contents(Obj),
+                    PbContents = case ReturnHead of
+                                    true ->
+                                        %% Remove all the 'value' fields from the contents
+                                        %% This is a rough equivalent of a REST HEAD
+                                        %% request
+                                        BlankContents = [{MD, <<>>} || {MD, _} <- Contents],
+                                        riak_pb_kv_codec:encode_contents(BlankContents);
+                                    _ ->
+                                        riak_pb_kv_codec:encode_contents(Contents)
+                                end,
+                    PutResp = #rpbputresp{content = PbContents,
+                                        vclock = pbify_rpbvc(riak_object:vclock(Obj)),
+                                        key = ReturnKey
+                                        },
+                    {reply, PutResp, State};
+                {error, notfound} ->
+                    {reply, #rpbputresp{}, State};
+                {error, Reason} = Resp ->
+                    update_error_stat(puts, Resp),
+                    {error, {format, Reason}, State}
+            end;
+        {false, _} ->
+            ?LOG_ERROR("Not bothering to call riak_client:put because of timeout"),
+            update_error_stat(puts, {error, timeout}),
+            {error, {format, timeout}, State}
     end;
-process(#rpbclonereq{} = Req, State) ->
-    process_clone(Req, State);
+
+process(#rpbclonereq{} = Req, State, ProcessOptions) ->
+    process_clone(Req, State, ProcessOptions);
+
 process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
                    r=R0, w=W0, pr=PR0, pw=PW0, dw=DW0, rw=RW0,
                    timeout=Timeout, n_val=N_val, sloppy_quorum=SloppyQuorum},
-        #state{client=C} = State) ->
+        #state{client=C} = State, ProcessOptions) ->
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, add it to the options list to adjust the timeout.
+    RecvTimeOptions = case maps:get(recv_time, ProcessOptions, undefined) of
+        undefined ->
+            [];
+        RecvTime ->
+            [{recv_time, RecvTime}]
+    end,
     W = decode_quorum(W0),
     PW = decode_quorum(PW0),
     DW = decode_quorum(DW0),
@@ -424,43 +491,49 @@ process(#rpbdelreq{bucket=B0, type=T, key=K, vclock=PbVc,
     B = maybe_bucket_type(T, B0),
     Options = make_options([{r, R}, {w, W}, {rw, RW}, {pr, PR}, {pw, PW},
                             {dw, DW}, {timeout, Timeout}, {n_val, N_val},
-                            {sloppy_quorum, SloppyQuorum}]),
+                            {sloppy_quorum, SloppyQuorum}]) ++ RecvTimeOptions,
     riak_kv_stat:update(pb_delete_request),
-    Result =
-        case PbVc of
-            undefined ->
-                riak_client:delete(B, K, Options, C);
-            _ ->
-                VClock = erlify_rpbvc(PbVc),
-                riak_client:delete_vclock(B, K, VClock, Options, C)
-        end,
-    case Result of
-        ok ->
-            {reply, rpbdelresp, State};
-        {error, notfound} ->  %% delete succeeds if already deleted
-            {reply, rpbdelresp, State};
-        {error, Reason} = Resp ->
-            update_error_stat(deletes, Resp),
-            {error, {format, Reason}, State}
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOpts} ->
+            Result = case PbVc of
+                undefined ->
+                    riak_client:delete(B, K, UpdatedOpts, C);
+                _ ->
+                    VClock = erlify_rpbvc(PbVc),
+                    riak_client:delete_vclock(B, K, VClock, UpdatedOpts, C)
+            end,
+            case Result of
+                ok ->
+                    {reply, rpbdelresp, State};
+                {error, notfound} ->  %% delete succeeds if already deleted
+                    {reply, rpbdelresp, State};
+                {error, Reason} = Resp ->
+                    update_error_stat(deletes, Resp),
+                    {error, {format, Reason}, State}
+            end;
+        {false, _} ->
+            ?LOG_ERROR("Not bothering to call riak_client:delete because of timeout"),
+            update_error_stat(deletes, {error, timeout}),
+            {error, {format, timeout}, State}
     end.
 
-process_clone(#rpbclonereq{src_bucket = <<>>}, State) ->
+process_clone(#rpbclonereq{src_bucket = <<>>}, State, _ProcessOptions) ->
     {error, "Src bucket cannot be zero-length", State};
-process_clone(#rpbclonereq{src_key = <<>>}, State) ->
+process_clone(#rpbclonereq{src_key = <<>>}, State, _ProcessOptions) ->
     {error, "Src key cannot be zero-length", State};
-process_clone(#rpbclonereq{src_bucket_type = <<>>}, State) ->
+process_clone(#rpbclonereq{src_bucket_type = <<>>}, State, _ProcessOptions) ->
     {error, "Src bucket type cannot be zero-length", State};
-process_clone(#rpbclonereq{dst_bucket = <<>>}, State) ->
+process_clone(#rpbclonereq{dst_bucket = <<>>}, State, _ProcessOptions) ->
     {error, "Dst bucket cannot be zero-length", State};
-process_clone(#rpbclonereq{dst_key = <<>>}, State) ->
+process_clone(#rpbclonereq{dst_key = <<>>}, State, _ProcessOptions) ->
     {error, "Dst key cannot be zero-length", State};
-process_clone(#rpbclonereq{dst_bucket_type = <<>>}, State) ->
+process_clone(#rpbclonereq{dst_bucket_type = <<>>}, State, _ProcessOptions) ->
     {error, "Dst bucket type cannot be zero-length", State};
 process_clone(#rpbclonereq{
         src_bucket = SrcB, src_bucket_type = SrcT, src_key = SrcK,
         src_vclock = SrcVC,
         dst_bucket = DstB, dst_bucket_type = DstT, dst_key = DstK } = Req,
-        #state{client = Client} = State ) ->
+        #state{client = Client} = State, ProcessOptions) ->
     SrcBucket = maybe_bucket_type(SrcT, SrcB),
     DstBucket = maybe_bucket_type(DstT, DstB),
     SrcVClock = case SrcVC of
@@ -469,7 +542,9 @@ process_clone(#rpbclonereq{
         _ ->
             riak_object:decode_vclock(SrcVC)
     end,
-    CloneOpts = make_options(Req),
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, add it to the options list to adjust the timeout.
+    CloneOpts = maps:merge(make_options(Req), maps:with([recv_time], ProcessOptions)),
     StatsKey = case CloneOpts of
         #{del_src := true} ->
             riak_kv_stat:update(pb_move_request),
@@ -495,44 +570,56 @@ process_clone(#rpbclonereq{
                 #rpbcloneresp{content = EncContent, vclock = EncVClock}
         end
     end,
-    case riak_client:clone(SrcBucket, SrcK,
-            SrcVClock, DstBucket, DstK, CloneOpts, Client) of
-        {ok, RObj} ->
-            {reply, ObjectResponse(RObj), State};
-        {ok, RObj, [_|_] = Details} ->
-            Resp0 = ObjectResponse(RObj),
-            Resp1 = Resp0#rpbcloneresp{
-                details = riak_pb_codec:encode_rich_pairs(Details)},
-            {reply, Resp1, State};
-        {ok, RObj, DelFail} ->
-            Resp0 = ObjectResponse(RObj),
-            Resp1 = Resp0#rpbcloneresp{
-                del_fail = riak_pb_codec:encode_etf_binary(DelFail)},
-            {reply, Resp1, State};
-        {ok, RObj, DelFail, Details} ->
-            Resp0 = ObjectResponse(RObj),
-            Resp1 = Resp0#rpbcloneresp{
-                del_fail = riak_pb_codec:encode_etf_binary(DelFail),
-                details = riak_pb_codec:encode_rich_pairs(Details)
-            },
-            {reply, Resp1, State};
-        {error, Reason, Details} = Resp0 ->
-            update_error_stat(StatsKey, Resp0),
+    case riak_core_util:evaluate_timeouts(CloneOpts) of
+        {true, UpdatedOpts} ->
+            case riak_client:clone(SrcBucket, SrcK,
+                    SrcVClock, DstBucket, DstK, UpdatedOpts, Client) of
+                {ok, RObj} ->
+                    {reply, ObjectResponse(RObj), State};
+                {ok, RObj, [_|_] = Details} ->
+                    Resp0 = ObjectResponse(RObj),
+                    Resp1 = Resp0#rpbcloneresp{
+                        details = riak_pb_codec:encode_rich_pairs(Details)},
+                    {reply, Resp1, State};
+                {ok, RObj, DelFail} ->
+                    Resp0 = ObjectResponse(RObj),
+                    Resp1 = Resp0#rpbcloneresp{
+                        del_fail = riak_pb_codec:encode_etf_binary(DelFail)},
+                    {reply, Resp1, State};
+                {ok, RObj, DelFail, Details} ->
+                    Resp0 = ObjectResponse(RObj),
+                    Resp1 = Resp0#rpbcloneresp{
+                        del_fail = riak_pb_codec:encode_etf_binary(DelFail),
+                        details = riak_pb_codec:encode_rich_pairs(Details)
+                    },
+                    {reply, Resp1, State};
+                {error, Reason, Details} = Resp0 ->
+                    update_error_stat(StatsKey, Resp0),
+                    Resp = #rpbcloneresp{
+                        error = riak_pb_codec:encode_etf_binary(Reason),
+                        details = riak_pb_codec:encode_rich_pairs(Details)
+                    },
+                    {reply, Resp, State};
+                {error, Reason} = Resp0 ->
+                    update_error_stat(StatsKey, Resp0),
+                    Resp = #rpbcloneresp{
+                        error = riak_pb_codec:encode_etf_binary(Reason)},
+                    {reply, Resp, State}
+            end;
+        {false, _} ->
+            ?LOG_ERROR("Not bothering to call riak_client:clone because of timeout"),
+            update_error_stat(StatsKey, {error, timeout}),
             Resp = #rpbcloneresp{
-                error = riak_pb_codec:encode_etf_binary(Reason),
-                details = riak_pb_codec:encode_rich_pairs(Details)
-            },
-            {reply, Resp, State};
-        {error, Reason} = Resp0 ->
-            update_error_stat(StatsKey, Resp0),
-            Resp = #rpbcloneresp{
-                error = riak_pb_codec:encode_etf_binary(Reason)},
+                error = riak_pb_codec:encode_etf_binary(timeout)},
             {reply, Resp, State}
     end.
 
-%% @doc process_stream/3 callback. This service does not create any
+%% @doc process_stream/3,4 callback. This service does not create any
 %% streaming responses and so ignores all incoming messages.
 process_stream(_,_,State) ->
+    {ignore, State}.
+
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 %% ===================================================================
@@ -744,7 +831,7 @@ empty_bucket_key_test_() ->
     SetupFun =  fun (load) ->
                         application:set_env(riak_kv, storage_backend, riak_kv_memory_backend),
                         application:set_env(riak_api, pb_ip, "127.0.0.1"),
-                        application:set_env(riak_api, pb_port, 32767);
+                        application:set_env(riak_api, pb_port, 10018);
                     (_) -> ok end,
     {setup,
      riak_kv_test_util:common_setup(Name, SetupFun),

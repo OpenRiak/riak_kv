@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2024 Workday, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -59,6 +59,7 @@
 -compile({no_auto_import,[put/2]}).
 
 -include_lib("kernel/include/logger.hrl").
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
 
 -define(DEFAULT_TIMEOUT, 60000).
 -define(DEFAULT_FOLD_TIMEOUT, 3600000).
@@ -319,35 +320,48 @@ get(Bucket, Key, {?MODULE, [_Node, _ClientId]} = This) ->
 normal_get(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    case node() of
-        Node ->
-            riak_kv_get_fsm:start({raw, ReqId, Me}, Bucket, Key, Options);
-        _ ->
-            %% Still using the deprecated `start_link' alias for `start' here, in
-            %% case the remote node is pre-2.2:
-            proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
-                                [{raw, ReqId, Me}, Bucket, Key, Options])
-    end,
-    %% TODO: Investigate adding a monitor here and eliminating the timeout.
-    Timeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, Timeout).
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            case node() of
+                Node ->
+                    riak_kv_get_fsm:start({raw, ReqId, Me},
+                                        Bucket, Key, UpdatedOptions);
+                _ ->
+                    %% Still using the deprecated `start_link' alias for `start' here, in
+                    %% case the remote node is pre-2.2:
+                    ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                    proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
+                                        [{raw, ReqId, Me}, Bucket, Key, ExternalOptions])
+            end,
+            wait_for_reqid(ReqId, UpdatedOptions);
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to start 'get' FSM because of timeout"),
+            {error, timeout}
+    end.
 
 consistent_get(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}) ->
     BKey = {Bucket, Key},
     Ensemble = ensemble(BKey),
-    Timeout = recv_timeout(Options),
     StartTS = os:timestamp(),
-    Result = case riak_ensemble_client:kget(Node, Ensemble, BKey, Timeout) of
-                 {error, _}=Err ->
-                     Err;
-                 {ok, Obj} ->
-                     case riak_object:get_value(Obj) of
-                         notfound ->
-                             {error, notfound};
-                         _ ->
-                             {ok, Obj}
-                     end
-             end,
+    Result = case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            Timeout = proplists:get_value(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            case riak_ensemble_client:kget(Node, Ensemble, BKey, Timeout) of
+                {error, _}=Err ->
+                    Err;
+                {ok, Obj} ->
+                    case riak_object:get_value(Obj) of
+                        notfound ->
+                            {error, notfound};
+                        _ ->
+                            {ok, Obj}
+                    end
+             end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call riak_ensemble_client:kget because of timeout"),
+            {error, timeout}
+        end,
     maybe_update_consistent_stat(Node, consistent_get, Bucket, StartTS, Result),
     Result.
 
@@ -430,19 +444,25 @@ fetch(QueueName, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
     Options = [deletedvclock, {pr, 1}, {r, 1}, {notfound_ok, false}],
-    case node() of
-        Node ->
-            riak_kv_get_fsm:start({raw, ReqId, Me},
-                                    queue_name, QueueName, Options);
-        _ ->
-            %% Still using the deprecated `start_link' alias for `start' here, in
-            %% case the remote node is pre-2.2:
-            proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
-                                [{raw, ReqId, Me},
-                                queue_name, QueueName, Options])
-    end,
-    Timeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, Timeout).
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            case node() of
+                Node ->
+                    riak_kv_get_fsm:start({raw, ReqId, Me},
+                                            queue_name, QueueName, UpdatedOptions);
+                _ ->
+                    %% Still using the deprecated `start_link' alias for `start' here, in
+                    %% case the remote node is pre-2.2:
+                    ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                    proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
+                                        [{raw, ReqId, Me},
+                                        queue_name, QueueName, ExternalOptions])
+            end,
+            wait_for_reqid(ReqId, UpdatedOptions);
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to start 'get/fetch' FSM because of timeout"),
+            {error, timeout}
+    end.
 
 %% @doc
 %% Push a replicated object into Riak
@@ -480,18 +500,25 @@ push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
 
     true = riak_kv_util:is_x_deleted(RObj) == IsDeleted,
 
-    case node() of
-        Node ->
-            riak_kv_put_fsm:start({raw, ReqId, Me}, RObj, Options);
-        _ ->
-            %% Still using the deprecated `start_link' alias for `start'
-            %% here, in case the remote node is pre-2.2:
-            proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
-                                [{raw, ReqId, Me}, RObj, Options])
+    {Continue, UpdatedOptions } = riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
+    R = case Continue of
+        true ->
+            case node() of
+                Node ->
+                    riak_kv_put_fsm:start({raw, ReqId, Me}, RObj, UpdatedOptions);
+                _ ->
+                    %% Still using the deprecated `start_link' alias for `start'
+                    %% here, in case the remote node is pre-2.2:
+                    ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                    proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
+                                        [{raw, ReqId, Me}, RObj, ExternalOptions])
+            end,
+            wait_for_reqid(ReqId, UpdatedOptions);
+        false ->
+            ?LOG_DEBUG("Not bothering to start 'put/push' FSM because of timeout"),
+            {error, timeout}
     end,
 
-    Timeout = recv_timeout(Options),
-    R = wait_for_reqid(ReqId, Timeout),
     LMD =
         lists:max(
             lists:map(fun riak_object:get_last_modified/1,
@@ -501,20 +528,30 @@ push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
     case IsDeleted of
         true ->
             ReapReqId = mk_reqid(),
-            ReapOptions = [{r, 1}],
-            case node() of
-                Node ->
-                    riak_kv_get_fsm:start({raw, ReapReqId, Me},
-                                            Bucket, Key, ReapOptions);
-                _ ->
-                    % Still using the deprecated `start_link' alias for
-                    %`start' here, in case the remote node is pre-2.2:
-                    proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
-                                        [{raw, ReapReqId, Me},
-                                        Bucket, Key, ReapOptions])
-            end,
-            wait_for_reqid(ReapReqId, Timeout),
-            Reply;
+            % Adjust the timeout to account for the time spent in the PUT
+            % FSM, and the time spent waiting for the PUT FSM to complete.
+            case riak_core_util:evaluate_timeouts(UpdatedOptions, ?DEFAULT_TIMEOUT) of
+                {true, UpdatedOptions2} ->
+                    Timing = get_timing_from_options(UpdatedOptions2),
+                    ReapOptions = [{r, 1}, Timing],
+                    case node() of
+                        Node ->
+                            riak_kv_get_fsm:start({raw, ReapReqId, Me},
+                                                    Bucket, Key, ReapOptions);
+                        _ ->
+                            % Still using the deprecated `start_link' alias for
+                            %`start' here, in case the remote node is pre-2.2:
+                            ExternalOpts = riak_core_util:externalize_timeouts(ReapOptions),
+                            proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
+                                                [{raw, ReapReqId, Me},
+                                                Bucket, Key, ExternalOpts])
+                    end,
+                    wait_for_reqid(ReapReqId, UpdatedOptions2),
+                    Reply;
+                {false, _} ->
+                    ?LOG_DEBUG("Not bothering to start 'get/push' FSM because of timeout"),
+                    {{error, timeout}, LMD}
+            end;
         false ->
             Reply
     end.
@@ -567,47 +604,60 @@ put(RObj, {?MODULE, [_Node, _ClientId]} = This) ->
 normal_put(RObj, Options, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    case ClientId of
-        undefined ->
-            case node() of
-                Node ->
-                    riak_kv_put_fsm:start({raw, ReqId, Me}, RObj, Options);
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            case ClientId of
+                undefined ->
+                    case node() of
+                        Node ->
+                            riak_kv_put_fsm:start({raw, ReqId, Me}, RObj, UpdatedOptions);
+                        _ ->
+                            %% Still using the deprecated `start_link' alias for `start'
+                            %% here, in case the remote node is pre-2.2:
+                            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                            proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
+                                                [{raw, ReqId, Me}, RObj, ExternalOptions])
+                    end;
                 _ ->
-                    %% Still using the deprecated `start_link' alias for `start'
-                    %% here, in case the remote node is pre-2.2:
-                    proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
-                                        [{raw, ReqId, Me}, RObj, Options])
-            end;
-        _ ->
-            UpdObj = riak_object:increment_vclock(RObj, ClientId),
-            case node() of
-                Node ->
-                    riak_kv_put_fsm:start_link({raw, ReqId, Me}, UpdObj, [asis|Options]);
-                _ ->
-                    proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
-                                        [{raw, ReqId, Me}, RObj, [asis|Options]])
-            end
-    end,
-    %% TODO: Investigate adding a monitor here and eliminating the timeout.
-    Timeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, Timeout).
+                    UpdObj = riak_object:increment_vclock(RObj, ClientId),
+                    case node() of
+                        Node ->
+                            riak_kv_put_fsm:start_link({raw, ReqId, Me}, UpdObj, [asis|UpdatedOptions]);
+                        _ ->
+                            ExternalOpts = riak_core_util:externalize_timeouts(UpdatedOptions),
+                            proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
+                                                [{raw, ReqId, Me}, RObj, [asis|ExternalOpts]])
+                    end
+            end,
+            wait_for_reqid(ReqId, UpdatedOptions);
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to start 'put' FSM because of timeout"),
+            {error, timeout}
+    end.
 
 consistent_put(RObj, Options, {?MODULE, [Node, _ClientId]}) ->
     Bucket = riak_object:bucket(RObj),
     BKey = {Bucket, riak_object:key(RObj)},
     Ensemble = ensemble(BKey),
     NewObj = riak_object:apply_updates(RObj),
-    Timeout = recv_timeout(Options),
     StartTS = os:timestamp(),
-    Result = case consistent_put_type(RObj, Options) of
-                 update ->
-                     riak_ensemble_client:kupdate(Node, Ensemble, BKey, RObj, NewObj, Timeout);
-                 put_once ->
-                     riak_ensemble_client:kput_once(Node, Ensemble, BKey, NewObj, Timeout)
+    Result = case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            Timeout = proplists:get_value(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            case consistent_put_type(RObj, UpdatedOptions) of
+                update ->
+                    riak_ensemble_client:kupdate(Node, Ensemble, BKey, RObj, NewObj, Timeout);
+                put_once ->
+                    riak_ensemble_client:kput_once(Node, Ensemble, BKey, NewObj, Timeout)
                 %% TODO: Expose client option to explicitly request overwrite
                  %overwrite ->
                      %riak_ensemble_client:kover(Node, Ensemble, BKey, NewObj, Timeout)
-             end,
+            end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call riak_ensemble_client:kput_once/kupdate because of timeout"),
+            {error, timeout}
+    end,
     maybe_update_consistent_stat(Node, consistent_put, Bucket, StartTS, Result),
     ReturnBody = lists:member(returnbody, Options),
     case Result of
@@ -628,7 +678,7 @@ consistent_put_type(RObj, Options) ->
             put_once;
        true ->
             %% Defaulting to put_once here for safety.
-            %% Our client API makes it too easy to accidently send requests
+            %% Our client API makes it too easy to accidentally send requests
             %% without a provided vector clock and clobber your data.
             %% overwrite
             %% TODO: Expose client option to explicitly request overwrite
@@ -703,7 +753,14 @@ put(RObj, W, DW, Timeout, Options, {?MODULE, [_Node, _ClientId]} = This) ->
 maybe_normal_put(RObj, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
     case write_once(Node, riak_object:bucket(RObj)) of
         true ->
-            write_once_put(Node, RObj, Options, THIS);
+            case riak_core_util:evaluate_timeouts(Options) of
+                {true, UpdatedOptions} ->
+                    ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+                    write_once_put(Node, RObj, ExternalOptions, THIS);
+                {false, _} ->
+                    ?LOG_DEBUG("Not bothering to call write_once_put because of timeout"),
+                    {error, timeout}
+            end;
         false ->
             normal_put(RObj, Options, THIS);
         {error,_}=Err ->
@@ -720,22 +777,9 @@ write_once_put(Node, RObj, Options, {?MODULE, [_Node, _ClientId]}) ->
     This :: riak_client() ) ->  del_result().
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as RW
 %%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, [], default_timeout(), This)
+%% @equiv delete(Bucket, Key, [], This)
 delete(Bucket, Key, {?MODULE, [_Node, _ClientId]} = This) ->
-    delete(Bucket, Key, [], ?DEFAULT_TIMEOUT, This).
-
--spec delete(
-    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
-    OptionsOrRW :: del_options() |  rw_quorum(),
-    This :: riak_client() ) ->  del_result().
-%% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
-%%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, Options, default_timeout(), This)
-delete(Bucket, Key, Options, {?MODULE, [_Node, _ClientId]} = This)
-        when is_list(Options) ->
-    delete(Bucket, Key, Options, recv_timeout(Options), This);
-delete(Bucket, Key, RW, {?MODULE, [_Node, _ClientId]} = This) ->
-    delete(Bucket, Key, [{rw, RW}], ?DEFAULT_TIMEOUT, This).
+    delete(Bucket, Key, [], This).
 
 -spec delete(
     Bucket :: riak_object:bucket(), Key :: riak_object:key(),
@@ -743,36 +787,61 @@ delete(Bucket, Key, RW, {?MODULE, [_Node, _ClientId]} = This) ->
     Timeout :: timeout(), This :: riak_client() ) ->  del_result().
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error, or TimeoutMS passes.
-delete(Bucket, Key, Options, Timeout, {?MODULE, [Node, _ClientId]} = This)
+delete(Bucket, Key, Options, Timeout, {?MODULE, [_Node, _ClientId]} = This)
         when is_list(Options) ->
-    case consistent_object(Node, Bucket) of
-        true ->
-            consistent_delete(Bucket, Key, Options, Timeout, This);
-        false ->
-            normal_delete(Bucket, Key, Options, Timeout, This);
-        {error, _} = Err ->
-            Err
-    end;
+    UpdatedOptions = lists:keystore(timeout, 1, Options, {timeout, Timeout}),
+    delete(Bucket, Key, UpdatedOptions, This);
 delete(Bucket, Key, RW, Timeout, {?MODULE, [_Node, _ClientId]} = This) ->
     delete(Bucket, Key, [{rw, RW}], Timeout, This).
 
-normal_delete(Bucket, Key, Options, Timeout, {?MODULE, [Node, ClientId]}) ->
+-spec delete(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    OptionsOrRW :: del_options() |  rw_quorum(),
+    This :: riak_client() ) ->  del_result().
+%% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
+%%      nodes have responded with a value or error.
+delete(Bucket, Key, Options, {?MODULE, [Node, _ClientId]} = This)
+        when is_list(Options) ->
+    case consistent_object(Node, Bucket) of
+        true ->
+            consistent_delete(Bucket, Key, Options, This);
+        false ->
+            normal_delete(Bucket, Key, Options, This);
+        {error, _} = Err ->
+            Err
+    end;
+delete(Bucket, Key, RW, {?MODULE, [_Node, _ClientId]} = This) ->
+    delete(Bucket, Key, [{rw, RW}], This).
+
+normal_delete(Bucket, Key, Options, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, Options, Timeout,
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, UpdatedOptions,
                                            Me, ClientId]),
-    RTimeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, erlang:min(Timeout, RTimeout)).
+            wait_for_reqid(ReqId, UpdatedOptions);
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to start normal delete because of timeout"),
+            {error, timeout}
+    end.
 
-consistent_delete(Bucket, Key, Options, _Timeout, {?MODULE, [Node, _ClientId]}) ->
+consistent_delete(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}) ->
     BKey = {Bucket, Key},
     Ensemble = ensemble(BKey),
-    RTimeout = recv_timeout(Options),
-    case riak_ensemble_client:kdelete(Node, Ensemble, BKey, RTimeout) of
-        {error, _}=Err ->
-            Err;
-        {ok, Obj} when element(1, Obj) =:= r_object ->
-            ok
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            RTimeout = proplists:get_value(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            case riak_ensemble_client:kdelete(Node, Ensemble, BKey, RTimeout) of
+                    {error, _}=Err ->
+                        Err;
+                    {ok, Obj} when element(1, Obj) =:= r_object ->
+                        ok
+            end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call riak_ensemble_client:kdelete because of timeout"),
+            {error, timeout}
     end.
 
 
@@ -830,28 +899,17 @@ consistent_delete(Bucket, Key, Options, _Timeout, {?MODULE, [Node, _ClientId]}) 
 %%      The specified SrcVClock qualifier does not match the source record.</dd>
 %%  <dt>`{error, Reason :: term()}'</dt><dd>Any other error occurred.</dd>
 %%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
-%%      Any error may be returned with `Details' as desribed above.</dd>
+%%      Any error may be returned with `Details' as described above.</dd>
 %% </dl>
 clone(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey,
-            #{} = CloneOpts, {?MODULE, [_Node, _ClientId]} = Client)
+            #{} = CloneOpts0, {?MODULE, [_Node, _ClientId]} = Client)
         when    (erlang:is_binary(SrcBucket) orelse erlang:is_tuple(SrcBucket))
         andalso erlang:is_binary(SrcKey)
         andalso (erlang:is_binary(DstBucket) orelse erlang:is_tuple(DstBucket))
         andalso (erlang:is_binary(DstKey) orelse DstKey =:= undefined) ->
 
-    StartTS = erlang:monotonic_time(),
-    %% Everything from here on can assume 'timeout' is present and valid.
-    %% We don't check for Timeout < 1 because that'd be silly to use in real
-    %% operation, but it *is* used by riak_test => 'verify_clone'.
-    Timeout = case CloneOpts of
-        #{timeout := Val} ->
-            Val;
-        _ ->
-            ?DEFAULT_CLONE_TIMEOUT
-    end,
     State0 = #{
-        start       => StartTS,
-        timeout     => Timeout,
+        start       => erlang:monotonic_time(),
         client      => Client,
         srcbucket   => SrcBucket,
         srcvclock   => SrcVClock,
@@ -859,32 +917,40 @@ clone(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey,
         dstbucket   => DstBucket,
         dstkey      => DstKey
     },
-    State1 = clone_init_details(CloneOpts, State0),
-    %% Keep the get opts without timeout for the next step.
-    GetOpts = clone_get_opts(State1),
-    State2 = clone_details(clone_init, State1#{getopts => GetOpts}),
-    {GetRes, State3} = clone_get(getsrc, SrcBucket, SrcKey, State2),
-    Res = case GetRes of
-        {ok, GetObj} ->
-            case SrcVClock of
-                undefined ->
-                    GetRes;
-                _ ->
-                    case riak_object:vclock(GetObj) of
-                        SrcVClock ->
+    case riak_core_util:evaluate_timeouts(CloneOpts0, ?DEFAULT_CLONE_TIMEOUT) of
+        {true, CloneOpts} ->
+            %% clone_init_details will add CloneOpts as 'opts' in the returned state.
+            State1 = clone_init_details(CloneOpts, State0),
+            %% Keep the get opts without timeouts for the next step.
+            GetOpts = clone_get_opts(State1),
+            %% GetOpts is a list which includes timeout/finish-by information
+            State2 = clone_details(clone_init, State1#{getopts => GetOpts}),
+            {GetRes, State3} = clone_get(getsrc, SrcBucket, SrcKey, State2),
+            Res = case GetRes of
+                {ok, GetObj} ->
+                    case SrcVClock of
+                        undefined ->
                             GetRes;
                         _ ->
-                            {error, src_out_of_date}
-                    end
+                            case riak_object:vclock(GetObj) of
+                                SrcVClock ->
+                                    GetRes;
+                                _ ->
+                                    {error, src_out_of_date}
+                            end
+                    end;
+                _ ->
+                    GetRes
+            end,
+            case Res of
+                {ok, SrcObj} ->
+                    clone_chkdst(clone_details(clone_get, State3#{srcobj => SrcObj}));
+                _ ->
+                    clone_return(Res, clone_details(clone_get, State3))
             end;
-        _ ->
-            GetRes
-    end,
-    case Res of
-        {ok, SrcObj} ->
-            clone_chkdst(clone_details(clone_get, State3#{srcobj => SrcObj}));
-        _ ->
-            clone_return(Res, clone_details(clone_get, State3))
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to start 'clone' because of timeout"),
+            clone_return({error, timeout}, State0)
     end.
 
 -spec clone_init_details(OptsIn :: clone_options(), StateIn :: map()) -> map().
@@ -896,7 +962,7 @@ clone_init_details(
     case DetailsIn of
         [_|_] = D1 ->
             %% Filter details to either 'true' or a list of unique affirmative
-            %% atom() keys. Any istance of 'true' resets the predicate to
+            %% atom() keys. Any instance of 'true' resets the predicate to
             %% "collect everything", otherwise only specified keys. 'false' is
             %% a valid key in at least one spec, but it's not clear whether it
             %% should negate all other keys so I've chosen to ignore it.
@@ -958,41 +1024,22 @@ clone_init_details(OptsIn, StateIn) ->
 %% where:
 %%  Result is {ok, RiakObject} or {error, Reason}.
 %%  NewState is State updated with Get Details, if any.
-clone_get(OpLabel, Bucket, Key, #{getopts := Opts, client := Client} = State) ->
-    Timeout = clone_remain(State),
-    case Timeout =:= infinity orelse Timeout > 0 of
-        true ->
-            GetOpts = [{timeout, Timeout} | Opts],
-            GetRes = get(Bucket, Key, GetOpts, Client),
+clone_get(OpLabel, Bucket, Key, #{getopts := GetOpts, client := Client} = State) ->
+    case riak_core_util:evaluate_timeouts(GetOpts, ?DEFAULT_CLONE_TIMEOUT) of
+        {true, UpdatedGetOpts} ->
+            StateOut = State#{getopts := UpdatedGetOpts},
+            GetRes = get(Bucket, Key, UpdatedGetOpts, Client),
             case GetRes of
                 {_OkErr, _ObjReason} ->
-                    {GetRes, State};
+                    {GetRes, StateOut};
                 {OkErr, ObjReason, Details} ->
                     {{OkErr, ObjReason},
-                        clone_details(OpLabel, Details, State)}
+                        clone_details(OpLabel, Details, StateOut)}
             end;
-        _ ->
-            {{error, timeout}, State}
+        {false, UpdatedGetOpts} ->
+            ?LOG_DEBUG("Not bothering to start 'get/clone_get' because of timeout"),
+            {{error, timeout}, State#{getopts := UpdatedGetOpts}}
     end.
-
--spec clone_remain(State :: clone_state()) -> timeout().
-clone_remain(#{timeout := infinity}) ->
-    infinity;
-clone_remain(State) ->
-    clone_remain(erlang:monotonic_time(), State).
-
-%% At present clone_remain/2 is only called from clone_remain/1, so dialyzer
-%% accurately warns that 'timeout' can never be 'infinity'. We keep the
-%% pattern in place should it ever be called trough a different path.
--dialyzer({no_match, clone_remain/2}).
-
--spec clone_remain(
-    NowNative :: nativetime(), State :: clone_state()) -> timeout().
-clone_remain(_NowNative, #{timeout := infinity}) ->
-    infinity;
-clone_remain(NowNative, #{start := StartNative, timeout := Timeout}) ->
-    Timeout - erlang:convert_time_unit(
-        (NowNative - StartNative), native, millisecond).
 
 -spec clone_details(Label :: atom(), State :: clone_state() )
         -> clone_state().
@@ -1067,14 +1114,14 @@ clone_genkey(#{dstbucket := Bucket} = StateIn) ->
 -spec clone_srcobj(State :: clone_state()) -> clone_result().
 %% @hidden Performs the actual copy operation.
 clone_srcobj(#{dstbucket := Bucket, dstkey := Key,
-        srcobj := SrcObj, client := Client} = State) ->
+        srcobj := SrcObj, client := Client, opts := CloneOpts} = State) ->
     %% all checks completed
-    Timeout = clone_remain(State),
-    case Timeout =:= infinity orelse Timeout > 0 of
-        true ->
+    case riak_core_util:evaluate_timeouts(CloneOpts, ?DEFAULT_CLONE_TIMEOUT) of
+        {true, UpdatedOpts} ->
+            UpdatedState = State#{opts := UpdatedOpts},
             case riak_object:clone(SrcObj, Bucket, Key) of
                 {ok, DstObj} ->
-                    PutOpts = clone_put_opts(State),
+                    PutOpts = clone_put_opts(UpdatedState),
                     %% ToDo: Implement 'provmeta' actions here.
                     %% 'returnhead' would be ideal here; instead, simulate it.
                     {MetaOnly, Opts} = case
@@ -1085,13 +1132,12 @@ clone_srcobj(#{dstbucket := Bucket, dstkey := Key,
                             {true, lists:keystore(
                                 returnbody, 1, PutOpts, {returnbody, true})}
                     end,
-                    {PutRes, State1} = case put(
-                            DstObj, [{timeout, Timeout} | Opts], Client) of
+                    {PutRes, State1} = case put(DstObj, Opts, Client) of
                         {_, _} = R ->
-                            {R, State};
+                            {R, UpdatedState};
                         {OkOrErr, ObjOrReason, Details} ->
                             {{OkOrErr, ObjOrReason},
-                                clone_details(putdst, Details, State)}
+                                clone_details(putdst, Details, UpdatedState)}
                     end,
                     CloneRes = case PutRes of
                         {ok, RObj} when MetaOnly ->
@@ -1109,10 +1155,12 @@ clone_srcobj(#{dstbucket := Bucket, dstkey := Key,
                             clone_return(CloneRes, State2)
                     end;
                 ObjError ->
-                    clone_return(ObjError, clone_details(clone_srcobj, State))
+                    clone_return(ObjError, clone_details(clone_srcobj, UpdatedState))
             end;
-        _ ->
-            clone_return({error, timeout}, clone_details(clone_srcobj, State))
+        {false, UpdatedOpts} ->
+            UpdatedState = State#{opts := UpdatedOpts},
+            ?LOG_DEBUG("Not bothering to call 'riak_object:clone' because of timeout"),
+            clone_return({error, timeout}, clone_details(clone_srcobj, UpdatedState))
     end.
 
 -spec clone_finish(
@@ -1120,29 +1168,31 @@ clone_srcobj(#{dstbucket := Bucket, dstkey := Key,
     State :: clone_state() )
         -> clone_result().
 %% @hidden Finalizes the clone, possibly deleting the source record.
-clone_finish({_Ok, ResObj} = CloneRes, #{opts := #{del_src := true},
+clone_finish({_Ok, ResObj} = CloneRes, #{opts := #{del_src := true} = CloneOpts,
         srcbucket := Bucket, srckey := Key, srcvclock := SrcVClock,
         client := Client} = State) ->
-    Timeout = clone_remain(State),
-    case Timeout =:= infinity orelse Timeout > 0 of
-        true ->
-            DelOpts = [{timeout, Timeout} | clone_del_opts(State)],
+    case riak_core_util:evaluate_timeouts(CloneOpts, ?DEFAULT_CLONE_TIMEOUT) of
+        {true, UpdatedOpts} ->
+            UpdatedState = State#{opts := UpdatedOpts},
+            DelOpts = clone_del_opts(UpdatedState),
             DelRes = case SrcVClock of
                 undefined ->
                     delete(Bucket, Key, DelOpts, Client);
                 _ ->
                     delete_vclock(Bucket, Key, SrcVClock, DelOpts, Client)
             end,
-            StateOut = clone_details(clone_delsrc, State),
+            StateOut = clone_details(clone_delsrc, UpdatedState),
             case DelRes of
                 ok ->
                     clone_return(CloneRes, StateOut);
                 {error, DelFail} ->
                     clone_return({ok, ResObj, DelFail}, StateOut)
             end;
-        _ ->
+        {false, UpdatedOpts} ->
+            UpdatedState = State#{opts := UpdatedOpts},
+            ?LOG_DEBUG("Not bothering to call 'delete/vclock:clone_finish' because of timeout"),
             clone_return({ok, ResObj, timeout},
-                clone_details(clone_delsrc, State))
+                clone_details(clone_delsrc, UpdatedState))
     end;
 clone_finish(CloneRes, State) ->
     clone_return(CloneRes, State).
@@ -1183,7 +1233,7 @@ clone_return(CloneRes, _State) ->
 clone_del_opts(State) ->
     Keys = [
         r, pr, rw, w, dw, pw, n_val,
-        sloppy_quorum, recv_timeout
+        sloppy_quorum, ?INTERNAL_TIMEOUT_BY
     ],
     maps:to_list(maps:with(Keys, maps:get(opts, State))).
 
@@ -1193,7 +1243,7 @@ clone_get_opts(#{opts := CloneOpts} = State) ->
     Keys = [
         r, pr, n_val,
         notfound_ok, basic_quorum, sloppy_quorum,
-        recv_timeout, crdt_op
+        crdt_op, ?INTERNAL_TIMEOUT_BY
     ],
     Opts1 = maps:with(Keys, CloneOpts),
     Opts2 = clone_detail_opts([timing, vnodes], Opts1, State),
@@ -1208,8 +1258,7 @@ clone_put_opts(#{opts := CloneOpts} = State) ->
         asis, disable_hooks, sync_on_write,
         sloppy_quorum,
         retry_put_coordinator_failure, mbox_check,
-        recv_timeout,
-        counter_op, crdt_op
+        counter_op, crdt_op, ?INTERNAL_TIMEOUT_BY
     ],
     Opts1 = maps:with(Keys, CloneOpts),
     Opts2 = clone_detail_opts([timing], Opts1, State),
@@ -1428,29 +1477,16 @@ reap(Bucket, Key, DeleteHash, {?MODULE, [Node, _ClientId]}) ->
 %%       {error, too_many_fails} |
 %%       {error, notfound} |
 %%       {error, timeout} |
+%%       {error, {n_val_violation, N::integer()}} |
 %%       {error, Err :: term()}
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, RW, default_timeout())
+%% @equiv delete(Bucket, Key, VClock, Options, riak_client())
 delete_vclock(Bucket,Key,VClock,{?MODULE, [_Node, _ClientId]}=THIS) ->
-    delete_vclock(Bucket,Key,VClock,[{rw,default}],?DEFAULT_TIMEOUT,THIS).
+    delete_vclock(Bucket,Key,VClock,[{rw,default},{timeout,?DEFAULT_TIMEOUT}],THIS).
 
 %% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(),
-%%                     RW :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, Err :: term()}
-%% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
-%%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, RW, default_timeout())
-delete_vclock(Bucket,Key,VClock,Options,{?MODULE, [_Node, _ClientId]}=THIS) when is_list(Options) ->
-    delete_vclock(Bucket,Key,VClock,Options,recv_timeout(Options),THIS);
-delete_vclock(Bucket,Key,VClock,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
-    delete_vclock(Bucket,Key,VClock,[{rw, RW}],?DEFAULT_TIMEOUT,THIS).
-
-%% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(), RW :: integer(),
+%%           RW :: integer() | Options :: list(),
 %%           TimeoutMillisecs :: integer(), riak_client()) ->
 %%        ok |
 %%       {error, too_many_fails} |
@@ -1460,37 +1496,69 @@ delete_vclock(Bucket,Key,VClock,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
 %%       {error, Err :: term()}
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error, or TimeoutMillisecs passes.
-delete_vclock(Bucket,Key,VClock,Options,Timeout,{?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
+%%      The incoming timeout is merged into the options list.
+%% @equiv delete(Bucket, Key, VClock, Options, riak_client())
+delete_vclock(Bucket,Key,VClock,Options,Timeout,{?MODULE, [_Node, _ClientId]}=THIS)
+                when is_list(Options) ->
+    UpdatedOptions = lists:keystore(timeout, 1, Options, {timeout, Timeout}),
+    delete_vclock(Bucket,Key,VClock,UpdatedOptions,THIS);
+delete_vclock(Bucket,Key,VClock,RW,Timeout,{?MODULE, [_Node, _ClientId]}=THIS) ->
+    delete_vclock(Bucket,Key,VClock,[{rw, RW},{timeout,Timeout}],THIS).
+
+%% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(),
+%%                     RW :: integer() | Options :: list(), riak_client()) ->
+%%        ok |
+%%       {error, too_many_fails} |
+%%       {error, notfound} |
+%%       {error, timeout} |
+%%       {error, {n_val_violation, N::integer()}} |
+%%       {error, Err :: term()}
+%% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
+%%      nodes have responded with a value or error.
+delete_vclock(Bucket,Key,VClock,Options,{?MODULE, [Node, _ClientId]}=THIS)
+                when is_list(Options) ->
     case consistent_object(Node, Bucket) of
         true ->
-            consistent_delete_vclock(Bucket, Key, VClock, Options, Timeout, THIS);
+            consistent_delete_vclock(Bucket, Key, VClock, Options, THIS);
         false ->
-            normal_delete_vclock(Bucket, Key, VClock, Options, Timeout, THIS);
+            normal_delete_vclock(Bucket, Key, VClock, Options, THIS);
         {error,_}=Err ->
             Err
     end;
-delete_vclock(Bucket,Key,VClock,RW,Timeout,{?MODULE, [_Node, _ClientId]}=THIS) ->
-    delete_vclock(Bucket,Key,VClock,[{rw, RW}],Timeout,THIS).
+delete_vclock(Bucket,Key,VClock,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
+    delete_vclock(Bucket,Key,VClock,[{rw, RW},{timeout,?DEFAULT_TIMEOUT}],THIS).
 
-normal_delete_vclock(Bucket, Key, VClock, Options, Timeout, {?MODULE, [Node, ClientId]}) ->
+normal_delete_vclock(Bucket, Key, VClock, Options, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, Options, Timeout,
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, UpdatedOptions,
                                            Me, ClientId, VClock]),
-    RTimeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, erlang:min(Timeout, RTimeout)).
+            wait_for_reqid(ReqId, UpdatedOptions);
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call 'delete:normal_delete_vclock' because of timeout"),
+            {error, timeout}
+    end.
 
-consistent_delete_vclock(Bucket, Key, VClock, Options, _Timeout, {?MODULE, [Node, _ClientId]}) ->
+consistent_delete_vclock(Bucket, Key, VClock, Options, {?MODULE, [Node, _ClientId]}) ->
     BKey = {Bucket, Key},
     Ensemble = ensemble(BKey),
     Current = riak_object:set_vclock(riak_object:new(Bucket, Key, <<>>),
                                      VClock),
-    RTimeout = recv_timeout(Options),
-    case riak_ensemble_client:ksafe_delete(Node, Ensemble, BKey, Current, RTimeout) of
-        {error, _}=Err ->
-            Err;
-        {ok, Obj} when element(1, Obj) =:= r_object ->
-            ok
+    case riak_core_util:evaluate_timeouts(Options) of
+        {true, UpdatedOptions} ->
+            ExternalOptions = riak_core_util:externalize_timeouts(UpdatedOptions),
+            RTimeout = proplists:get_value(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+            case riak_ensemble_client:ksafe_delete(Node, Ensemble, BKey, Current, RTimeout) of
+                {error, _}=Err ->
+                    Err;
+                {ok, Obj} when element(1, Obj) =:= r_object ->
+                    ok
+            end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call 'ksafe_delete:consistent_delete_vclock' because of timeout"),
+            {error, timeout}
     end.
 
 %% @spec list_keys(riak_object:bucket(), riak_client()) ->
@@ -1939,9 +2007,25 @@ mk_reqid() ->
     erlang:phash2({self(), os:timestamp()}). % only has to be unique per-pid
 
 %% @private
-wait_for_reqid(ReqId, Timeout) ->
+%% @doc Wait for a response from the FSM.
+-spec wait_for_reqid(ReqId :: term(), Options :: (list() | map()) | Timeout :: integer()) ->
+          {ok, any()} | {error, term()}.
+wait_for_reqid(ReqId, Options) when is_map(Options) ->
+    wait_for_reqid(ReqId, proplists:from_map(Options));
+wait_for_reqid(ReqId, Options) when is_list(Options) ->
+    {Absolute, TimerTime, SafetyNet} = case proplists:get_value(?INTERNAL_TIMEOUT_BY, Options) of
+        undefined ->
+            Timeout = proplists:get_value(timeout, Options, ?DEFAULT_TIMEOUT),
+            {false, Timeout, Timeout + 5000};
+        Timeout ->
+            {true,
+             erlang:convert_time_unit(Timeout, native, millisecond),
+             get_timeout_from_finish_time(Timeout) + 5000}
+    end,
+    TRef = erlang:start_timer(TimerTime, self(), request_timeout, [{abs, Absolute}]),
     receive
         {ReqId, {error, overload}=Response} ->
+            erlang:cancel_timer(TRef),
             case app_helper:get_env(riak_kv, overload_backoff, undefined) of
                 Msecs when is_number(Msecs) ->
                     timer:sleep(Msecs);
@@ -1949,9 +2033,43 @@ wait_for_reqid(ReqId, Timeout) ->
                     ok
             end,
             Response;
-        {ReqId, Response} -> Response
-    after Timeout ->
+        {ReqId, Response} ->
+            erlang:cancel_timer(TRef),
+            Response;
+        {timeout, TRef, request_timeout}->
             {error, timeout}
+    after min(SafetyNet, ?INFINITY_INTERVAL_MS) ->
+        % If we get here, the timer has expired and we've waited too long.
+        % This is just a safety net and should never happen.
+        {error, timeout}
+    end;
+wait_for_reqid(ReqId, Timeout) when is_integer(Timeout) ->
+    wait_for_reqid(ReqId, [{timeout, Timeout}]).
+
+%% @private
+%% @doc Convert a finish time to a timeout.
+-spec get_timeout_from_finish_time(FinishBy :: nativetime()) -> timeout().
+get_timeout_from_finish_time(FinishBy) ->
+    EntryTime = erlang:monotonic_time(),
+    Diff = FinishBy - EntryTime,
+    case Diff of
+        Remain when Remain > 0 ->
+            erlang:convert_time_unit(Remain, native, millisecond);
+        _ ->
+            0
+    end.
+
+%% @private
+%% @doc Extract the timeout or finish-by tuple from the options list
+%% and prefer the finish-by tuple if it exists.
+-spec get_timing_from_options(Options :: list() | map())
+      -> {?INTERNAL_TIMEOUT_BY, nativetime()} | {timeout, timeout()} | false.
+get_timing_from_options(Options) when is_map(Options) ->
+    get_timing_from_options(proplists:from_map(Options));
+get_timing_from_options(Options) when is_list(Options) ->
+    case lists:keyfind(?INTERNAL_TIMEOUT_BY, 1, Options) of
+        {?INTERNAL_TIMEOUT_BY, _}=FinishBy -> FinishBy;
+        false -> lists:keyfind(timeout, 1, Options)
     end.
 
 %% @private
@@ -2001,23 +2119,6 @@ wait_for_fold_results(ReqId, Timeout) ->
         {ReqId, Error} -> {error, Error}
     after Timeout ->
         {error, timeout}
-    end.
-
--spec recv_timeout(Options :: proplists:proplist()) -> timeout().
-recv_timeout(Options) ->
-    case proplists:get_value(recv_timeout, Options) of
-        undefined ->
-            %% If no reply timeout given, use the FSM timeout + 100ms to give it a chance
-            %% to respond.
-            case proplists:get_value(timeout, Options, ?DEFAULT_TIMEOUT) of
-                infinity ->
-                    infinity;
-                MilliSecs ->
-                    MilliSecs + 100
-            end;
-        Timeout ->
-            %% Otherwise use the directly supplied timeout.
-            Timeout
     end.
 
 ensemble(BKey={Bucket, _Key}) ->

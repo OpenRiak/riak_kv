@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_pb_crdt: Expose crdts over Protocol Buffers
-%%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2015 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -50,7 +49,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -82,27 +83,33 @@ decode(Code, Bin) ->
 encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
-%% @doc process/2 callback. Handles an incoming request message.
-process(#dtfetchreq{type=?DEFAULT_BUCKET}=Req0, State) ->
+%% @doc process/2,3 callback. Handles an incoming request message.
+process(Req0=#dtfetchreq{}, State) ->
+    process(Req0, State, []).
+
+process(#dtfetchreq{type=?DEFAULT_BUCKET}=Req0, State, _Options) ->
     %% Handle a typeless message
     %% See downgrade_request/1 etc below for details
     Req = downgrade_request(Req0),
     process_legacy_counter(Req, State);
-process(#dtfetchreq{bucket=B, type=BType}=Req, State) ->
+process(#dtfetchreq{bucket=B, type=BType}=Req, State, _Options) ->
     %% V2 fetch operation
     fetch_type(bucket_type_to_type(B, BType), Req, State);
-process(#dtupdatereq{type=?DEFAULT_BUCKET}=Req0, State) ->
+process(#dtupdatereq{type=?DEFAULT_BUCKET}=Req0, State, _Options) ->
     %% Handle a typeless update message
     %% See downgrade_request/1 etc below for details
     Req = downgrade_request(Req0),
     process_legacy_counter(Req, State);
-process(#dtupdatereq{bucket=B, type=BType}=Req, State) ->
+process(#dtupdatereq{bucket=B, type=BType}=Req, State, _Options) ->
     %% V2 update operation
     update_type(bucket_type_to_type(B, BType), Req, State).
 
-%% @doc process_stream/3 callback. This service does not create any
+%% @doc process_stream/3,4 callback. This service does not create any
 %% streaming responses and so ignores all incoming messages.
 process_stream(_,_,State) ->
+    {ignore, State}.
+
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 %% ===================================================================

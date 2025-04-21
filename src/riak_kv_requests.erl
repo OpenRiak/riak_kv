@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -92,7 +93,7 @@
           object :: object(),
           req_id :: request_id(),
           start_time :: start_time(),
-          options :: request_options()}).
+          options = [] :: request_options()}).
 
 -record(riak_kv_get_req_v1, {
           bkey :: bucket_key(),
@@ -150,7 +151,7 @@
           bkey :: {binary(), binary()},
           req_id :: non_neg_integer()}).
 
--record(riak_kv_aaefold_req_v1, 
+-record(riak_kv_aaefold_req_v1,
             {qry :: riak_kv_clusteraae_fsm:query_definition(),
                 init_acc :: any(),
                 n_val :: pos_integer()}).
@@ -404,9 +405,13 @@ get_delete_hash(#riak_kv_reap_req_v1{delete_hash = DeleteHash}) ->
 get_start_time(#riak_kv_put_req_v1{start_time = StartTime}) ->
     StartTime.
 
--spec get_options(put_request()) -> request_options().
+-spec get_options(request()) -> request_options().
 get_options(#riak_kv_put_req_v1{options = Options}) ->
-    Options.
+    Options;
+get_options(#riak_kv_head_req_v1{}) ->
+    [];
+get_options(#riak_kv_get_req_v1{}) ->
+    [].
 
 -spec set_object(put_request(), object()) -> put_request().
 set_object(#riak_kv_put_req_v1{}=Req, Object) ->

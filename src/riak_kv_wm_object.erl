@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -187,6 +188,7 @@
 -type riak_kv_wm_object_dict() :: dict().
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
 -include_lib("webmachine/include/webmachine.hrl").
 -include("riak_kv_wm_raw.hrl").
 
@@ -901,15 +903,21 @@ accept_doc_body(
                    false ->
                        Options
                end,
-    case riak_client:put(Doc, Options2, C) of
-        {error, Reason} ->
-            handle_common_error(Reason, RD, Ctx);
-        ok ->
-            {true, RD, Ctx#ctx{doc={ok, Doc}}};
-        {ok, RObj} ->
-            DocCtx = Ctx#ctx{doc={ok, RObj}},
-            HasSiblings = (select_doc(DocCtx) == multiple_choices),
-            send_returnbody(RD, DocCtx, HasSiblings)
+    case riak_core_util:evaluate_timeouts(Options2, ?DEFAULT_TIMEOUT) of
+        {true, UpdatedOptions} ->
+            case riak_client:put(Doc, UpdatedOptions, C) of
+                {error, Reason} ->
+                    handle_common_error(Reason, RD, Ctx);
+                ok ->
+                    {true, RD, Ctx#ctx{doc={ok, Doc}}};
+                {ok, RObj} ->
+                    DocCtx = Ctx#ctx{doc={ok, RObj}},
+                    HasSiblings = (select_doc(DocCtx) == multiple_choices),
+                    send_returnbody(RD, DocCtx, HasSiblings)
+            end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call put from wm because of timeout"),
+            handle_common_error(timeout, RD, Ctx)
     end.
 
 %% Handle the no-sibling case. Just send the object.
@@ -1171,7 +1179,13 @@ ensure_doc(Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
                 {notfound_ok, NotFoundOK}],
             Options = make_options(Options0, Ctx),
             BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
-            Ctx#ctx{doc=riak_client:get(BT, K, Options, C)};
+            case riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT) of
+                {true, UpdatedOptions} ->
+                    Ctx#ctx{doc=riak_client:get(BT, K, UpdatedOptions, C)};
+                {false, _} ->
+                    ?LOG_DEBUG("Not bothering to call get from wm because of timeout"),
+                    Ctx#ctx{doc={error, timeout}}
+            end;
         false ->
             Ctx#ctx{doc={error, bucket_type_unknown}}
     end;
@@ -1183,14 +1197,19 @@ ensure_doc(Ctx) -> Ctx.
 delete_resource(RD, Ctx=#ctx{bucket_type=T, bucket=B, key=K, client=C}) ->
     Options = make_options([], Ctx),
     BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
-    Result =
-        case wrq:get_req_header(?HEAD_VCLOCK, RD) of
-            undefined ->
-                riak_client:delete(BT, K, Options, C);
-            _ ->
-                VC = decode_vclock_header(RD),
-                riak_client:delete_vclock(BT, K, VC, Options, C)
-        end,
+    Result = case riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT) of
+        {true, UpdatedOptions} ->
+            case wrq:get_req_header(?HEAD_VCLOCK, RD) of
+                undefined ->
+                    riak_client:delete(BT, K, UpdatedOptions, C);
+                _ ->
+                    VC = decode_vclock_header(RD),
+                    riak_client:delete_vclock(BT, K, VC, UpdatedOptions, C)
+            end;
+        {false, _} ->
+            ?LOG_DEBUG("Not bothering to call delete from wm because of timeout"),
+            {error, timeout}
+    end,
     case Result of
         ok ->
             {true, RD, Ctx};

@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2012-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -48,7 +49,9 @@
          decode/2,
          encode/1,
          process/2,
+         process/3,
          process_stream/3,
+         process_stream/4,
          bucket_type/2,
          maybe_create_bucket_type/2]).
 
@@ -86,21 +89,53 @@ encode(Message) ->
 
 %% this should remain for backwards compatibility
 process(rpblistbucketsreq, State) ->
-    process(#rpblistbucketsreq{stream = false}, State);
+    process(#rpblistbucketsreq{stream = false}, State, []);
 
 %% @doc process/2 callback. Handles an incoming request message.
 process(Req, State) ->
+    process(Req, State, #{}).
+
+%% @doc process/3 callback. Handles an incoming request message.
+process(Req, State, ProcessOptions) ->
     {Class, Listing} = determine_class_and_listing(Req),
     Accept = determine_accept_and_report_job_disposition(Class),
+    % Inspect ProcessOptions for the presence of a message recv_time.
+    % If present, update the timeout value to account for the time spent
+    OriginalTimeout = get_timeout_from_req(Req),
+    Timeout = case app_helper:get_env(riak_core, use_dynamic_timeouts, true) of
+        true ->
+            case maps:get(recv_time, ProcessOptions, undefined) of
+                Time when is_integer(Time) ->
+                    DiffTime = (erlang:monotonic_time() - Time),
+                    max(OriginalTimeout - erlang:convert_time_unit(DiffTime, native, millisecond), 0);
+                _ ->
+                    OriginalTimeout
+            end;
+        _ ->
+            OriginalTimeout
+    end,
+    % if the timeout is at or below the minimum, the don't bother with the request
+    % and return a timeout error
     case {Accept, Listing} of
         {true, buckets} ->
-            maybe_do_list_buckets(Req, State);
+            maybe_do_list_buckets(Req, Timeout, State);
         {true, keys} ->
-            maybe_stream_list_keys(Req, State);
+            maybe_stream_list_keys(Req, Timeout, State);
         {false, _} ->
             error_accept(Class, State)
     end.
 
+%% @doc get the timeout from the request.  This is used to
+%% determine the timeout for the list keys and list buckets
+%% requests.
+-spec get_timeout_from_req(#rpblistbucketsreq{} | #rpblistkeysreq{}) ->
+    optional(pos_integer()).
+get_timeout_from_req(#rpblistbucketsreq{timeout = Timeout}) ->
+    Timeout;
+get_timeout_from_req(#rpblistkeysreq{timeout = Timeout}) ->
+    Timeout;
+get_timeout_from_req(_) ->
+    undefined.
 
 determine_accept_and_report_job_disposition(Class) ->
     Accept = riak_core_util:job_class_enabled(Class),
@@ -118,7 +153,7 @@ determine_class_and_listing(#rpblistkeysreq{}) ->
     %% at present list-keys always streams
     {{riak_kv, stream_list_keys}, keys}.
 
-maybe_stream_list_keys(#rpblistkeysreq{type = Type, bucket = B, timeout = T} = Req,
+maybe_stream_list_keys(#rpblistkeysreq{type = Type, bucket = B} = Req, T,
                        #state{client = Client} = State) ->
     case check_bucket_type(Type) of
         {ok, GoodType} ->
@@ -135,7 +170,7 @@ error_no_bucket_type(Type, State) ->
 error_accept(Class, State) ->
     {error, riak_core_util:job_class_disabled_message(binary, Class), State}.
 
-maybe_do_list_buckets(#rpblistbucketsreq{type = Type, timeout = T, stream = S} = Req, State) ->
+maybe_do_list_buckets(#rpblistbucketsreq{type = Type, stream = S} = Req, T, State) ->
     case check_bucket_type(Type) of
         {ok, GoodType} ->
             do_list_buckets(GoodType, T, S, Req, State);
@@ -145,45 +180,49 @@ maybe_do_list_buckets(#rpblistbucketsreq{type = Type, timeout = T, stream = S} =
 
 
 %% @doc process_stream/3 callback. Handles streaming keys messages and
+process_stream(Req, ReqId, State) ->
+    process_stream(Req, ReqId, State, []).
+
+%% @doc process_stream/4 callback. Handles streaming keys messages and
 %% streaming buckets.
 process_stream({ReqId, done}, ReqId,
-               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     {done, #rpblistkeysresp{done = 1}, State};
 process_stream({ReqId, From, {keys, []}}, ReqId,
-               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     _ = riak_kv_keys_fsm:ack_keys(From),
     {ignore, State};
 process_stream({ReqId, {keys, []}}, ReqId,
-               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     {ignore, State};
 process_stream({ReqId, From, {keys, Keys}}, ReqId,
-               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     _ = riak_kv_keys_fsm:ack_keys(From),
     {reply, #rpblistkeysresp{keys = Keys}, State};
 process_stream({ReqId, {keys, Keys}}, ReqId,
-               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     {reply, #rpblistkeysresp{keys = Keys}, State};
 process_stream({ReqId, {error, Error}}, ReqId,
-               State=#state{ req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{ req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req = undefined, req_ctx = undefined}};
 process_stream({ReqId, Error}, ReqId,
-               State=#state{ req=#rpblistkeysreq{}, req_ctx=ReqId}) ->
+               State=#state{ req=#rpblistkeysreq{}, req_ctx=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req = undefined, req_ctx = undefined}};
 %% list buckets clauses.
 process_stream({ReqId, done}, ReqId,
-               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {done, #rpblistbucketsresp{done = 1}, State};
 process_stream({ReqId, {buckets_stream, []}}, ReqId,
-               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {ignore, State};
 process_stream({ReqId, {buckets_stream, Buckets}}, ReqId,
-               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}) ->
+               State=#state{req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {reply, #rpblistbucketsresp{buckets = Buckets}, State};
 process_stream({ReqId, {error, Error}}, ReqId,
-               State=#state{ req=#rpblistbucketsreq{}, req_ctx=ReqId}) ->
+               State=#state{ req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req = undefined, req_ctx = undefined}};
 process_stream({ReqId, Error}, ReqId,
-               State=#state{ req=#rpblistbucketsreq{}, req_ctx=ReqId}) ->
+               State=#state{ req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req = undefined, req_ctx = undefined}}.
 
 

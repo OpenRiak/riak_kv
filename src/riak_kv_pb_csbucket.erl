@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_pb_index: Expose secondary index queries to Protocol Buffers
-%%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -44,7 +43,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -record(state, {client, req_id, req, continuation, result_count=0}).
 
@@ -64,6 +65,9 @@ encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
 process(Req=#rpbcsbucketreq{}, State) ->
+    process(Req, State, []).
+
+process(Req=#rpbcsbucketreq{}, State, _Options) ->
     #rpbcsbucketreq{start_key=StartKey,
                     start_incl=StartIncl, continuation=Continuation,
                     end_key=EndKey, end_incl=EndIncl} = Req,
@@ -87,15 +91,22 @@ maybe_perform_query({ok, Query}, Req, State) ->
     Bucket = maybe_bucket_type(T, B),
     Opts = riak_index:add_timeout_opt(Timeout, [{max_results, MaxResults},
                                                 {pagination_sort, true}]),
-    {ok, ReqId, _FSMPid} = 
+    {ok, ReqId, _FSMPid} =
         riak_client:stream_get_index(Bucket, Query, Opts, Client),
     {reply, {stream, ReqId}, State#state{req_id=ReqId, req=Req}}.
 
 %% @doc process_stream/3 callback. Handle streamed responses
-process_stream({ReqId, done}, ReqId, State=#state{req_id=ReqId,
-                                                  continuation=Continuation,
-                                                  req=Req,
-                                                  result_count=Count}) ->
+process_stream(Msg, ReqId, State) ->
+    process_stream(Msg, ReqId, State, []).
+
+%% @doc process_stream/4 callback. Handle streamed responses
+process_stream({ReqId, done},
+                ReqId,
+                State=#state{req_id=ReqId,
+                            continuation=Continuation,
+                            req=Req,
+                            result_count=Count},
+                _Options) ->
     %% Only add the continuation if there may be more results to send
     #rpbcsbucketreq{max_results=MaxResults} = Req,
     Resp = case is_integer(MaxResults) andalso Count >= MaxResults of
@@ -103,9 +114,13 @@ process_stream({ReqId, done}, ReqId, State=#state{req_id=ReqId,
                false -> #rpbcsbucketresp{done=1}
            end,
     {done, Resp, State};
-process_stream({ReqId, {results, []}}, ReqId, State=#state{req_id=ReqId}) ->
+process_stream({ReqId, {results, []}}, ReqId, State=#state{req_id=ReqId}, _Options) ->
     {ignore, State};
-process_stream({ReqId, {results, Results0}}, ReqId, State=#state{req_id=ReqId, req=Req, result_count=Count}) ->
+process_stream({ReqId,
+                {results, Results0}},
+                ReqId,
+                State=#state{req_id=ReqId, req=Req, result_count=Count},
+                _Options) ->
     #rpbcsbucketreq{max_results=MaxResults, bucket=Bucket} = Req,
     Count2 = length(Results0) + Count,
     %% results are {o, Key, Binary} where binary is a riak object
@@ -113,9 +128,9 @@ process_stream({ReqId, {results, Results0}}, ReqId, State=#state{req_id=ReqId, r
     Results = [encode_result(Bucket, {K, V}) || {o, K, V} <- Results0],
     {reply, #rpbcsbucketresp{objects=Results},
      State#state{continuation=Continuation, result_count=Count2}};
-process_stream({ReqId, Error}, ReqId, State=#state{req_id=ReqId}) ->
+process_stream({ReqId, Error}, ReqId, State=#state{req_id=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req_id=undefined}};
-process_stream(_,_,State) ->
+process_stream(_,_,State,_) ->
     {ignore, State}.
 
 encode_result(B, {K, V}) ->

@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2019-2022 Martin Sumner.
+%% Copyright (c) 2023-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -143,7 +144,7 @@ action({{Bucket, Key}, VectorClock}, true) ->
         N ->
             riak_kv_delete:delete(eraser,
                                     Bucket, Key,
-                                    [], ?DELETE_TIMEOUT, undefined, eraser,
+                                    [{timeout, ?DELETE_TIMEOUT}], undefined, eraser,
                                     VectorClock),
             true;
         _ ->
@@ -152,7 +153,7 @@ action({{Bucket, Key}, VectorClock}, true) ->
 action({{Bucket, Key}, VectorClock}, false) ->
     riak_kv_delete:delete(eraser,
                             Bucket, Key,
-                            [], ?DELETE_TIMEOUT, undefined, eraser,
+                            [{timeout, ?DELETE_TIMEOUT}], undefined, eraser,
                             VectorClock),
     true.
 

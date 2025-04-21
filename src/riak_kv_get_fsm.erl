@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,11 +19,11 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc coordination of Riak GET requests
-
 -module(riak_kv_get_fsm).
 -behaviour(gen_fsm).
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
 -include_lib("riak_kv_vnode.hrl").
+-include_lib("kernel/include/logger.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([test_link/7, test_link/5]).
@@ -67,7 +68,6 @@
                 req_id :: non_neg_integer() | undefined,
                 starttime = riak_core_util:moment() :: pos_integer(),
                 get_core :: riak_kv_get_core:getcore() | undefined,
-                timeout = infinity :: infinity | pos_integer(),
                 tref :: reference() | undefined,
                 bkey :: {riak_object:bucket(), riak_object:key()}|
                         {queue_name, riak_kv_replrtq_src:queue_name()},
@@ -111,7 +111,7 @@ start_link(ReqId,Bucket,Key,R,Timeout,From) ->
 %% {pr, non_neg_integer()}   - Minimum number of primary vnodes participating
 %% {basic_quorum, boolean()} - Whether to use basic quorum (return early
 %%                             in some failure cases.
-%% {notfound_ok, boolean()}  - Count notfound reponses as successful.
+%% {notfound_ok, boolean()}  - Count notfound responses as successful.
 %% {timeout, pos_integer() | infinity} -  Timeout for vnode responses
 -spec start({raw, req_id(), pid()},
             queue_name|binary(),
@@ -130,7 +130,7 @@ start(From, Bucket, Key, GetOptions) ->
     end.
 
 %% Included for backward compatibility, in case someone is, say, passing around
-%% a riak_client instace between nodes during a rolling upgrade. The old
+%% a riak_client instance between nodes during a rolling upgrade. The old
 %% `start_link' function has been renamed `start' since it doesn't actually link
 %% to the caller.
 start_link(From, Bucket, Key, GetOptions) -> start(From, Bucket, Key, GetOptions).
@@ -189,6 +189,7 @@ init([From, Bucket, Key, Options0]) ->
         _ ->
             ok
     end,
+    % 0 is the timeout so this immediately triggers the next state (prepare)
     {ok, prepare, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -303,11 +304,6 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
                                    trace=Trace,
                                    expected_fetchclock = ExpClock}) ->
     ?DTRACE(Trace, ?C_GET_FSM_VALIDATE, [], ["validate"]),
-    AppEnvTimeout = app_helper:get_env(riak_kv, timeout),
-    Timeout = case AppEnvTimeout of
-                  undefined -> get_option(timeout, Options, ?DEFAULT_TIMEOUT);
-                  _ -> AppEnvTimeout
-              end,
     R0 = get_option(r, Options, ?DEFAULT_R),
     PR0 = get_option(pr, Options, ?DEFAULT_PR),
     NodeConfirms0 = get_option(node_confirms, Options, default),
@@ -344,7 +340,6 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
                                             ExpClock,
                                             NodeConfirms),
             new_state_timeout(execute, StateData#state{get_core = GetCore,
-                                                       timeout = Timeout,
                                                        req_id = ReqId});
         Error ->
             StateData2 = client_reply(Error, StateData),
@@ -352,14 +347,39 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
     end.
 
 %% @private
-execute(timeout, StateData0=#state{timeout=Timeout,req_id=ReqId,
+execute(timeout, StateData=#state{options=Options,req_id=ReqId,
                                    bkey=BKey, trace=Trace,
                                    preflist2 = Preflist2,
                                    get_core = GetCore,
-                                   request_type = RequestType,
-                                   override_vnodes = OverVnodes}) ->
+                                   request_type = RequestType0,
+                                   override_vnodes = OverVnodes,
+                                   tref = TRef0}) ->
     Preflist = [IndexNode || {IndexNode, _Type} <- Preflist2],
-    TRef = schedule_timeout(Timeout),
+    % execute may be called from the waiting_vnode_r state, so we need to
+    % update the timeout accordingly so that it takes into account the time
+    % spent in the waiting_vnode_r state, or any other time spent anywhere,
+    % before arriving here. If a timeout has already been set, don't set a new one.
+    {TRef, RequestType, Options2} = case TRef0 of
+        undefined ->
+            % If no time is left, set the request type to timeout. This will cause the
+            % waiting_vnode_r state to return a timeout error.
+            {Continue, UpdatedOptions} =
+                    riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
+            case Continue of
+                true ->
+                    case proplists:get_value(?INTERNAL_TIMEOUT_BY, UpdatedOptions) of
+                        undefined ->
+                            Timeout = proplists:get_value(timeout, UpdatedOptions),
+                            {schedule_timeout(Timeout, false), RequestType0, UpdatedOptions};
+                        FinishBy ->
+                            {schedule_timeout(FinishBy, true), RequestType0, UpdatedOptions}
+                    end;
+                false ->
+                    {TRef0, timeout, UpdatedOptions}
+            end;
+        _ ->
+            {TRef0, RequestType0, Options}
+    end,
     case Trace of
         true ->
             ?DTRACE(?C_GET_FSM_EXECUTE, [], ["execute"]),
@@ -368,39 +388,48 @@ execute(timeout, StateData0=#state{timeout=Timeout,req_id=ReqId,
         _ ->
             ok
     end,
-    StateData =
-        case RequestType of
-            head ->
-                % Mark the get_core as head_merge so that when determining the
-                % response in riak_get_core the specific head_merge function
-                % will be used
-                %
-                % Send head requests to all the Preflist
-                riak_kv_vnode:head(Preflist, BKey, ReqId),
-                HO_GetCore = riak_kv_get_core:head_merge(GetCore),
-                StateData0#state{tref=TRef, get_core = HO_GetCore};
-            update ->
-                % Need to send get requests, but still merge using head_merge
-                % as there will still be head results in the result list, and
-                % more head results  may arrive from previous HEAD request
-                FetchList = lists:map(fun(Idx) ->
-                                            lists:keyfind(Idx, 1, Preflist)
-                                        end,
-                                        OverVnodes),
-                riak_kv_vnode:get(FetchList, BKey, ReqId),
-                HO_GetCore = riak_kv_get_core:head_merge(GetCore),
-                StateData0#state{tref=TRef, get_core = HO_GetCore};
-            get ->
-                % Only used if the default is switched back to start with a GET
-                % not a HEAD
-                riak_kv_vnode:get(Preflist, BKey, ReqId),
-                StateData0#state{tref=TRef}
-        end,
-    new_state(waiting_vnode_r, StateData).
+    ExternalOptions = riak_core_util:externalize_timeouts(Options2),
+    UpdatedTimeout = get_option(timeout, ExternalOptions, ?DEFAULT_TIMEOUT),
+    case RequestType of
+        head ->
+            % Mark the get_core as head_merge so that when determining the
+            % response in riak_get_core the specific head_merge function
+            % will be used
+            %
+            % Send head requests to all the Preflist
+            riak_kv_vnode:head(Preflist, BKey, ReqId, undefined, [{timeout, UpdatedTimeout}]),
+            HO_GetCore = riak_kv_get_core:head_merge(GetCore),
+            new_state(waiting_vnode_r, StateData#state{tref=TRef,
+                                                       get_core=HO_GetCore,
+                                                       options=Options2});
+        update ->
+            % Need to send get requests, but still merge using head_merge
+            % as there will still be head results in the result list, and
+            % more head results  may arrive from previous HEAD request
+            FetchList = lists:map(fun(Idx) ->
+                                        lists:keyfind(Idx, 1, Preflist)
+                                    end,
+                                    OverVnodes),
+            riak_kv_vnode:get(FetchList, BKey, ReqId, undefined, [{timeout, UpdatedTimeout}]),
+            HO_GetCore = riak_kv_get_core:head_merge(GetCore),
+            new_state(waiting_vnode_r, StateData#state{tref=TRef,
+                                                       get_core=HO_GetCore,
+                                                       options=Options2});
+        get ->
+            % Only used if the default is switched back to start with a GET
+            % not a HEAD
+            riak_kv_vnode:get(Preflist, BKey, ReqId, undefined, [{timeout, UpdatedTimeout}]),
+            new_state(waiting_vnode_r, StateData#state{tref=TRef, options=Options2});
+        timeout ->
+            %erlang:cancel_timer(TRef),
+            % this log output is used by riak_test
+            ?LOG_DEBUG("Not bothering to call riak_kv_vnode because of timeout"),
+            new_state_timeout(waiting_vnode_r, StateData#state{options=Options2})
+    end.
 
 %% @private
 waiting_vnode_r({r, VnodeResult, Idx, _ReqId},
-                    StateData = #state{get_core = GetCore, trace = Trace}) ->
+                    StateData = #state{get_core=GetCore, trace=Trace, tref=TRef}) ->
     case Trace of
         true ->
             ShortCode = riak_kv_get_core:result_shortcode(VnodeResult),
@@ -450,6 +479,7 @@ waiting_vnode_r({r, VnodeResult, Idx, _ReqId},
                                                 override_vnodes = IdxList,
                                                 get_core = NewGC});
                 {Reply, UpdGetCore2} ->
+                    erlang:cancel_timer(TRef),
                     StateWithReply = StateData#state{get_core = UpdGetCore2},
                     NewStateData = client_reply(Reply, StateWithReply),
                     update_stats(Reply, NewStateData),
@@ -462,7 +492,11 @@ waiting_vnode_r({r, VnodeResult, Idx, _ReqId},
                 waiting_vnode_r,
                 StateData#state{get_core = UpdGetCore}}
     end;
-waiting_vnode_r(request_timeout, StateData = #state{trace=Trace}) ->
+waiting_vnode_r({timeout, TRef, request_timeout}, StateData = #state{tref=TRef0})
+        when TRef =:= TRef0 ->
+    % Our timer expired. Immediately go to the below timeout state
+    new_state_timeout(waiting_vnode_r, StateData);
+waiting_vnode_r(timeout, StateData = #state{trace=Trace}) ->
     ?DTRACE(Trace, ?C_GET_FSM_WAITING_R_TIMEOUT, [-2],
             ["waiting_vnode_r", "timeout"]),
     S2 = client_reply({error,timeout}, StateData),
@@ -485,7 +519,9 @@ waiting_read_repair({r, VnodeResult, Idx, _ReqId},
     UpdGetCore =
         riak_kv_get_core:add_result(Idx, VnodeResult, ResNode, GetCore),
     maybe_finalize(StateData#state{get_core = UpdGetCore});
-waiting_read_repair(request_timeout, StateData = #state{trace=Trace}) ->
+waiting_read_repair({timeout, TRef, request_timeout}, StateData = #state{trace=Trace,
+                                                                         tref=TRef0})
+        when TRef =:= TRef0 ->
     ?DTRACE(Trace, ?C_GET_FSM_WAITING_RR_TIMEOUT, [-2],
             ["waiting_read_repair", "timeout"]),
     finalize(StateData).
@@ -499,8 +535,8 @@ handle_sync_event(_Event, _From, _StateName, StateData) ->
     {stop,badmsg,StateData}.
 
 %% @private
-handle_info(request_timeout, StateName, StateData) ->
-    ?MODULE:StateName(request_timeout, StateData);
+handle_info({timeout, TRef, request_timeout}, StateName, StateData) ->
+    ?MODULE:StateName({timeout, TRef, request_timeout}, StateData);
 %% @private
 handle_info(_Info, _StateName, StateData) ->
     {stop,badmsg,StateData}.
@@ -613,7 +649,7 @@ finalize(StateData=#state{get_core = GetCore, trace = Trace}) ->
 
 
 %% Maybe issue deletes if all primary nodes are available.
-%% Get core will only requestion deletion if all vnodes
+%% Get core will only request deletion if all vnodes
 %% replies with the same value.
 maybe_delete(StateData=#state{n = N, preflist2=Sent, trace=Trace,
                               req_id=ReqId, bkey=BKey}) ->
@@ -643,7 +679,7 @@ using_custom_n_val(#state{n=N, bucket_props=BucketProps}) ->
 %% skip read-repair
 %% On a very busy system with many writes and many reads, it is possible to
 %% get overloaded by read-repairs. By occasionally skipping read_repair we
-%% can keep the load more managable; ie the only load on the system becomes
+%% can keep the load more manageable; ie the only load on the system becomes
 %% the gets, puts, etc.
 maybe_read_repair(Indices, RepairObj, UpdStateData) ->
     HardCap = app_helper:get_env(riak_kv, read_repair_max),
@@ -704,7 +740,7 @@ read_repair(GetCoreIndices, RepairObj,
             fun({{Idx, Node}, _Type, Reason}) ->
                 case app_helper:get_env(riak_kv, read_repair_log, false) of
                     true ->
-                        lager:info(
+                        ?LOG_INFO(
                             "Read repair of ~p on ~w ~w for reason ~w",
                             [BKey, Idx, Node, Reason]);
                     false ->
@@ -759,10 +795,20 @@ get_option(Name, Options, Default) ->
             Default
     end.
 
-schedule_timeout(infinity) ->
+-spec schedule_timeout(FinishBy::integer() | infinity, Absolute::boolean()) ->
+    undefined | reference().
+schedule_timeout(FinishBy, Absolute) when is_integer(FinishBy) ->
+    FinishByMillis = case Absolute of
+      true ->
+        erlang:convert_time_unit(FinishBy, native, millisecond);
+      false ->
+        FinishBy
+    end,
+    erlang:start_timer(FinishByMillis, self(), request_timeout, [{abs, Absolute}]);
+schedule_timeout(infinity, _) ->
     undefined;
-schedule_timeout(Timeout) ->
-    erlang:send_after(Timeout, self(), request_timeout).
+schedule_timeout(_, _) ->
+    schedule_timeout(?DEFAULT_TIMEOUT, false).
 
 client_reply(Reply0, StateData = #state{from = {raw, ReqId, Pid},
                                        options = Options,
@@ -773,7 +819,7 @@ client_reply(Reply0, StateData = #state{from = {raw, ReqId, Pid},
     % For the fetch style get, the underlying tombstone object needs to be
     % returned for replication.  However, a normal GET is not expecting that
     % format - so only return {error, {deleted, VClock}} for backwards
-    % compatability
+    % compatibility
     Reply =
         case Reply0 of
             {error, {deleted, TombClock, TombStone}} ->
@@ -882,11 +928,11 @@ determine_do_read_repair_test_() ->
         {"soft cap is undefined, actual below", ?_assert(determine_do_read_repair(undefined, 7, 5))},
         {"soft cap is undefined, actual above", ?_assertNot(determine_do_read_repair(undefined, 7, 10))},
         {"soft cap is undefined, actual at", ?_assertNot(determine_do_read_repair(undefined, 7, 7))},
-        {"hard cap is undefiend", ?_assert(determine_do_read_repair(3000, undefined))},
+        {"hard cap is undefined", ?_assert(determine_do_read_repair(3000, undefined))},
         {"actual below soft cap", ?_assert(determine_do_read_repair(3000, 7000, 2000))},
         {"actual equals soft cap", ?_assert(determine_do_read_repair(3000, 7000, 3000))},
         {"actual above hard cap", ?_assertNot(determine_do_read_repair(3000, 7000, 9000))},
-        {"actaul equals hard cap", ?_assertNot(determine_do_read_repair(3000, 7000, 7000))},
+        {"actual equals hard cap", ?_assertNot(determine_do_read_repair(3000, 7000, 7000))},
         {"hard cap == soft cap, actual below", ?_assert(determine_do_read_repair(100, 100, 50))},
         {"hard cap == soft cap, actual above", ?_assertNot(determine_do_read_repair(100, 100, 150))},
         {"hard cap == soft cap, actual equals", ?_assertNot(determine_do_read_repair(100, 100, 100))},

@@ -1,6 +1,7 @@
 %% --------------------------------------------------------------------------
 %%
 %% Copyright (c) 2015 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -40,7 +41,9 @@
          decode/2,
          encode/1,
          process/2,
-         process_stream/3]).
+         process/3,
+         process_stream/3,
+         process_stream/4]).
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 
@@ -59,17 +62,23 @@ encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
 %% Get bucket-key preflist primaries
-process(#rpbgetbucketkeypreflistreq{bucket = <<>>}, State) ->
+process(#rpbgetbucketkeypreflistreq{} = Req, State) ->
+    process(Req, State, []).
+
+process(#rpbgetbucketkeypreflistreq{bucket = <<>>}, State, _ProcessOptions) ->
     {error, "Bucket cannot be zero-length", State};
-process(#rpbgetbucketkeypreflistreq{key = <<>>}, State) ->
+process(#rpbgetbucketkeypreflistreq{key = <<>>}, State, _ProcessOptions) ->
     {error, "Key cannot be zero-length", State};
-process(#rpbgetbucketkeypreflistreq{type = <<>>}, State) ->
+process(#rpbgetbucketkeypreflistreq{type = <<>>}, State, _ProcessOptions) ->
     {error, "Type cannot be zero-length", State};
-process(#rpbgetbucketkeypreflistreq{type=T, bucket=B0, key =K}, State) ->
+process(#rpbgetbucketkeypreflistreq{type=T, bucket=B0, key =K}, State, _ProcessOptions) ->
     B = riak_kv_pb_bucket:maybe_create_bucket_type(T, B0),
     Preflist = riak_core_apl:get_apl_ann_with_pnum({B, K}),
     PbPreflist = riak_pb_kv_codec:encode_apl_ann(Preflist),
     {reply, #rpbgetbucketkeypreflistresp{preflist=PbPreflist}, State}.
 
 process_stream(_, _, State) ->
+    {ignore, State}.
+
+process_stream(_, _, State, _) ->
     {ignore, State}.
