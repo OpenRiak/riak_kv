@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% fsm_eqc_vnode: mock vnode for get/put FSM testing
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2017 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -30,32 +29,32 @@
 -behaviour(gen_fsm).
 -include("include/riak_kv_vnode.hrl").
 
--compile({nowarn_deprecated_function, 
+-compile({nowarn_deprecated_function,
             [{gen_fsm, start_link, 3},
                 {gen_fsm, start_link, 4},
                 {gen_fsm, sync_send_all_state_event, 2}]}).
 
 
--export([start_link/0, start_link/1, set_data/2, set_vput_replies/1, 
+-export([start_link/0, start_link/1, set_data/2, set_vput_replies/1,
          get_history/0, get_put_history/0,
          get_reply_history/0, log_postcommit/1, get_postcommits/0]).
--export([init/1, 
-         active/2, 
+-export([init/1,
+         active/2,
          handle_event/3,
-         handle_sync_event/4, 
-         handle_info/3, 
-         terminate/3, 
+         handle_sync_event/4,
+         handle_info/3,
+         terminate/3,
          code_change/4]).
 
 -record(state, {objects, partvals,
 
                 %% Put request handling.
-                %% Before running the put FSM the test sets the mock vnode up 
+                %% Before running the put FSM the test sets the mock vnode up
                 %% with responses for each vnode.  Rather than
                 %% hashing the key and working out a preference
                 %% list, responses are created for 'logical' indices
                 %% from 1..N.  Each logical index will have one or two
-                %% replies (only one if the first is a timeout).  
+                %% replies (only one if the first is a timeout).
                 lidx_map=[],
                 vput_replies=[],
 
@@ -103,6 +102,12 @@ get_postcommits() ->
 
 init([]) ->
     {ok, active, #state{}}.
+
+active(?VNODE_REQv2{index = Idx,
+                  sender = Sender,
+                  request = Req},
+       State) ->
+    active_handle_request(riak_kv_requests:request_type(Req), Req, Idx, Sender, State).
 
 active(?VNODE_REQ{index = Idx,
                   sender = Sender,
@@ -173,7 +178,7 @@ handle_info(_Info, _StateName, StateData) ->
 terminate(Reason, _StateName, _State) ->
     Reason.
 
-code_change(_OldVsn, StateName, _State, _Extra) -> 
+code_change(_OldVsn, StateName, _State, _Extra) ->
     {ok, StateName, #state{}}.
 
 %% ====================================================================
@@ -224,7 +229,7 @@ send_vput_replies([{LIdx, FirstResp} | Rest], Idx, Sender, ReqId, PutObj, Option
             end,
     NewState2 = record_reply(Sender, Reply, NewState1),
     Rest2 = fail_on_bad_obj(LIdx, PutObj, Rest),
-                    
+
     send_vput_extra(Rest2, Sender, ReqId, NewState2).
 
 send_vput_extra([], {fsm, undefined, Pid} = _Sender, _ReqId, State) ->
@@ -287,7 +292,7 @@ put_merge(notfound, UpdObj, Options) ->
             riak_object:increment_vclock(UpdObj, VnodeId, Ts);
         false ->
             UpdObj
-    end;                
+    end;
 put_merge(CurObj, UpdObj, Options) ->
     Coord = proplists:get_value(coord, Options, false),
     VnodeId = <<1, 1, 1, 1, 1, 1, 1, 1>>,

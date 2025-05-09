@@ -43,13 +43,14 @@
     {dw,    riak_client:pd_quorum()} |
     {pw,    riak_client:pd_quorum()} |
     {n_val, riak_client:n_val()} |
-    {sloppy_quorum, boolean()}.
+    {sloppy_quorum, boolean()} |
+    {timeout, non_neg_integer()}.
 
 -type options() :: list(option()).
 
 -define(TOMB_PAUSE, 2).
     % The pause has a dual-purpose, for both flow control and for improving
-    % the probability that tombstone PUTs are propogated before a reap attempt
+    % the probability that tombstone PUTs are propagated before a reap attempt
     % is prompted.
 
 
@@ -303,7 +304,7 @@ invalid_rw_delete() ->
     Bucket = <<"testbucket">>,
     Key = <<"testkey">>,
     Timeout = 60000,
-    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{rw,RW}], Timeout, self()]),
+    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{rw,RW}, {timeout, Timeout}], self()]),
     %% Wait for error response
     receive
         {_RequestId, Result} ->
@@ -320,7 +321,7 @@ invalid_r_delete() ->
     Bucket = <<"testbucket">>,
     Key = <<"testkey">>,
     Timeout = 60000,
-    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{r,R}], Timeout, self()]),
+    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{r,R}, {timeout, Timeout}], self()]),
     %% Wait for error response
     receive
         {_RequestId, Result} ->
@@ -337,8 +338,8 @@ invalid_w_delete() ->
     Bucket = <<"testbucket">>,
     Key = <<"testkey">>,
     Timeout = 60000,
-    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{w,W}],
-            Timeout, self(), undefined, vclock:fresh()]),
+    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{w,W}, {timeout, Timeout}],
+            self(), undefined, vclock:fresh()]),
     %% Wait for error response
     receive
         {_RequestId, Result} ->
@@ -355,7 +356,7 @@ invalid_pr_delete() ->
     Bucket = <<"testbucket">>,
     Key = <<"testkey">>,
     Timeout = 60000,
-    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{pr,PR}], Timeout, self()]),
+    riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key, [{pr,PR}, {timeout, Timeout}], self()]),
     %% Wait for error response
     receive
         {_RequestId, Result} ->
@@ -373,7 +374,7 @@ invalid_pw_delete() ->
     Key = <<"testkey">>,
     Timeout = 60000,
     riak_kv_delete_sup:start_delete(node(), [RequestId, Bucket, Key,
-            [{pw,PW}], Timeout, self(), undefined, vclock:fresh()]),
+            [{pw,PW}, {timeout, Timeout}], self(), undefined, vclock:fresh()]),
     %% Wait for error response
     receive
         {_RequestId, Result} ->

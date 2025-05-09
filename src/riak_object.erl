@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2023-2024 Workday, Inc.
+%% Copyright (c) 2023-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -95,7 +95,7 @@
 -export([to_json/1, from_json/1]).
 -export([index_data/1, diff_index_data/2]).
 -export([index_specs/1, diff_index_specs/2]).
--export([to_binary/2, from_binary/3, to_binary_version/4, binary_version/1]).
+-export([to_binary/2, from_binary/3, to_binary_version/4, binary_version/1, extract_metadata/1]).
 -export([nextgenrepl_encode/3, nextgenrepl_decode/1]).
 -export([summary_from_binary/1, aae_from_object_binary/1,
             get_metadata_from_aae_binary/1, aae_fold_metabin/2,
@@ -1293,7 +1293,7 @@ from_binary(_B, _K, Obj = #r_object{}) ->
         {vclock:vclock(), integer(), integer(),
             list(erlang:timestamp())|undefined, binary()}.
 %% @doc
-%% Extract only sumarry infromation from the binary - the vector, the object
+%% Extract only summary information from the binary - the vector, the object
 %% size and the sibling count
 summary_from_binary(<<131, _Rest/binary>>=ObjBin) ->
     case binary_to_term(ObjBin) of
@@ -1532,6 +1532,24 @@ bin_contents(Contents) ->
                 <<Acc/binary, (bin_content(Content))/binary>>
         end,
     lists:foldl(F, <<>>, Contents).
+
+-spec extract_metadata(RiakObjBin :: binary()) -> Meta :: binary().
+extract_metadata(<<?MAGIC:8/integer,
+            ?V1_VERS:8/integer,
+            VclockLen:32/integer,
+            VclockBin:VclockLen/binary,
+            SibCount:32/integer,
+            SibsBin/binary>>) ->
+    MetaData = extract_metadata1(SibsBin, <<>>),
+    binary:copy(<<?MAGIC:8/integer, ?V1_VERS:8/integer,
+        VclockLen:32/integer, VclockBin/binary, SibCount:32/integer, MetaData/binary>>).
+
+extract_metadata1(<<>>, Acc) -> Acc;
+extract_metadata1(SibsBin, Acc) ->
+    <<ValLen:32/integer, _ValBin:ValLen/binary,
+      MetaLen:32/integer, MetaBin:MetaLen/binary,
+      Rest/binary>> = SibsBin,
+    extract_metadata1(Rest, <<Acc/binary, 0:32/integer, MetaLen:32/integer, MetaBin:MetaLen/binary>>).
 
 meta_bin(MD) ->
     {{VTagVal, Deleted, LastModVal}, RestBin} = dict:fold(fun fold_meta_to_bin/3,
@@ -2466,5 +2484,67 @@ trim_values(<<ValueLen:32/integer, _ValueBin:ValueLen/binary,
     trim_values(Rest,
                 <<AccBin/binary,
                     0:32/integer, MetaLen:32/integer, MetaBin/binary>>).
+
+single_sibling_meta_bin_extraction_test() ->
+    Bucket = <<"test_bucket">>,
+    Key = <<"test_key">>,
+    Value = <<"test_value">>,
+    MD = dict:from_list([{?MD_CTYPE, "application/json"},
+                         {<<"custom-field">>, "test-value"}]),
+
+    RObj = riak_object:new(Bucket, Key, Value, MD),
+    RObj2 = riak_object:update_last_modified(RObj),
+    RObj3 = riak_object:apply_updates(RObj2),
+    ObjBin = riak_object:to_binary(v1, RObj3),
+
+    MetaBin = extract_metadata(ObjBin),
+
+    RObjMetaOnly = from_binary(Bucket, Key, MetaBin),
+    Meta = get_metadata(RObjMetaOnly),
+    ?assertEqual(head_only, get_value(RObjMetaOnly)),
+    ?assertEqual("test-value", dict:fetch(<<"custom-field">>, Meta)).
+
+multiple_siblings_meta_bin_extraction_test() ->
+    meck:new(riak_core_bucket, [passthrough]),
+    meck:expect(riak_core_bucket, get_bucket,
+                fun(_) -> [{dvv_enabled, true}, {allow_mult, true}] end),
+    Bucket = <<"test_bucket">>,
+    Key = <<"test_key">>,
+
+    Value1 = <<"value1">>,
+    MD1 = dict:from_list([{?MD_CTYPE, "text/plain"},
+                          {<<"meta1">>, "first"}]),
+
+    RObj1 = riak_object:new(Bucket, Key, Value1, MD1),
+    RObj1a = riak_object:update_last_modified(RObj1),
+    RObj1b = riak_object:apply_updates(RObj1a),
+
+    Value2 = <<"value2">>,
+    MD2 = dict:from_list([{?MD_CTYPE, "text/html"},
+                          {<<"meta2">>, "second"},
+                          {?MD_DELETED, "true"}]),
+
+    RObj2 = riak_object:new(Bucket, Key, Value2, MD2),
+    RObj2a = riak_object:update_last_modified(RObj2),
+    RObj2b = riak_object:apply_updates(RObj2a),
+    RObj3 = riak_object:syntactic_merge(RObj1b, RObj2b),
+
+    ObjBin = riak_object:to_binary(v1, RObj3),
+
+    MetaBin = extract_metadata(ObjBin),
+
+    RObjMetaOnly = from_binary(Bucket, Key, MetaBin),
+    ?assertEqual([head_only, head_only], get_values(RObjMetaOnly)),
+    Metas = get_metadatas(RObjMetaOnly),
+    {MetaFound1, MetaFound2} = lists:foldl(fun(Dict, {IMF1, IMF2} = Acc) ->
+        case {dict:find(<<"meta1">>, Dict), dict:find(<<"meta2">>, Dict)} of
+            {{ok, "first"}, _} -> {true, IMF2};
+            {_, {ok, "second"}} -> {IMF1, true};
+            _ -> Acc
+        end
+    end, {false, false}, Metas),
+    ?assert(MetaFound1),
+    ?assert(MetaFound2),
+    meck:unload(riak_core_bucket).
 
 -endif.

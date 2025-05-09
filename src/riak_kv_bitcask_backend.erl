@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2022-2023 Workday, Inc.
+%% Copyright (c) 2022-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -42,7 +42,7 @@
          status/1,
          callback/3]).
 
--export([data_size/1]).
+-export([head/3, data_size/1]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -65,7 +65,7 @@
 -define(MERGE_FILE, "merge.txt").
 -define(VERSION_FILE, "version.txt").
 -define(API_VERSION, 1).
--define(CAPABILITIES, [async_fold, size, flush_put]).
+-define(CAPABILITIES, [async_fold, head, size, flush_put]).
 -define(TERMINAL_POSIX_ERRORS, [eacces, erofs, enodev, enospc]).
 
 %% must not be 131, otherwise will match t2b in error
@@ -170,9 +170,10 @@ start(Partition, Config0) ->
                 {ok, DataDir} ->
                     BitcaskDir = filename:join(DataRoot, DataDir),
                     UpgradeRet = maybe_start_upgrade(BitcaskDir),
-                    BitcaskOpts0 = set_mode(read_write, Config),
+                    BitcaskOpts1 = set_mode(read_write, Config),
                     BackendInstanceName = filename:basename(DataRoot),
-                    BitcaskOpts = set_stats_callback(BackendInstanceName, BitcaskOpts0),
+                    BitcaskOpts0 = set_stats_callback(BackendInstanceName, BitcaskOpts1),
+                    BitcaskOpts = set_meta_getter(BitcaskOpts0),
                     register_stats(BackendInstanceName, Config),
                     case bitcask:open(BitcaskDir, BitcaskOpts) of
                         Ref when is_reference(Ref) ->
@@ -210,13 +211,13 @@ stop(#state{ref=Ref}) ->
 
 %% @doc Retrieve an object from the bitcask backend
 -spec get(riak_object:bucket(), riak_object:key(), state()) ->
-                 {ok, any(), state()} |
+                 {ok, {Value :: binary(), Meta :: binary()}, state()} |
                  {error, not_found, state()} |
                  {error, term(), state()}.
 get(Bucket, Key, #state{ref=Ref, key_vsn=KVers}=State) ->
     BitcaskKey = make_bk(KVers, Bucket, Key),
     case bitcask:get(Ref, BitcaskKey) of
-        {ok, Value} ->
+        {ok, {Value, _Meta}} ->
             {ok, Value, State};
         not_found  ->
             {error, not_found, State};
@@ -225,6 +226,21 @@ get(Bucket, Key, #state{ref=Ref, key_vsn=KVers}=State) ->
                           [Bucket,Key]),
             {error, not_found, State};
         {error, nofile}  ->
+            {error, not_found, State};
+        {error, Reason} ->
+            {error, Reason, State}
+    end.
+
+-spec head(riak_object:bucket(), riak_object:key(), state()) ->
+                 {ok, binary(), state()} |
+                 {ok, not_found, state()} |
+                 {error, term(), state()}.
+head(Bucket, Key, #state{ref=Ref, key_vsn=KVers}=State) ->
+    BitcaskKey = make_bk(KVers, Bucket, Key),
+    case bitcask:head(Ref, BitcaskKey) of
+        {ok, Meta} ->
+            {ok, Meta, State};
+        not_found  ->
             {error, not_found, State};
         {error, Reason} ->
             {error, Reason, State}
@@ -241,16 +257,28 @@ get(Bucket, Key, #state{ref=Ref, key_vsn=KVers}=State) ->
 put(Bucket, PrimaryKey, _IndexSpecs, Val,
     #state{ref=Ref, key_vsn=KeyVsn}=State) ->
     BitcaskKey = make_bk(KeyVsn, Bucket, PrimaryKey),
-    case bitcask:put(Ref, BitcaskKey, Val) of
-        ok ->
-            {ok, State};
-        {error, Reason} ->
-            ?LOG_WARNING("Backend put error ~p", [Reason]),
-            % Should crash if the error is a permanent file system error
-            false =
-                is_tuple(Reason) and
-                    lists:member(element(2, Reason), ?TERMINAL_POSIX_ERRORS),
-            {error, Reason, State}
+    Meta = try
+        riak_object:extract_metadata(Val)
+    catch
+        Type:Error ->
+            ?LOG_ERROR("Metadata extraction error: ~p:~p for value ~p", [Type, Error, Val]),
+            undefined
+    end,
+    case Meta of
+        undefined ->
+            {error, metadata_extraction_failed, State};
+        _ ->
+            case bitcask:put(Ref, BitcaskKey, Val, Meta) of
+                ok ->
+                    {ok, State};
+                {error, Reason} ->
+                    ?LOG_WARNING("Backend put error ~p", [Reason]),
+                    % Should crash if the error is a permanent file system error
+                    false =
+                        is_tuple(Reason) and
+                            lists:member(element(2, Reason), ?TERMINAL_POSIX_ERRORS),
+                    {error, Reason, State}
+            end
     end.
 
 %% @doc Insert an object into the bitcask backend, and flush to disk.
@@ -681,6 +709,10 @@ set_mode(read_write, Config) ->
     Config1 = lists:keystore(read_write, 1, Config, {read_write, true}),
     lists:keydelete(read_only, 1, Config1).
 
+
+set_meta_getter(Config) ->
+    lists:keystore(meta_getter, 1, Config, {meta_getter, fun riak_object:extract_metadata/1}).
+
 set_stats_callback(BackendInstanceName, Config) ->
     StatsCallbackHandler = stats_callback_handler(BackendInstanceName),
     lists:keystore(stats_callback, 1, Config, {stats_callback, StatsCallbackHandler}).
@@ -724,6 +756,10 @@ bitcask_files(Dir) ->
             {error, Err}
     end.
 
+-spec bitcask_hintfiles(string()) -> [string()].
+bitcask_hintfiles(Dir) ->
+    filelib:wildcard(filename:join(Dir, "*.hint")).
+
 -spec has_bitcask_files(string()) -> boolean() | {error, term()}.
 has_bitcask_files(Dir) ->
     case bitcask_files(Dir) of
@@ -737,24 +773,15 @@ has_bitcask_files(Dir) ->
     end.
 
 -spec needs_upgrade(CurVsn :: version() | undefined, NewVsn :: version()) -> boolean().
-%% At present, the only transition point is 1.6 to 1.7, update as needed.
-%% As such, the first head should match all current use cases. The rest are
-%% included for full coverage (historical Bitcask versions start at 0.1,
-%% though we're unlikely to encounter them).
-needs_upgrade({vsn, [Major | _]}, {vsn, [Major | _]}) when Major > 1 ->
+needs_upgrade(Vsn, Vsn) ->
     false;
-needs_upgrade({vsn, [Major, Minor | _]}, {vsn, [Major, Minor | _]}) ->
-    false;
-needs_upgrade({vsn, [CurMajor | _]}, {vsn, [NewMajor | _]})
-        when CurMajor > 1 andalso NewMajor > 1 ->
-    false;
-needs_upgrade({vsn, [CurMajor, CurMinor | _]}, {vsn, [NewMajor, NewMinor | _]}) ->
-    Transition = {1, 6},
-    {CurMajor, CurMinor} =< Transition andalso {NewMajor, NewMinor} > Transition;
+needs_upgrade({vsn, [OldMajor, OldMinor, OldPatch | _]}, {vsn, [NewMajor, NewMinor, NewPatch | _]})
+    when OldMajor < NewMajor; OldMinor < NewMinor; OldPatch < NewPatch ->
+    true;
 needs_upgrade(undefined, _) ->
     true;
 needs_upgrade(CurVsn, NewVsn) ->
-    ?LOG_WARNING("unrecognized bitcask version(s): '~w', '~w'", [CurVsn, NewVsn]),
+    ?LOG_WARNING("unrecognized bitcask version(s): '~p', '~p'", [CurVsn, NewVsn]),
     false.
 
 -spec maybe_start_upgrade(string()) -> no_upgrade | {upgrading, version()}.
@@ -816,12 +843,32 @@ maybe_start_upgrade_if_bitcask_files(Dir) ->
     end.
 
 % @doc Start the upgrade process for the given old/new version pair.
+% For the 3.0.0+ upgrade, we can just delete the hintfile, Bitcask
+% will detect this and automatically recreate it with the new version.
 -spec start_upgrade(string(), version() | undefined, version()) ->
     ok | {error, term()}.
-start_upgrade(Dir, OldVsn, NewVsn)
-  when OldVsn < {1, 7, 0}, NewVsn >= {1, 7, 0} ->
-    % NOTE: The guard handles old version being undefined, as atom < tuple
-    % That is always the case with versions < 1.7.0 anyway.
+start_upgrade(Dir, {vsn, OldVsn}, {vsn, NewVsn})
+  when OldVsn >= [1, 7, 0], OldVsn < [3, 0, 0], NewVsn >= [3, 0, 0] ->
+    % If this fails to delete a hintfile, the upgrade may still be
+    % successful since Bitcask will automatically do validation check
+    % and recreate the hintfile
+    Result = lists:all(fun(File) ->
+        case file:delete(File) of
+            ok -> true;
+            _ ->
+                ?LOG_WARNING("Could not delete hintfile during upgrade: ~p", [File]),
+                false
+        end
+    end, bitcask_hintfiles(Dir)),
+
+    case Result of
+        true ->
+            ok;
+        _ ->
+            {error, not_all_hintfiles_deleted}
+    end;
+start_upgrade(Dir, {vsn, OldVsn}, {vsn, NewVsn})
+  when OldVsn < [1, 7, 0], NewVsn >= [1, 7, 0] ->
     case bitcask_files(Dir) of
         {ok, Files} ->
             % Write merge.txt with a list of all bitcask files to merge
@@ -836,6 +883,7 @@ start_upgrade(Dir, OldVsn, NewVsn)
         {error, BitcaskReadErr} ->
             {error, BitcaskReadErr}
     end.
+
 
 % @doc Transform to contents of merge.txt, with an empty line every
 % Batch files, which delimits the merge batches.
@@ -1029,11 +1077,18 @@ key_version_test() ->
     application:set_env(bitcask, data_root, Path),
     application:set_env(bitcask, small_keys, true),
     {ok, S} = ?MODULE:start(42, []),
-    ?MODULE:put(<<"b1">>, <<"k1">>, [], <<"v1">>, S),
-    ?MODULE:put(<<"b2">>, <<"k1">>, [], <<"v2">>, S),
-    ?MODULE:put(<<"b3">>, <<"k1">>, [], <<"v3">>, S),
+    RBin1 = riak_object:to_binary(v1, riak_object:new(<<"b1">>, <<"k1">>, <<"v1">>)),
+    RBin2 = riak_object:to_binary(v1, riak_object:new(<<"b2">>, <<"k1">>, <<"v2">>)),
+    RBin3 = riak_object:to_binary(v1, riak_object:new(<<"b3">>, <<"k1">>, <<"v3">>)),
 
-    ?assertMatch({ok, <<"v2">>, _}, ?MODULE:get(<<"b2">>, <<"k1">>, S)),
+    ?MODULE:put(<<"b1">>, <<"k1">>, [], RBin1, S),
+    ?MODULE:put(<<"b2">>, <<"k1">>, [], RBin2, S),
+    ?MODULE:put(<<"b3">>, <<"k1">>, [], RBin3, S),
+
+    {ok, RBinG2, _} = ?MODULE:get(<<"b2">>, <<"k1">>, S),
+
+    RObj2 = riak_object:from_binary(<<"b2">>, <<"k1">>, RBinG2),
+    ?assertMatch(<<"v2">>, riak_object:get_value(RObj2)),
 
     ?MODULE:stop(S),
     application:set_env(bitcask, small_keys, false),
@@ -1041,10 +1096,14 @@ key_version_test() ->
     %%{ok, L0} = ?MODULE:fold_keys(FoldKeysFun, [], [], S1),
     %%io:format("~p~n", [L0]),
 
-    ?assertMatch({ok, <<"v2">>, _}, ?MODULE:get(<<"b2">>, <<"k1">>, S1)),
+    {ok, RBinG21, _} = ?MODULE:get(<<"b2">>, <<"k1">>, S1),
+    RObj21 = riak_object:from_binary(<<"b2">>, <<"k1">>, RBinG21),
+    ?assertMatch(<<"v2">>, riak_object:get_value(RObj21)),
 
-    ?MODULE:put(<<"b4">>, <<"k1">>, [], <<"v4">>, S1),
-    ?MODULE:put(<<"b5">>, <<"k1">>, [], <<"v5">>, S1),
+    RBin4 = riak_object:to_binary(v1, riak_object:new(<<"b4">>, <<"k1">>, <<"v4">>)),
+    RBin5 = riak_object:to_binary(v1, riak_object:new(<<"b5">>, <<"k1">>, <<"v5">>)),
+    ?MODULE:put(<<"b4">>, <<"k1">>, [], RBin4, S1),
+    ?MODULE:put(<<"b5">>, <<"k1">>, [], RBin5, S1),
 
     ?MODULE:stop(S1),
     application:set_env(bitcask, small_keys, true),

@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -199,9 +200,10 @@ result_shortcode({dw, _, _, _}) -> 2;
 result_shortcode({fail, _, _})  -> -1;
 result_shortcode(_)             -> -2.
 
-result_idx({_, Idx, _})    -> Idx;
-result_idx({_, Idx, _, _}) -> Idx;
-result_idx(_)              -> -1.
+result_idx({_, Idx, _})       -> Idx;
+result_idx({_, Idx, _, _})    -> Idx;
+result_idx({_, Idx, _, _, _}) -> Idx;
+result_idx(_)                 -> -1.
 
 %% ====================================================================
 %% Internal functions

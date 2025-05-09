@@ -1,8 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% backend_test_util: Riak backend test utilities
-%%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,6 +18,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% Riak backend test utilities
 
 -module(backend_test_util).
 
@@ -56,9 +57,11 @@ make_bs_and_ks(Backend) ->
 
 basic_store_and_fetch(Backend, State) ->
     {B1, B2, K1, K2} = make_bs_and_ks(Backend),
-    {ok, State2} = Backend:put(B1, K1, [], <<"v1">>, State),
-    {ok, State3} = Backend:put(B2, K2, [], <<"v2">>, State2),
-    {ok,<<"v2">>, State4} = Backend:get(B2, K2, State3),
+    RObj1 = riak_object:to_binary(v1, riak_object:new(B1, K1, <<"v1">>)),
+    RObj2 = riak_object:to_binary(v1, riak_object:new(B2, K2, <<"v2">>)),
+    {ok, State2} = Backend:put(B1, K1, [], RObj1, State),
+    {ok, State3} = Backend:put(B2, K2, [], RObj2, State2),
+    {ok, RObj2, State4} = Backend:get(B2, K2, State3),
     {error, not_found, State5} = Backend:get(B1, <<"k3">>, State4),
     fold_buckets(Backend, State5).
 
@@ -156,9 +159,9 @@ fold_objects(Backend, State) ->
     {B1, _B2, K1, _K2} = make_bs_and_ks(Backend),
     B3 = make_test_bucket(Backend, 3),
     K3 = make_test_key(Backend, 3),
-    ObjFilter = fun(Os) -> [if is_binary(X) -> {BK, X};
+    ObjFilter = fun(Os) -> [if is_binary(X) -> {BK, riak_object:get_value(riak_object:from_binary(B, K, X))};
                                true         -> {BK, riak_object:get_value(X)}
-                            end || {BK, X} <- Os]
+                            end || {{B, K} = BK, X} <- Os]
                 end,
     FoldKeysFun =
         fun(Bucket, Key, Acc) ->
@@ -187,7 +190,8 @@ fold_objects(Backend, State) ->
                                               State),
                      lists:sort(ObjFilter(Objects1))
                  end),
-    {ok, State2} =  Backend:put(B3, K3, [], <<"v3">>, State),
+    RObj3 = riak_object:to_binary(v1, riak_object:new(B1, K1, <<"v3">>)),
+    {ok, State2} =  Backend:put(B3, K3, [], RObj3, State),
     ?assertEqual([{{B1,K1},<<"v1">>},
                   {{B3,K3},<<"v3">>}],
                  begin

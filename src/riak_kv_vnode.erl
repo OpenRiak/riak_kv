@@ -242,6 +242,8 @@
     %% Best efforts (aka scavenger) pool.
     %% Parallel AAE store rebuilds
 
+-define(DEFAULT_TIMEOUT, 60000).
+
 %% Erlang's if Bool -> thing; true -> thang end. syntax hurts my
 %% brain. It scans as if true -> thing; true -> thang end. So, here is
 %% a macro, ?ELSE to use in if statements. You're welcome.
@@ -632,12 +634,17 @@ put(Preflist, BKey, Obj, ReqId, StartTime, Options) when is_integer(StartTime) -
 put(Preflist, BKey, Obj, ReqId, StartTime, Options, Sender)
   when is_integer(StartTime) ->
     % PUT requests come in with a {timeout, Timeout} option already set.
+    % pull the timeout out of the options and send it to `command' since the Options
+    % list sent to `command' is not the same as the options list used by
+    % a `put' request. `command' takes options that are added to a `riak_vnode_req_v2'
+    % request which is sent between nodes.
+    Timeout = proplists:get_value(timeout, Options, ?DEFAULT_TIMEOUT),
     Req = riak_kv_requests:new_put_request(
         sanitize_bkey(BKey), Obj, ReqId, StartTime, Options),
     riak_core_vnode_master:command(Preflist,
                                    Req,
                                    Sender,
-                                   Options,
+                                   [{timeout, Timeout}],
                                    riak_kv_vnode_master).
 
 local_put(Index, Obj) ->
@@ -893,7 +900,12 @@ init([Index]) ->
             ?LOG_ERROR("Failed to start ~p backend for index ~p crash: ~p",
                         [Mod, Index, Reason1]),
             riak:stop("backend module failed to start."),
-            {error, Reason1}
+            {error, Reason1};
+        {stop, Reason2} ->
+            ?LOG_ERROR("Failed to start ~p backend for index ~p timeout: ~p",
+                        [Mod, Index, Reason2]),
+            riak:stop("backend module failed to start."),
+            {error, Reason2}
     end.
 
 handle_overload_command(Req, Sender, Idx) ->
