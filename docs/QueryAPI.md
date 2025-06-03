@@ -326,6 +326,8 @@ If the same results are required, but this time a count by age at today's date (
 
 ## Query - Definition
 
+### Query JSON - Definition
+
 The query should be posted as the HTTP body, to the query API for the relevant bucket, where there are the following JSON keys at the root of the document
 
 index_name (required)
@@ -376,8 +378,6 @@ The evaluation pipeline receives a map of projected attributes containing two Id
 
 Values of the projected attributes in the map always start as strings in the pipeline, but may be explicitly converted to lists of strings, or to an integer - and in the case of an integer can also be converted back to a string.  Functions in the pipeline that receive inputs of the wrong type are skipped.
 
-The final map of projected attributes will be passed as the input to the Filter Expression.
-
 The functions that can be used in a pipeline are:
 
 delim ( IN_ID identifier , DELIM string , OUT_ID_LIST identifier_list )
@@ -419,7 +419,9 @@ subtract ( X math_operand , Y math_operand , OUT_ID identifier )
 add ( X math_operand , Y math_operand , OUT_ID identifier )
 - add X to Y and map the output to the OUT_ID identifier of the map of projected attributes.  X and Y can either be an integer provided as an input, or an identifier of an existing projected attribute which has been converted to an integer.  If either X or Y are not integers, then the function will be skipped.
 
-### Filter Expression - Definition
+Once the pipeline is complete, the final map of projected attributes will be passed as the input to the Filter Expression.
+
+### Filter Expression - Definition
 
 The Filter expression takes the projected attributes as an input, and the output is either `true` (the term is a match) or `false`.
 
