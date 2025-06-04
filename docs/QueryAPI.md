@@ -43,8 +43,8 @@ In the design of Riak it assumed that the majority of work is GET/PUT, and 2i qu
 There is a relatively fixed cost per query, even where 0 results are returned - there is a fairly minimal difference in the cost of scanning 10K index entries and scanning 10.
 
 The evaluation and filter expression language is a work in progress.  so it is also possible to submit an Issue (or a PR) to request an extension to the functions provided.  Extensions under consideration are:
-- An evaluation function that calculate a Levenshtein distance between an attribute value and a given string;
-- An evaluation function that converts a given string into a soundex representation of that string.
+- An evaluation function that calculate the Jaro-similarity between an attribute value and a given string (Erlang has included jaro_similarity/2 since OTP 27);
+- An evaluation function that converts a given string into a soundex representation of that string (currently Riak users have implemented Soundex support simply by adding additional indexes with soundex variations of the required terms).
 
 
 ## Example (1) - A Simple People Search Index
@@ -220,15 +220,15 @@ To produce this set of projected attributes to be passed to the filter expressio
 
 ### Example (1) - Performance Expectation and Optimisations
 
-[
+...
+
  to be added
 
  the aim of this section will be to setup a significant scale test environment, and then show the performance of different queries as the number of terms within the range varies, the number of results in the outcome, as well as how the terms are filtered and aggregated
 
  the aim will be to provide some comparison with an alternative (e.g. OpenSearch) as well as direct comparison between using eval/filter expressions and regular expressions
 
-
-]
+...
 
 
 ## Example (2) - An Alternative People Search 
@@ -326,12 +326,8 @@ When using an `aggregation_expression` it is not possible to also use an `accumu
 
 The aggregation currently has no optimisation logic.  The individual queries within a query list are not performed in a deterministic order, and all queries are always run - even if, for example, the aggregation is purely `INTERSECT` and one query returns an empty result set.  The aggregation is performed at a vnode level, and so the set operations are performed per partition before the query accumulates the results from each partition.
 
+...
 
-[
- to be added
-
- the aim of this section will be to setup a significant scale test environment, and then show the performance of different queries as the number of terms within the range varies, the numberof results in the outcome, as well as how the terms are filtered and aggregated
-]
 
 ## Example (3) - Reporting index
 
@@ -380,7 +376,7 @@ If the same results are required, but this time a count by age at today's date (
                     "
                         index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker) |
                         index($dob, 0, 4, $yob) | to_integer($yob, $yob) | index($dob, 4, 4, $birthday) |
-                        map($birthday, <=, ((:current_date, :current_year)), previous_year, $yoc)" |
+                        map($birthday, <=, ((:current_date, :current_year)), :previous_year, $yoc) |
                         subtract($yoc, $yob, $age) | to_string($age, $age)
                     ",
                     "filter_expression" : "($dob <= 19650530) AND ($agc = "F") AND ($smoker = "Y")"
@@ -391,14 +387,11 @@ If the same results are required, but this time a count by age at today's date (
 
 ### Example (3) - Simple Variations and Limitations
 
+...
 
 ### Example (3) - Performance Expectation and Optimisations
 
-[
- to be added
-
- the aim of this section will be to setup a significant scale test environment, and then show the performance of different queries as the number of terms within the range varies, the numberof results in the outcome, as well as how the terms are filtered and aggregated
-]
+...
 
 ## Query - Definition
 
