@@ -236,9 +236,9 @@ To produce this set of projected attributes to be passed to the filter expressio
 An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - allowing to search for people based on both present information, and also information at a given date.
 
 In this example there will be three indexes:
-- familyname_bin : <FAMILYNAME>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>
-- givenname_bin : <GIVENNAME>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>
-- postalcode_bin : <POSTCODE>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>
+- `familyname_bin : <FAMILYNAME>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>`
+- `givenname_bin : <GIVENNAME>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>`
+- `postalcode_bin : <POSTCODE>|<DOB>|<EFFECTIVE_STARTDATE><EFFECTIVE_ENDDATE>`
 
 The start date and end dates will be of fixed YYYYMMDD format, with current information being given an artificial end date of `99999999`.
 
