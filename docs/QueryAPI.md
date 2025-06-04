@@ -340,7 +340,7 @@ As well as returning keys, and term/key tuples, when using individual queries it
 For this example we assume all the people exist in a heirarchy.  Each person is assigned to a GP Provider, and every GP Provider belongs to a Strategic Health Authority (and these are represented by fixed-width codes).  People have a Date of Birth (from which we can calculate age), but also a series of characteristics which can be expressed in single character flags (e.g. administrative gender code, smoking status, death status, alcohol dependency etc).  This information is then required to do organisation, and population level reporting.
 
 For this a single index is used:
- - healthreport_bin : <SHA><GP><DOB><STATUS_FLAGS>
+ - `healthreport_bin : <SHA><GP><DOB><STATUS_FLAGS>`
 
 So are test record may have an entry like:
  - `healthreport_bin: SHA0001GP00000119650501FYNNY`
