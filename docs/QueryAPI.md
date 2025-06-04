@@ -4,11 +4,11 @@
 
 Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field and a term: where a field is a name for an index within a bucket, and a term is some sortable binary string that represents a value for a given key on that index.
 
-When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored value, and only make the necessary key changes.  An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field (though when using the HTTP API it may be necessary to ensure that library or proxy limits around the size of HTTP headers is not a constraint).  When an object is in a sibling state, all index entries on all siblings will be active from a query perspective.
+When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored index entries, and only make the necessary key changes.  An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field (though when using the HTTP API it may be necessary to ensure that HTTP client libraries or proxy limits around the size and count of HTTP headers is not a constraint).  When an object is in a sibling state, all index entries on all siblings will be active from a query perspective.
 
 When an object is fetched from Riak, it will be returned with all its current Index values.  When an object is in a sibling state, the index entries can be viewed per sibling.
 
-There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  Generally applications that use secondary indexes within Riak will write an extension to the Riak client to examine the object body and calculate the required index entries.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying during transition etc.
+There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  In general, applications that use secondary indexes within Riak will write an extension to the Riak client to examine the object body and calculate the required index entries.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
 
 Index entries can be made up of simple sorted keys:
 
@@ -28,7 +28,7 @@ A query consists of the following components:
 - A field (required).
 - A range (required).
 - An evaluation expression (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
-- A filter expression (optional); used to filter results in/out of queries based on a map of projected attributes discovered on the index entry (using a filter expression).
+- A filter expression (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (using a filter expression).
 - A regular expression (optional); a potentially less flexible, but commonly more performant alternative to evaluation and filter expressions - where a regular expression match against a term is used to filter the term in or out.
 - A result aggregation method (optional); what results are required, and how should they be sorted (e.g. just matching object keys, terms and keys, keys by specific attribute).
 
@@ -36,22 +36,31 @@ Queries can be sent individually, but it is also possible to send multiple queri
 
 Queries are requested by posting a JSON object which defines the query to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
 
-In volume and performance testing secondary index queries, it is generally assumed that about <= 1% of transactions are secondary index queries.  A secondary ndex query is generally 2 orders of magnitude more expensive than a standard GET.  It is possible drive up the volume of 2i queries, with real-world production examples of more than 10K qps being achieved - but such relatively high query volumes are not core to the Riak use case.  In the design of Riak it assumed that the majority of work is GET/PUT, and 2i queries represents a relatively small minority of the workload.
+In the development of Riak, it is generally assumed that about <= 1% of transactions are secondary index queries, and this is reflected in the standard volume and performance transaction mix.  A secondary index query is generally 2 orders of magnitude more expensive than a standard GET.  It is possible drive up the volume of 2i queries, with real-world production examples of more than 10K qps being achieved - but such relatively high query volumes are not core to the Riak use case.  
+
+In the design of Riak it assumed that the majority of work is GET/PUT, and 2i queries represents a relatively small minority of the workload.  The aim of Riak development is to provide a database that is just-queryable-enough to avoid the need of third party database integration for querying, for a quorum of use-cases where the majority of the workload is CRUD operations.  However, Riak does support third-party database (e.g. to OpenSearch) replication and reconciliation where more complex query needs exist.
+
+There is a relatively fixed cost per query, even where 0 results are returned - there is a fairly minimal difference in the cost of scanning 10K index entries and scanning 10.
+
+The evaluation and filter expression language is a work in progress.  so it is also possible to submit an Issue (or a PR) to request an extension to the functions provided.  Extensions under consideration are:
+- An evaluation function that calculate a Levenshtein distance between an attribute value and a given string;
+- An evaluation function that converts a given string into a soundex representation of that string.
+
 
 ## Example (1) - A Simple People Search Index
 
 In this example, the database contains many tens (or even hundreds) of millions of people whose records are stored under a unique individual identifier (the primary Key used in Riak).  There is also a requirement to search for people to find potential matches where the unique identifier is not known, and in these searches the following criteria can be provided to the query:
 
-- Date Of Birth (required).
-- Primary Family name (optional).
-- Known Given Names (optional).
-- Primary [Postal Code](https://en.wikipedia.org/wiki/Postal_code) (optional).
+- Date Of birth (required).
+- Primary family name (optional).
+- All known given names (optional).
+- Primary [postal code](https://en.wikipedia.org/wiki/Postal_code) (optional).
 
 For all queryable attributes approximate entries are allowed.  The Date of Birth can be a range rather than a specific date, the names and post codes require a minimal prefix (e.g. first two characters), but wildcards may be provided for unknown parts.
 
-A single index pre record could be constructed to support these queries, whereby the Date Of Birth would be the sort key, the family name, given names and postcode could be added as projected attributes - with `|` used as a delimiter between the types of attributes and `.` used as a delimiter between the individual attributes of a given type (which in this case is only given names where multiple examples are allowed).
+For this example, a single index per record is constructed to support these queries, whereby the Date Of Birth would be the sort key, the family name, given names and postcode could be added as projected attributes - with `|` used as a delimiter between the types of attributes and `.` used as a delimiter between the individual attributes of a given type (which in this case is only for given names).
 
-So a sample person may born on 1st May 1965, with current family name of SMITH; known by given names of ANNE, MARIE & ANNE-MARIE; and has registered a home Postal Code (LS9 0TW).  They would then be represented by the following index entry:
+So a sample person born on 1st May 1965, with current family name of SMITH; known by given names of ANNE, MARIE & ANNE-MARIE; and has registered a home Postal Code (LS9 0TW).  They would then be represented by the following index entry:
 
 `peoplefinder_bin: 19650501|SMITH|ANNE.MARIE.ANNE-MARIE|LS9_0TW`
 
@@ -79,7 +88,7 @@ This query defines some substitutions, of the delimiters (to simplify escaping r
 
 The query list in this case contains only one query, and that identifies the index field ("index_name"), and the start and end terms.  Note that as the projected attributes are appended the sort key, although the query is for an exact sort key it must be range query which covers all possible projected attributes (in this case by appending to the end_term a character "~" that has a value higher than the delimiter "|" in the ascii table).
 
-The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructions the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and the name up to four elements as $dob, $fn, $gn and $pc respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
+The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and the name up to four elements as $dob, $fn, $gn and $pc respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
 
 After applying the evaluation expression, the filter_expression will receive a map of projected attributes like this (for this specific index entry):
 
@@ -92,7 +101,70 @@ After applying the evaluation expression, the filter_expression will receive a m
 
 The filter expression does not need to qualify the date of birth, as this is already qualified by the range.  However, it needs to check that the Primary Family Name is as expected `($fn = :qfn)` and that the query given name is in the list of given names produced `(:gqn IN $gn)`.
 
-### Example (1) - Simple Variations and Limitations
+Note that, in this particular case, there would be a significant performance improvement by rewriting the query as:
+
+```
+    {
+        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qgn" : "ANNE"}],
+        "query_list" :
+            [
+                {
+                    "index_name" : "peoplefinder_bin",
+                    "start_term" : "19650501|SMITH|",
+                    "end_term"   : "19650501|SMITH|~",
+                    "evaluation_expression" : "delim($term, :dl1, ($dob, $fn, $gn, $pc)) | split($gn, :dl2, $gn)",
+                    "filter_expression" : "(:qgn IN $gn)"
+                }
+            ]
+    }
+```
+
+The query could be further optimised as this (although in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE):
+
+```
+    {
+        "query_list" :
+            [
+                {
+                    "index_name" : "peoplefinder_bin",
+                    "start_term" : "19650501|SMITH|",
+                    "end_term"   : "19650501|SMITH|~",
+                    "regular_expression" : "[^\\|]*\\|[^\\|]*\\|[^\\|]*ANNE"
+                }
+            ]
+    }
+```
+
+Building such optimisations into queries can add significant complications to application code, and extend greatly the complexity of testing that application code. 
+
+### Example (1) - Inexact Match
+
+If for the same query it is require to have an inexact match (e.g. Born between between 1965 and 1970, birthday of 1st May, Family name of SM*, Given name of ANNE), the following query could be used:
+
+```
+    {
+        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qfn_begins" : "SM", "qgn" : "ANNE", "qbd" : "0501"}],
+        "query_list" :
+            [
+                {
+                    "index_name" : "peoplefinder_bin",
+                    "start_term" : "19650101",
+                    "end_term"   : "19691231~",
+                    "evaluation_expression" : "delim($term, :dl1, ($dob, $fn, $gn, $pc)) | split($gn, :dl2, $gn) | index($dob, 4, 4, $birthday)",
+                    "filter_expression" : "begins_with($fn, :qfn_begins ) AND (:qgn IN $gn) AND ($birthday = :qbd)"
+                }
+            ]
+    }
+```
+
+The evaluation expression is extended to output the birthday by taking the last 4 characters of the date of birth.  The filter expression checks an inexact match by looking only at the start of the family name.
+
+Alternative approaches would be possible:
+- `ends_with($dob, $birthday)` could be used for the birthday check avoiding the additional pipeline function in the evaluation expression.
+- `index($fn, 0, 2, $fn)` could be used in the evaluation expression to slim the $fn to the first two characters for equality checking.
+
+
+### Example (1) - Inexact Match of Given Name
 
 The evaluation expression language supports a number of different comparisons on exact terms, but when a term has been broken into a sub-list (as with the Given Names in the above example), it is only possible to look for an exact match within the sub-list.
 
@@ -101,29 +173,9 @@ There are three possible alternatives should a more complex match be required on
 - Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceeding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
 - Use a regular expression filter rather than an evaluation and filter expression.  Regular expression filters are PCRE-style regular expressions which will return a result which matches on the regular expression.  These are generally more performant than applying filter and evaluation expressions.
 
-The evaluation and filter expression language is a work in progress.  so it is also possible to submit an Issue (or a PR) to request an extension to the functions provided.  Extensions under consideration are:
-- An evaluation function that calculate a Levenshtein distance between an attribute value and a given string;
-- An evaluation function that converts a given string into a soundex representation of that string.
+### Example (1) - Wildcards within terms
 
-It is possible to reduce the pre-defined structure in an index entry by using KV pairs in the index entry.
-
-For example, the above index entry could be stored in a Key=Value form, and note that we here differentiate for extra clarity between the primary given name (pgn), and the secondary given names:
-
-`peoplefinder_bin: 19650501|fn=SMITH#pgn=ANNE#sgn=MARIE.ANNE-MARIE#pc=LS9_0TW`
-
-This evaluation expression can then be used: `delim($term, :dl1, ($dob, $kvs)) | kvsplit($kvs, "#", "=") | split($sgn, :dl2, $sgn)`
-
-To produce this set of projected attributes to be passed to the filter expression:
-
-```
-    $dob : "19650501",
-    $fn : "SMITH",
-    $pgn : "ANNE",
-    $sgn : ["MARIE", "ANNE-MARIE"],
-    $pc : "LS9_0TW"
-```
-
-Wildcard style queries against individual string attributes are only supported directly using the regular expression.  When using evaluation and filter expressions, then filter expression functions `begins_with`, `ends_with` and `between`.  For example to match on family names of `SM*KOWSKI` where `*` represents one or more characters a filter expression of `begins_with($fn, "SM") AND ends_with($fn, "KOWSKI") NOT ($fn = "SMKOWSKI)` can apply this filter. 
+Wildcard style queries against individual string attributes are only supported directly using the regular expression filter type.  When using evaluation and filter expressions, then filter expression functions `begins_with`, `ends_with` and `between` are to be used to support internal wildcards within terms.  For example to match on family names of `SM*KOWSKI` where `*` represents one or more characters a filter expression of `begins_with($fn, "SM") AND ends_with($fn, "KOWSKI") NOT ($fn = "SMKOWSKI)` can apply this filter. 
 
 There exists a regex based evaluation function that can be used as a pseudo filter function, where the power of regular expressions is required in a specific point without the need to adopt regular expression as a generic approach.  The regex evaluation function extracts matches, only when the expected number of matches is found - so non-matching regular expressions will result in attributes not existing in the projected attribute map.
 
@@ -145,13 +197,37 @@ This query should filter family names based on a "fn_regex" provided in the subs
     }
 ```
 
-### Example (1) - Performance Expectation and Optimisations
 
+### Example (1) - More Extensible Index Schema
+
+It is possible to reduce the pre-defined structure in an index entry by using KV pairs in the index entry.
+
+For example, the above index entry could be stored in a Key=Value form, and note that we here differentiate for extra clarity between the primary given name (pgn), and the secondary given names:
+
+`peoplefinder_bin: 19650501|fn=SMITH#pgn=ANNE#sgn=MARIE.ANNE-MARIE#pc=LS9_0TW`
+
+This evaluation expression can then be used: `delim($term, :dl1, ($dob, $kvs)) | kvsplit($kvs, "#", "=") | split($sgn, :dl2, $sgn)`
+
+To produce this set of projected attributes to be passed to the filter expression:
+
+```
+    $dob : "19650501",
+    $fn : "SMITH",
+    $pgn : "ANNE",
+    $sgn : ["MARIE", "ANNE-MARIE"],
+    $pc : "LS9_0TW"
+```
+
+### Example (1) - Performance Expectation and Optimisations
 
 [
  to be added
 
- the aim of this section will be to setup a significant scale test environment, and then show the performance of different queries as the number of terms within the range varies, the numberof results in the outcome, as well as how the terms are filtered and aggregated
+ the aim of this section will be to setup a significant scale test environment, and then show the performance of different queries as the number of terms within the range varies, the number of results in the outcome, as well as how the terms are filtered and aggregated
+
+ the aim will be to provide some comparison with an alternative (e.g. OpenSearch) as well as direct comparison between using eval/filter expressions and regular expressions
+
+
 ]
 
 
@@ -419,9 +495,9 @@ subtract ( X math_operand , Y math_operand , OUT_ID identifier )
 add ( X math_operand , Y math_operand , OUT_ID identifier )
 - add X to Y and map the output to the OUT_ID identifier of the map of projected attributes.  X and Y can either be an integer provided as an input, or an identifier of an existing projected attribute which has been converted to an integer.  If either X or Y are not integers, then the function will be skipped.
 
-Once the pipeline is complete, the final map of projected attributes will be passed as the input to the Filter Expression.
+The final map of projected attributes will be passed as the input to the Filter Expression.
 
-### Filter Expression - Definition
+### Filter Expression - Definition
 
 The Filter expression takes the projected attributes as an input, and the output is either `true` (the term is a match) or `false`.
 
