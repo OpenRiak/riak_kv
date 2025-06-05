@@ -2,19 +2,21 @@
 
 ## Secondary Indexes - Adding Index Entries to an Object
 
-Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field and a term: where a field is a name for an index within a bucket, and a term is some sortable binary string that represents a value for a given key on that index.
+Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field, a term and an object key: where a field is a name for an index within a bucket, and a term is some sortable binary string that represents a value for a given key on that index, and the object key is the result of the query.
 
-When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored index entries, and only make the necessary key changes.  An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field (though when using the HTTP API it may be necessary to ensure that HTTP client libraries or proxy limits around the size and count of HTTP headers is not a constraint).  When an object is in a sibling state, all index entries on all siblings will be active from a query perspective.
+When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored index entries, and only make the necessary key changes.  An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field (subject to limits in the HTTP infrastructure used for the request).
 
-When an object is fetched from Riak, it will be returned with all its current Index values.  When an object is in a sibling state, the index entries can be viewed per sibling.
+When an object is fetched from Riak, it will be returned with all its current Index values.
 
-There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  In general, applications that use secondary indexes within Riak will write an extension to the Riak client to examine the object body and calculate the required index entries.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
+There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  In general, applications that use secondary indexes within Riak will write an extension to the Riak client to examine the object body and calculate the required index entries.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.  
+
+The design of secondary indexes in Riak makes them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.
 
 Index entries can be made up of simple sorted keys:
 
 e.g. `surname_bin: SMITH`
 
-Index terms can be extended by projecting additional attributes onto the sort key, appended to the sort key:
+Index terms can be extended by projecting additional attributes onto the sort key, appended to the sort key, e.g. in this case by appending the date of birth to the sort key:
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
@@ -36,20 +38,13 @@ Queries can be sent individually, but it is also possible to send multiple queri
 
 Queries are requested by posting a JSON object which defines the query to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
 
-In the development of Riak, it is generally assumed that about <= 1% of transactions are secondary index queries, and this is reflected in the standard volume and performance transaction mix.  A secondary index query is generally 2 orders of magnitude more expensive than a standard GET.  It is possible drive up the volume of 2i queries, with real-world production examples of more than 10K qps being achieved - but such relatively high query volumes are not core to the Riak use case.  
+In the development of Riak, it is generally assumed that about <= 1% of transactions are secondary index queries, and this is reflected in the standard volume and performance transaction mix.  A secondary index query is generally 2 orders of magnitude more expensive than a standard GET.  It is possible drive up the volume of 2i queries, with real-world production examples of more than 10K qps being achieved - but such relatively high query volumes are not core to the Riak use case.  There is a relatively fixed cost per query, even where 0 results are returned - there is a marginal difference in the cost of scanning 10K index entries and scanning 10.
 
-In the design of Riak it assumed that the majority of work is GET/PUT, and 2i queries represents a relatively small minority of the workload.  The aim of Riak development is to provide a database that is just-queryable-enough to avoid the need of third party database integration for querying, for a quorum of use-cases where the majority of the workload is CRUD operations.  However, Riak does support third-party database (e.g. to OpenSearch) replication and reconciliation where more complex query needs exist.
-
-There is a relatively fixed cost per query, even where 0 results are returned - there is a fairly minimal difference in the cost of scanning 10K index entries and scanning 10.
-
-The evaluation and filter expression language is a work in progress.  so it is also possible to submit an Issue (or a PR) to request an extension to the functions provided.  Extensions under consideration are:
-- An evaluation function that calculate the Jaro-similarity between an attribute value and a given string (Erlang has included jaro_similarity/2 since OTP 27);
-- An evaluation function that converts a given string into a soundex representation of that string (currently Riak users have implemented Soundex support simply by adding additional indexes with soundex variations of the required terms).
-
+The aim of Riak development is to provide a database that is just-queryable-enough to avoid the need of third party database integration for querying, for a quorum of use-cases where the majority of the workload is CRUD operations.  However, Riak does support third-party database (e.g. to OpenSearch) replication and reconciliation where more complex query needs exist.
 
 ## Example (1) - A Simple People Search Index
 
-In this example, the database contains many tens (or even hundreds) of millions of people whose records are stored under a unique individual identifier (the primary Key used in Riak).  There is also a requirement to search for people to find potential matches where the unique identifier is not known, and in these searches the following criteria can be provided to the query:
+In this example, the database contains people whose records are stored under a unique individual identifier (the primary Key used in Riak).  There is also a requirement to search for people to find potential matches where the unique identifier is not known, and in these searches the following criteria can be provided to the query:
 
 - Date Of birth (required).
 - Primary family name (optional).
@@ -160,7 +155,7 @@ If for the same query it is require to have an inexact match (e.g. Born between 
 The evaluation expression is extended to output the birthday by taking the last 4 characters of the date of birth.  The filter expression checks an inexact match by looking only at the start of the family name.
 
 Alternative approaches would be possible:
-- `ends_with($dob, $birthday)` could be used for the birthday check avoiding the additional pipeline function in the evaluation expression.
+- `ends_with($dob, :qbd)` could be used for the birthday check avoiding the additional pipeline function in the evaluation expression.
 - `index($fn, 0, 2, $fn)` could be used in the evaluation expression to slim the $fn to the first two characters for equality checking.
 
 
@@ -318,7 +313,7 @@ If a compound query is required, while this can be managed on a single query wit
 
 ### Example (2) - Simple Variations and Limitations
 
-It is possible to combine strategies (1) and (2) by using separate indices and overloading each term with all additional information.  The application would then need a query planning strategy to determine which index to use based on the information provided - i.e. the strategy would need to determine based on the query details which index would likely lead to the fewest number of index entries being scanned, and use that index and sort key combination.
+It is possible to combine strategies (1) and (2) by using separate indices and overloading each term with all additional information.  The application would then need a query planning strategy to determine which index to use based on the information provided - i.e. the strategy would need to determine based on the query details which index would likely lead to the fewest number of index entries being scanned, and use that index and sort key combination.  Designing such a strategy would require up-front knowledge of how the data is distributed.
 
 When using an `aggregation_expression` it is not possible to also use an `accumulation_option` - so terms cannot be returned to the application for additional filtering.
 
@@ -525,6 +520,10 @@ function ::=
     | contains (key, substr)
 ```
 
+## Notes on Implementation - Siblings
+
+Riak supports the `allow_mult = true` state, whereby the history of changes to an object is retained when concurrent updates are made to the same object.  In this mode, any unresolved history are considered to be "sibling" versions of the same object.  In the sibling state, all index entries on all versions of the object are active from a query perspective.
+
 ## Notes on Implementation - Unicode support
 
 Testing is currently only undertaken on ascii-based index terms, although filter and evaluation expressions have been designed to support unicode.  There are a number of potential issues with unicode support, not least with support for unicode in HTTP headers, so end-to-end tested Unicode support is currently deferred to a future release. 
@@ -535,7 +534,7 @@ Index entries are stored in the leveled ledger (or key store).  The index entrie
 
 Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
 
-There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring-size, will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring-size does not help the long-term scalability of a cluster.  With 1% of work being 2i queries, there cna be a 10-20% capacity constraint for every doubling of the ring size.
+There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring-size, will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring-size does not help the long-term scalability of a cluster.  With 1% of work being complex 2i queries, there can be a 10-20% capacity constraint for every doubling of the ring size.
 
 If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally about 20-50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportionate to the number of keys in the sort key range (not the number of keys that are deserialised).
 
@@ -543,7 +542,12 @@ Aggregation of queries is performed at a vnode-level, before results are returne
 
 ## Notes on Implementation - Consistency
 
-Outside of failure scenarios, secondary index queries will almost always immediately reflect the results of any changes in the object (with caveats related to unreliable latency across intra-cluster networking communication).  Index changes are not deferred to an async process, at a vnode level all index changes are made as a transaction with the object change.
+Index changes are not deferred to an async process, at a vnode level all index changes are made as a transaction with the object change.  Outside of failure scenarios, secondary index queries will almost always immediately reflect the results of any changes in the object (with caveats related to unreliable latency across intra-cluster networking communication).
 
-In failure and recovery scenarios, false negatives are possible (i.e. results may be missing until anti-entropy mechanisms correct).  The query uses a coverage plan which will check only one (of N) potential copies of the data, and so should a vnode be incorrect, the entropy is not detected as part of the query.  The `participate_in_coverage` configuration option (which can be applied at run-time) us used to mitigate this - this can be used to prevent a node with a node with a known entropy issue from being involved in queries. 
+In failure and recovery scenarios, false negatives are possible (i.e. results may be missing until anti-entropy mechanisms correct) but results will be eventually consistent.  The query uses a coverage plan which will check only one (of N) potential copies of the data, and so should a vnode be temporarily incorrect, the entropy is not detected as part of the query.  The `participate_in_coverage` configuration option (which can be applied at run-time) us used to mitigate this - this can be used to prevent a node with a known entropy issue from being involved in queries. 
 
+## Notes on Implementation - Further Improvements
+
+The evaluation and filter expression language is a work in progress.  so it is also possible to submit an Issue (or a PR) to request an extension to the functions provided.  Extensions under consideration are:
+- An evaluation function that calculate the Jaro-similarity between an attribute value and a given string (Erlang has included jaro_similarity/2 since OTP 27);
+- An evaluation function that converts a given string into a soundex representation of that string (currently Riak users have implemented Soundex support simply by adding additional indexes with soundex variations of the required terms).
