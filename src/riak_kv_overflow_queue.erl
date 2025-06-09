@@ -1,7 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2022 Martin Sumner.
-%% Copyright (c) 2023 Workday, Inc.
+%% Copyright (c) 2023-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,19 +19,11 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc A wrap around queue so that when a queue limit is
 %% reached, the queue is kept on disk to reduce the memory overheads
-
-
+%%
 -module(riak_kv_overflow_queue).
-
--ifdef(TEST).
-
--include_lib("eunit/include/eunit.hrl").
--export([get_mqueue/1]).
-
--endif.
 
 -export([new/4,
         log/5,
@@ -40,6 +33,15 @@
         format_state/1,
         close/2,
         fetch_batch/3]).
+
+-ifdef(TEST).
+-export([get_mqueue/1]).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-export_type([overflowq/0, queue_stats/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -define(QUEUE_LIMIT, 1000).
 -define(OVERFLOW_LIMIT, 1000000).
@@ -72,8 +74,6 @@
 }).
 
 -type overflowq() :: #overflowq{}.
-
--export_type([overflowq/0, queue_stats/0]).
 
 
 %%%============================================================================
@@ -127,14 +127,14 @@ log(Type, JobID, Attempts, Aborts, Queue) ->
                             "Discard counts ",
                             Queue#overflowq.overflow_discards),
 
-            _ = lager:info(lists:flatten(["~p job_id=~p has ",
+            _ = ?LOG_INFO(lists:flatten(["~p job_id=~p has ",
                                 "attempts=~w aborts=~w ",
                                 QueueLengths,
                                 OverflowLengths,
                                 DiscardCounts]),
                             [Type, JobID, Attempts, Aborts]);
         _ ->
-            lager:debug("No queue overflow detected for queue type ~p (JobId=~p).", [Type, JobID])
+            ?LOG_DEBUG("No queue overflow detected for queue type ~p (JobId=~p).", [Type, JobID])
     end,
     ResetDiscards =
         lists:map(fun({P, _L}) -> {P, 0} end,
@@ -423,21 +423,11 @@ disklog_filename(RootPath, GUID) ->
 
 -ifdef(TEST).
 
-clean_dir(DirPath) ->
-    ok = filelib:ensure_dir(DirPath ++ "/"),
-    {ok, Files} = file:list_dir(DirPath),
-    lists:foreach(fun(FN) ->
-                        File = filename:join(DirPath, FN),
-                        _ = file:delete(File)
-                    end,
-                    Files).
-
 get_mqueue(OverflowQ) ->
     OverflowQ#overflowq.mqueues.
 
 basic_inmemory_test() ->
-    RootPath = riak_kv_test_util:get_test_dir("overflow_inmem"),
-    clean_dir(RootPath),
+    RootPath = riak_core_test_util:get_test_dir("overflow_inmem", true),
     io:format("~p", [RootPath]),
     FlowQ0 = new([1, 2], RootPath, 1000, 5000),
     Refs = lists:seq(1, 100),
@@ -466,8 +456,7 @@ basic_inmemory_test() ->
     ?assertMatch([], Files).
 
 basic_overflow_test() ->
-    RootPath = riak_kv_test_util:get_test_dir("overflow_disk/"),
-    clean_dir(RootPath),
+    RootPath = riak_core_test_util:get_test_dir("overflow_disk", true),
     FlowQ0 = new([1, 2], RootPath, 1000, 5000),
     Refs = lists:seq(1, 2000),
     FlowQ1 =
@@ -499,8 +488,7 @@ basic_overflow_test() ->
 
 
 underover_overflow_test() ->
-    RootPath = riak_kv_test_util:get_test_dir("underover_disk"),
-    clean_dir(RootPath),
+    RootPath = riak_core_test_util:get_test_dir("underover_disk", true),
     FlowQ0 = new([1, 2], RootPath, 1000, 5000),
     Refs = lists:seq(1, 7000),
     FlowQ1 =

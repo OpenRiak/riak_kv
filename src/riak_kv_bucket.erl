@@ -1,7 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2011-2016 Basho Technologies, Inc.
-%% Copyright (c) 2024 Workday, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,8 +19,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+%%
 %% @doc KV Bucket validation functions
-
+%%
 -module(riak_kv_bucket).
 
 -export([validate/4]).
@@ -28,7 +30,7 @@
 -export([allow_mult/1,
          hll_precision/2]).
 
--include_lib("riak_kv_types.hrl").
+-export_type([props/0]).
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -38,6 +40,8 @@
 -endif.
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-include("riak_kv_types.hrl").
 
 -type propvalue() :: PropValue::any().
 -type prop() :: {PropName::atom(), propvalue()}.
@@ -64,8 +68,6 @@
 -type validate_props_return() :: {UnvalidatedProps :: props(),
                                   ValidatedProps :: props(),
                                   ErrorsGenerated :: errors()}.
--export_type([props/0]).
-
 -define(ERROR_ALLOW_MULT_CREATE, "Data Type buckets must be" ++
             " allow_mult=true").
 -define(ERROR_ALLOW_MULT_UPDATE, "Cannot change datatype bucket from" ++
@@ -1262,8 +1264,8 @@ immutable_consistent(undefined, _N, undefined, _Bad) ->
 immutable_consistent(true, _N, undefined, _Bad) ->
     %% consistent still set to true and n_val not modified
     true;
-immutable_consistent(Consistent, _N, _N, _Bad) when Consistent =:= undefined orelse
-                                                    Consistent =:= true ->
+immutable_consistent(Consistent, N, N, _Bad) when Consistent =:= undefined orelse
+                                                  Consistent =:= true ->
     %% consistent not modified or still set to true and n_val
     %% modified but set to same value
     true;
@@ -1305,10 +1307,10 @@ undefined_props(Names, Props, Errors) ->
 immutable_dt(_NewDT=undefined, _NewAllowMult=undefined, _ExistingDT, _Bad) ->
     %% datatype and allow_mult are not being modified, so its valid
     true;
-immutable_dt(_Datatype, undefined, _Datatype, _Bad) ->
+immutable_dt(Datatype, undefined, Datatype, _Bad) ->
     %% data types from new and existing match and allow mult not modified, valid
     true;
-immutable_dt(_Datatype, true, _Datatype, _Bad) ->
+immutable_dt(Datatype, true, Datatype, _Bad) ->
     %% data type from new and existing match and allow mult still set to true,
     %% valid
     true;
@@ -1324,7 +1326,7 @@ immutable_dt(_Datatype, true, _Datatype2, Bad) ->
 immutable_dt(_Datatype, false, undefined, Bad) ->
     %% datatype defined when it wasn't before
     has_datatype(Bad);
-immutable_dt(_Datatype, false, _Datatype, Bad) ->
+immutable_dt(Datatype, false, Datatype, Bad) ->
     %% attempt to set allow_mult to false when data type set is invalid, datatype not modified
     has_allow_mult(Bad);
 immutable_dt(undefined, false, _Datatype, Bad) ->
@@ -1336,7 +1338,7 @@ immutable_dt(_Datatype, false, _Datatype2, Bad) ->
 immutable_dt(undefined, _, _Datatype, Bad) ->
     %% datatype not modified but allow_mult is invalid
     has_allow_mult(Bad);
-immutable_dt(_Datatype, _, _Datatype, Bad) ->
+immutable_dt(Datatype, _, Datatype, Bad) ->
     %% allow mult is invalid but data types still match
     has_allow_mult(Bad);
 immutable_dt(_, _, _, Bad) ->

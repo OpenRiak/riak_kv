@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
@@ -18,39 +19,42 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc coordination of Riak PUT requests
-
+%%
 -module(riak_kv_put_fsm).
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
--include_lib("riak_kv_vnode.hrl").
--include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
--include("riak_kv_wm_raw.hrl").
--include("riak_kv_types.hrl").
-
--compile({nowarn_deprecated_function,
-            [{gen_fsm, start_link, 3},
-                {gen_fsm, send_event, 2}]}).
-
 -behaviour(gen_fsm).
--define(DEFAULT_OPTS, [{returnbody, false}, {update_last_modified, true}]).
+
 -export([start/3,start/6,start/7]).
 -export([start_link/3,start_link/6,start_link/7]).
 -export([set_put_coordinator_failure_timeout/1,
          get_put_coordinator_failure_timeout/0]).
--ifdef(TEST).
--export([test_link/4]).
--endif.
 -export([init/1, handle_event/3, handle_sync_event/4,
          handle_info/3, terminate/3, code_change/4]).
 -export([prepare/2, validate/2, precommit/2,
          waiting_local_vnode/2,
          waiting_remote_vnode/2,
          postcommit/2, finish/2]).
+-ifdef(TEST).
+-export([test_link/4]).
+-endif.
 
+-export_type([option/0, options/0, detail/0, detail_info/0]).
+
+-compile({nowarn_deprecated_function, [
+    {gen_fsm, start_link, 3},
+    {gen_fsm, send_event, 2}
+]}).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 -include_lib("kernel/include/logger.hrl").
+-include_lib("riak_core/include/riak_core_dynamic_timeouts.hrl").
+-include("riak_kv_vnode.hrl").
+-include("riak_kv_wm_raw.hrl").
+-include("riak_kv_types.hrl").
+-include("riak_kv_dtrace.hrl").
 
 -type detail_info() :: timing.
 -type detail() :: true |
@@ -107,8 +111,6 @@
                        MBoxSize::error | non_neg_integer(),
                        MBoxSofLimit:: error | non_neg_integer()}] | [].
 
--export_type([option/0, options/0, detail/0, detail_info/0]).
-
 -record(state, {from :: {raw, integer(), pid()},
                 robj :: riak_object:riak_object(),
                 options=[] :: options(),
@@ -142,9 +144,9 @@
                 coordinator_timeout :: integer()
                }).
 
--include("riak_kv_dtrace.hrl").
-
--define(PARSE_INDEX_PRECOMMIT, {struct, [{<<"mod">>, <<"riak_index">>}, {<<"fun">>, <<"parse_object_hook">>}]}).
+-define(DEFAULT_OPTS, [{returnbody, false}, {update_last_modified, true}]).
+-define(PARSE_INDEX_PRECOMMIT, {struct,
+    [{<<"mod">>, <<"riak_index">>}, {<<"fun">>, <<"parse_object_hook">>}]}).
 -define(DEFAULT_TIMEOUT, 60000).
 
 %% ===================================================================
@@ -318,9 +320,9 @@ init({test, Args, StateProps}) ->
     %% state of the rest of the system
     {ok, validate, TestStateData}.
 
-%% @private
-%% @spec get_timeout_from_finish_time(FinishBy :: nativetime()) -> timeout().
-%% @doc Convert a finish time to a timeout.
+%% @private Convert an absolute finish time in native monotonic time to a
+%% remaining timeout interval in milliseconds.
+-spec get_timeout_from_finish_time(FinishBy :: integer()) -> timeout().
 get_timeout_from_finish_time(FinishBy) ->
     EntryTime = erlang:monotonic_time(),
     Diff = FinishBy - EntryTime,

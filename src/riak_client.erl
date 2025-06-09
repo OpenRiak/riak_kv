@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
@@ -18,9 +19,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc object used for access into the riak system
-
+%%
 -module(riak_client).
 
 -export([new/2]).
@@ -203,7 +204,6 @@
 
 -type clone_state() :: #{
     start       :=  nativetime(),   %% when it all began
-    timeout     :=  timeout(),      %% overall operation timeout
 
     %% clone(...) parameters
     opts        :=  clone_options(),
@@ -466,12 +466,12 @@ fetch(QueueName, {?MODULE, [Node, _ClientId]}) ->
 
 %% @doc
 %% Push a replicated object into Riak
--spec push(riak_object:riak_object()|binary(),
-                boolean(), list(), riak_client()) ->
-            {ok, erlang:timestamp()} |
-            {error, too_many_fails} |
-            {error, timeout} |
-            {error, {n_val_violation, N::integer()}}.
+-spec push(
+    Obj :: riak_object:riak_object() | riak_object:proxy_object() | binary(),
+    IsDeleted :: boolean(), Opts :: list(), Client :: riak_client())
+        ->  {ok | {error,
+                timeout | too_many_fails | {n_val_violation, integer()}
+            }, erlang:timestamp()}.
 push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
     RObj =
         case riak_object:is_robject(RObjMaybeBin) of
@@ -500,7 +500,7 @@ push(RObjMaybeBin, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
 
     true = riak_kv_util:is_x_deleted(RObj) == IsDeleted,
 
-    {Continue, UpdatedOptions } = riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
+    {Continue, UpdatedOptions} = riak_core_util:evaluate_timeouts(Options, ?DEFAULT_TIMEOUT),
     R = case Continue of
         true ->
             case node() of
@@ -901,12 +901,15 @@ consistent_delete(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}) ->
 %%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
 %%      Any error may be returned with `Details' as described above.</dd>
 %% </dl>
+clone(Bucket, Key, _SrcVClock, Bucket, Key, _CopyOpts, _Client) ->
+    {error, name_unchanged};
 clone(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey,
-            #{} = CloneOpts0, {?MODULE, [_Node, _ClientId]} = Client)
+            CloneOpts0, {?MODULE, [_Node, _ClientId]} = Client)
         when    (erlang:is_binary(SrcBucket) orelse erlang:is_tuple(SrcBucket))
         andalso erlang:is_binary(SrcKey)
         andalso (erlang:is_binary(DstBucket) orelse erlang:is_tuple(DstBucket))
-        andalso (erlang:is_binary(DstKey) orelse DstKey =:= undefined) ->
+        andalso (erlang:is_binary(DstKey) orelse DstKey =:= undefined)
+        andalso erlang:is_map(CloneOpts0) ->
 
     State0 = #{
         start       => erlang:monotonic_time(),
@@ -948,9 +951,9 @@ clone(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey,
                 _ ->
                     clone_return(Res, clone_details(clone_get, State3))
             end;
-        {false, _} ->
+        {_, CloneOpts} ->
             ?LOG_DEBUG("Not bothering to start 'clone' because of timeout"),
-            clone_return({error, timeout}, State0)
+            clone_return({error, timeout}, State0#{opts => CloneOpts})
     end.
 
 -spec clone_init_details(OptsIn :: clone_options(), StateIn :: map()) -> map().
@@ -1012,6 +1015,11 @@ clone_init_details(
     end;
 clone_init_details(OptsIn, StateIn) ->
     StateIn#{opts => OptsIn}.
+
+%% Dialyzer will complain that get/4 never returns a 3-tuple, though that
+%% is legitimately part of its spec. Not digging down through the FSM to see
+%% whether it's correct, since it could be in the future.
+-dialyzer({no_match, clone_get/4}).
 
 -spec clone_get(
     GetLabel :: atom(),
@@ -1354,8 +1362,6 @@ copy(SrcBucket, SrcKey, DstBucket, DstKey, CopyOpts, Client) ->
 %%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
 %%      Any error may be returned with `Details' as desribed above.</dd>
 %% </dl>
-copy(Bucket, Key, _SrcVClock, Bucket, Key, _CopyOpts, _Client) ->
-    {error, name_unchanged};
 copy(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey, CopyOpts, Client) ->
     %% CopyOpts should not contain the 'del_src' key, but make sure.
     clone(SrcBucket, SrcKey, SrcVClock,
@@ -1472,28 +1478,27 @@ reap(Bucket, Key, DeleteHash, {?MODULE, [Node, _ClientId]}) ->
                                     [{{Bucket, Key}, DeleteHash}])
     end.
 
-%% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()}
+-spec delete_vclock(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    VClock :: vclock:vclock(), riak_client())
+        ->  ok |
+            {error,
+                too_many_fails | notfound | timeout |
+                {n_val_violation, integer()} | term() }.
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error.
 %% @equiv delete(Bucket, Key, VClock, Options, riak_client())
 delete_vclock(Bucket,Key,VClock,{?MODULE, [_Node, _ClientId]}=THIS) ->
     delete_vclock(Bucket,Key,VClock,[{rw,default},{timeout,?DEFAULT_TIMEOUT}],THIS).
 
-%% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(),
-%%           RW :: integer() | Options :: list(),
-%%           TimeoutMillisecs :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()}
+-spec delete_vclock(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    VClock :: vclock:vclock(), RWOrOptions :: integer() | list(),
+    TimeoutMillisecs :: integer(), riak_client() )
+        ->  ok |
+            {error,
+                too_many_fails | notfound | timeout |
+                {n_val_violation, integer()} | term() }.
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error, or TimeoutMillisecs passes.
 %%      The incoming timeout is merged into the options list.
@@ -1505,14 +1510,13 @@ delete_vclock(Bucket,Key,VClock,Options,Timeout,{?MODULE, [_Node, _ClientId]}=TH
 delete_vclock(Bucket,Key,VClock,RW,Timeout,{?MODULE, [_Node, _ClientId]}=THIS) ->
     delete_vclock(Bucket,Key,VClock,[{rw, RW},{timeout,Timeout}],THIS).
 
-%% @spec delete_vclock(riak_object:bucket(), riak_object:key(), vclock:vclock(),
-%%                     RW :: integer() | Options :: list(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()}
+-spec delete_vclock(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    VClock :: vclock:vclock(), Options :: list(), riak_client() )
+        ->  ok |
+            {error,
+                too_many_fails | notfound | timeout |
+                {n_val_violation, integer()} | term() }.
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error.
 delete_vclock(Bucket,Key,VClock,Options,{?MODULE, [Node, _ClientId]}=THIS)
@@ -1809,7 +1813,8 @@ aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
     end.
 
 
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem) ->
     ttaaefs_fullsync(WorkItem, 900).
 
@@ -1821,7 +1826,8 @@ ttaaefs_fullsync(WorkItem) ->
 %% - day_check (sync over past day, only allowed if bucket-based sync)
 %% - range_check (sync over a range if one has been discovered by a previour sync)
 %% - auto_check (sync over range if one is present, otherwise use all if within window, otherwise day)
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(
@@ -1831,8 +1837,9 @@ ttaaefs_fullsync(WorkItem, SecsTimeout) ->
 %% @doc
 %% Intended for tests only
 %% Allows for the view of now to be altered during a test.
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer(),
-                                                    erlang:timestamp()) -> ok.
+-spec ttaaefs_fullsync(
+    riak_kv_ttaaefs_manager:work_item(), integer(), erlang:timestamp())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout, Now) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(WorkItem, ReqId, Now),

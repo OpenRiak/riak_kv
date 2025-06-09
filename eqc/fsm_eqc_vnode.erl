@@ -1,7 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2011-2017 Basho Technologies, Inc.
-%% Copyright (c) 2025 Workday, Inc.
+%% Copyright (c) 2011-2013 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,21 +19,18 @@
 %%
 %% -------------------------------------------------------------------
 %%
-%% Mock vnode for FSM testing.  Originally tried to use riak_core_vnode
-%% directly but we need the index for the tests and no clean way to do
-%% the sync events for resetting, so for now just use a gen_fsm.
+%% Mock vnode for get/put FSM testing.  Originally tried to use riak_core_vnode
+%% directly but we need the index for the tests and no clean way to do the sync
+%% events for resetting, so for now just use a gen_fsm.
 %%
-%% -------------------------------------------------------------------
-
 -module(fsm_eqc_vnode).
 -behaviour(gen_fsm).
--include("include/riak_kv_vnode.hrl").
 
--compile({nowarn_deprecated_function,
-            [{gen_fsm, start_link, 3},
-                {gen_fsm, start_link, 4},
-                {gen_fsm, sync_send_all_state_event, 2}]}).
-
+-compile({nowarn_deprecated_function, [
+    {gen_fsm, start_link, 3},
+    {gen_fsm, start_link, 4},
+    {gen_fsm, sync_send_all_state_event, 2}
+]}).
 
 -export([start_link/0, start_link/1, set_data/2, set_vput_replies/1,
          get_history/0, get_put_history/0,
@@ -45,6 +42,8 @@
          handle_info/3,
          terminate/3,
          code_change/4]).
+
+-include("riak_kv_vnode.hrl").
 
 -record(state, {objects, partvals,
 
@@ -107,7 +106,7 @@ active(?VNODE_REQv2{index = Idx,
                   sender = Sender,
                   request = Req},
        State) ->
-    active_handle_request(riak_kv_requests:request_type(Req), Req, Idx, Sender, State).
+    active_handle_request(riak_kv_requests:request_type(Req), Req, Idx, Sender, State);
 
 active(?VNODE_REQ{index = Idx,
                   sender = Sender,
