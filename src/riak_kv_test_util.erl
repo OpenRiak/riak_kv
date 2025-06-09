@@ -1,8 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_test_util: utilities for test scripts
-%%
-%% Copyright (c) 2007-2014 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,38 +19,45 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc utilities for test scripts
-
+%%
 -module(riak_kv_test_util).
 
 -ifdef(TEST).
 
--export([call_unused_fsm_funs/1,
-         stop_process/1,
-         wait_for_pid/1,
-         wait_for_unregister/1,
-         wait_for_children/1,
-         common_setup/1,
-         common_setup/2,
-         common_cleanup/1,
-         common_cleanup/2,
-         get_test_dir/1]).
+-export([
+    call_unused_fsm_funs/1,
+    common_cleanup/1,
+    common_cleanup/2,
+    common_setup/1,
+    common_setup/2,
+    stop_process/1,
+    wait_for_children/1,
+    wait_for_pid/1,
+    wait_for_unregister/1
+]).
 
--include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
+
+-type abs_path()    :: nonempty_string().
+-type test_phase()  :: load | start | stop.
+-type phase_fun()   :: fun((test_phase()) -> term()).
+-type test_fun()    :: fun(() -> term()).
+-type test_name()   :: atom() | nonempty_string().
 
 -define(SETUPTHUNK, fun(_) -> ok end).
 
 %% Creates a setup function for tests that need Riak KV stood
 %% up in an isolated fashion.
 %% see setup/3
--spec common_setup(TestName::atom() | string()) -> fun().
+-spec common_setup(TestName :: test_name()) -> fun().
 common_setup(T) when is_atom(T) ->
     common_setup(atom_to_list(T));
 common_setup(TestName) ->
     common_setup(TestName, ?SETUPTHUNK).
 
--spec common_setup(atom() | string(), SetupFun::fun((load|start|stop) -> any())) -> fun().
+-spec common_setup(TestName :: test_name(), SetupFun :: phase_fun()) -> test_fun().
 common_setup(T, S) when is_atom(T) ->
     common_setup(atom_to_list(T), S);
 common_setup(TestName, Setup) ->
@@ -59,13 +66,14 @@ common_setup(TestName, Setup) ->
 %% Creates a cleanup function for tests that need Riak KV stood up in
 %% an isolated fashion.
 %% see cleanup/3
--spec common_cleanup(TestName::atom() | string()) -> fun().
+-spec common_cleanup(TestName :: test_name()) -> fun().
 common_cleanup(T) when is_atom(T) ->
     common_cleanup(atom_to_list(T));
 common_cleanup(TestName) ->
     common_cleanup(TestName, ?SETUPTHUNK).
 
--spec common_cleanup(TestName::atom() | string(), CleanupFun::fun((stop) -> any())) -> fun().
+-spec common_cleanup(TestName :: test_name(), CleanupFun :: phase_fun())
+        -> phase_fun().
 common_cleanup(T, C) when is_atom(T) ->
     common_cleanup(atom_to_list(T), C);
 common_cleanup(TestName, Cleanup) ->
@@ -95,7 +103,7 @@ stop_process(Pid) when is_pid(Pid) ->
 wait_for_pid(Pid) ->
     Mref = erlang:monitor(process, Pid),
     receive
-        {'DOWN',Mref,process,_,_} ->
+        {'DOWN', Mref, process, _, _} ->
             ok
     after
         5000 ->
@@ -103,9 +111,8 @@ wait_for_pid(Pid) ->
     end.
 
 %% Wait for registered process to exit.
--spec wait_for_unregister(Mod::atom()) ->
-                                 ok |
-                                 {error, didnotexit, pid(), term()}.
+-spec wait_for_unregister(Mod :: module())
+        -> ok | {error, didnotexit, pid(), term()}.
 wait_for_unregister(Mod) ->
     case whereis(Mod) of
         undefined ->
@@ -124,26 +131,26 @@ wait_for_unregister(Mod) ->
 %% They have an '$ancestors' entry in their dictionary
 wait_for_children(PPid) ->
     F = fun(CPid) ->
-                case process_info(CPid, initial_call) of
-                    {initial_call, {proc_lib, init_p, 3}} ->
-                        case process_info(CPid, dictionary) of
-                            {dictionary, Dict} ->
-                                case proplists:get_value('$ancestors', Dict) of
-                                    undefined ->
-                                        %% Process dictionary not updated yet
-                                        true;
-                                    Ancestors ->
-                                        lists:member(PPid, Ancestors)
-                                end;
+        case process_info(CPid, initial_call) of
+            {initial_call, {proc_lib, init_p, 3}} ->
+                case process_info(CPid, dictionary) of
+                    {dictionary, Dict} ->
+                        case proplists:get_value('$ancestors', Dict) of
                             undefined ->
-                                %% No dictionary - should be one if proclib spawned it
-                                true
+                                %% Process dictionary not updated yet
+                                true;
+                            Ancestors ->
+                                lists:member(PPid, Ancestors)
                         end;
-                    _ ->
-                        %% Not in proc_lib
-                        false
-                end
-        end,
+                    undefined ->
+                        %% No dictionary - should be one if proclib spawned it
+                        true
+                end;
+            _ ->
+                %% Not in proc_lib
+                false
+        end
+    end,
     case lists:any(F, processes()) of
         true ->
             timer:sleep(1),
@@ -167,7 +174,7 @@ wait_for_children(PPid) ->
 %% `CleanupFun' given to `cleanup/3'.
 %%
 %% see common_setup/2, dep_apps/2, do_dep_apps/2
--spec setup(TestName::string(), fun((load|start|stop) -> any())) -> ok.
+-spec setup(TestName :: test_name(), SetupFun :: phase_fun()) -> ok.
 setup(TestName, SetupFun) ->
     %% Cleanup in case a previous test did not
     cleanup(TestName, SetupFun, setup),
@@ -176,7 +183,7 @@ setup(TestName, SetupFun) ->
     do_dep_apps(load, Deps),
 
     %% Start epmd
-    os:cmd("epmd -daemon"),
+    _ = os:cmd("epmd -daemon"),
 
     %% Start erlang node
     {ok, Hostname} = inet:gethostname(),
@@ -198,24 +205,28 @@ setup(TestName, SetupFun) ->
 %% `stop' before other components are stopped.
 %%
 %% see common_cleanup/2, dep_apps/2, do_dep_apps/2
--spec cleanup(Test::string(), CleanupFun::fun((stop) -> any()), SetupResult::setup | atom()) -> ok.
+-spec cleanup(
+    Test :: test_name(),
+    CleanupFun :: phase_fun(),
+    SetupResult :: setup | list(atom())) -> ok.
 cleanup(Test, CleanupFun, setup) ->
     %% Remove existing ring files so we have a fresh ring
-    os:cmd("rm -rf " ++ get_test_dir(Test) ++ "/ring"),
+    RingDir = filename:join(riak_core_test_util:get_test_dir(Test), "ring"),
+    riak_core_test_util:ensure_no_file(RingDir),
     cleanup(Test, CleanupFun, []);
 cleanup(Test, CleanupFun, StartedApps) ->
     Deps = lists:reverse(dep_apps(Test, CleanupFun)),
-    Apps = Deps ++ lists:filtermap(fun(A) ->
-                                           not lists:member(A, Deps)
-                                   end, lists:reverse(StartedApps)),
-
+    Apps = Deps ++ lists:filtermap(
+        fun(A) ->
+            not lists:member(A, Deps)
+        end, lists:reverse(StartedApps)),
 
     %% Stop the applications in reverse order.
     do_dep_apps(stop, Apps),
 
     %% Cleanup potentially runaway processes
-    catch exit(whereis(riak_kv_vnode_master), kill),
-    catch exit(whereis(riak_sysmon_filter), kill),
+    _ = catch exit(whereis(riak_kv_vnode_master), kill),
+    _ = catch exit(whereis(riak_sysmon_filter), kill),
     %% Need to specifically wait for riak_kv_stat to unregister, since
     %% otherwise we get a specific error
     %% {{already_started,Pid},#child{...}}  from supervisor:start_child/2
@@ -226,7 +237,7 @@ cleanup(Test, CleanupFun, StartedApps) ->
     net_kernel:stop(),
 
     {ok, Hostname} = inet:gethostname(),
-    os:cmd("rm -rf *@" ++ Hostname),
+    _ = os:cmd("/bin/rm -rf *@" ++ Hostname),
 
     %% Reset the riak_core vnode_modules
     application:set_env(riak_core, vnode_modules, []),
@@ -249,108 +260,108 @@ cleanup(Test, CleanupFun, StartedApps) ->
 %% application lifecycle, one of `load', `start' or `stop'.
 %%
 %% see common_setup/2, common_cleanup/2
--spec dep_apps(Test::string(), Extra::fun((load | start | stop) -> any())) -> [ atom() | fun() ].
+-spec dep_apps(Test :: test_name(), Extra :: phase_fun())
+        -> [atom() | phase_fun()].
 dep_apps(Test, Extra) ->
-    Silencer = fun(load) ->
-                       %% Silence logging junk
-                       application:set_env(kernel, error_logger, silent),
-                       filelib:ensure_dir(get_test_dir(Test) ++ "/log/sasl.log"),
-                       application:set_env(sasl, sasl_error_logger,
-                                            {file, get_test_dir(Test) ++ "/log/sasl.log"}),
-                       error_logger:tty(false);
-                  (_) -> ok
-               end,
-    DefaultSetupFun =
-        fun(load) ->
-                %% Set some missing env vars that are normally part of
-                %% release packaging. These can be overridden by the
-                %% Extra fun.
-                application:set_env(riak_ensemble,
-                                    data_root,
-                                    get_test_dir(Test) ++ "ensemble"),
-                application:set_env(riak_core, ring_creation_size, 64),
-                application:set_env(riak_core,
-                                    ring_state_dir,
-                                    get_test_dir(Test) ++ "/ring"),
-                application:set_env(riak_core,
-                                    platform_data_dir,
-                                    get_test_dir(Test) ++ "/data"),
-                application:set_env(riak_core, handoff_port, 0), %% pick a random handoff port
-                %% @TODO this is wrong still as the deps dirs is a
-                %% best guest in `get_deps_dir/0'
-                DepsDir = get_deps_dir(),
-                Dirs = [DepsDir ++ "*/priv"],
-                application:set_env(riak_core, schema_dirs, Dirs),
-                application:set_env(riak_kv,
-                                    eraser_dataroot,
-                                    get_test_dir(Test) ++ "/kv_eraser"),
-                application:set_env(riak_kv,
-                                    reaper_dataroot,
-                                    get_test_dir(Test) ++ "/kv_reaper"),
-                application:set_env(riak_kv,
-                                    reader_dataroot,
-                                    get_test_dir(Test) ++ "/kv_reader");
-           (stop) -> ok;
-           (_) -> ok
-        end,
-
-    [sasl, Silencer, exometer_core, runtime_tools,
-     mochiweb, webmachine, sidejob, poolboy, basho_stats, bitcask,
-     eleveldb, riak_core, riak_pipe, riak_api, riak_dt, riak_pb, riak_kv,
-     DefaultSetupFun, Extra].
+    Silencer = fun
+        (load) ->
+            riak_core_test_util:logger_silence();
+        (_) ->
+            ok
+    end,
+    DefaultSetupFun = fun
+        (load) ->
+            %% Set some missing env vars that are normally part of
+            %% release packaging. These can be overridden by the
+            %% Extra fun.
+            TestDir = riak_core_test_util:get_test_dir(Test),
+            application:set_env(
+                riak_ensemble, data_root, filename:join(TestDir, "ensemble")),
+            application:set_env(riak_core, ring_creation_size, 64),
+            application:set_env(
+                riak_core, ring_state_dir, filename:join(TestDir, "ring")),
+            application:set_env(
+                riak_core, platform_data_dir, filename:join(TestDir, "data")),
+            %% pick a random handoff port
+            application:set_env(riak_core, handoff_port, 0),
+            %% @TODO this is wrong still as the deps dirs is a
+            %% best guest in `get_deps_dir/0'
+            SchemaDirWC = filename:join([get_deps_dir(), "*", "priv"]),
+            application:set_env(riak_core, schema_dirs, [SchemaDirWC]),
+            application:set_env(
+                riak_kv, eraser_dataroot, filename:join(TestDir, "kv_eraser")),
+            application:set_env(
+                riak_kv, reaper_dataroot, filename:join(TestDir, "kv_reaper")),
+            application:set_env(
+                riak_kv, reader_dataroot, filename:join(TestDir, "kv_reader"));
+        (_) ->
+            ok
+    end,
+    [
+        Silencer, exometer_core, runtime_tools,
+        mochiweb, webmachine, sidejob, poolboy, basho_stats, bitcask,
+        eleveldb, riak_core, riak_pipe, riak_api, riak_dt, riak_pb,
+        riak_kv, DefaultSetupFun, Extra
+    ].
 
 
 %% Runs the application-lifecycle phase across all of the given
 %% applications and functions.
 %% see dep_apps/2
--spec do_dep_apps(load | start | stop, [ atom() | fun() ]) -> [ any() ].
+-spec do_dep_apps(test_phase(), list(atom() | test_phase())) -> list().
 do_dep_apps(start, Apps) ->
     lists:foldl(fun do_dep_apps_fun/2, [], Apps);
 do_dep_apps(LoadStop, Apps) ->
-    lists:map(
-        fun(A) when is_atom(A) ->
-                case include_app_phase(LoadStop, A) of
-                    true ->
-                        application:LoadStop(A);
-                    _ ->
-                        ok
-                end;
-            (F) ->
-                F(LoadStop)
-        end,
-        Apps).
+    lists:map(fun
+        (A) when erlang:is_atom(A) ->
+            case include_app_phase(LoadStop, A) of
+                true ->
+                    application:LoadStop(A);
+                _ ->
+                    ok
+            end;
+        (F) when erlang:is_function(F, 1) ->
+            F(LoadStop)
+    end, Apps).
 
-do_dep_apps_fun(A, Acc) when is_atom(A) ->
+do_dep_apps_fun(A, Acc) when erlang:is_atom(A) ->
     case include_app_phase(start, A) of
         true ->
-            {ok, Started} = start_app_and_deps(A, Acc),
-            Started;
+            case start_app_and_deps(A, Acc) of
+                {ok, Started} ->
+                    Started;
+                {error, Reason} ->
+                    erlang:error(Reason, [A, Acc])
+            end;
         _ ->
             Acc
     end;
-do_dep_apps_fun(F, Acc) ->
+do_dep_apps_fun(F, Acc) when erlang:is_function(F, 1) ->
     F(start),
     Acc.
 
 %% Determines whether a given application should be modified in
 %% the given phase. If this returns false, the application will not be
 %% loaded, started, or stopped by `do_dep_apps/2'.
--spec include_app_phase(Phase::load | start | stop, Application::atom()) -> true | false.
+-spec include_app_phase(
+    Phase :: test_phase(),
+    Application :: atom()) -> boolean().
 include_app_phase(stop, crypto) -> false;
 include_app_phase(_Phase, _App) -> true.
 
 %% Make sure an application and all of its dependent applications are started.
 %% Similar to application:ensure_all_started/1 available in R16B02.
--spec start_app_and_deps(Application::atom(), [atom()]) -> {ok, [atom()]} | {error, term()}.
+-spec start_app_and_deps(Application :: atom(), list(atom()))
+        -> {ok, [atom()]} | {error, term()}.
 start_app_and_deps(Application, Started) ->
     case lists:member(Application, Started) of
         true ->
             {ok, Started};
-        false ->
+        _ ->
             _Apps = application:which_applications(),
             case application:start(Application) of
                 ok ->
-                    {ok, [Application|Started]};
+                    {ok, [Application | Started]};
                 {error, {already_started, Application}} ->
                     {ok, Started};
                 {error, {not_started, Dep}} ->
@@ -366,58 +377,60 @@ start_app_and_deps(Application, Started) ->
             end
     end.
 
-get_test_dir(TestName) ->
-    % This used to be TestName prior to OTP20/rebar3
-    % Now add special case for existence of _build and running as rebar test
-    case filelib:is_dir("_build") of
-        true ->
-            Rebar3TestFolder = "_build/test/" ++ TestName,
-            ok = filelib:ensure_dir(Rebar3TestFolder),
-            Rebar3TestFolder;
-        false ->
-            {ok, CWD} = file:get_cwd(),
-            io:format(user, "_build not available at ~s~n", [CWD]),
-            TestName
-    end.
-
+-spec get_deps_dir() -> abs_path().
 get_deps_dir() ->
-    case os:getenv("REBAR_DEPS_DIR") of
-        false ->
-            guess_deps_dir();
-        Dir  ->
-            Dir
+    PKey = {?MODULE, deps_dir},
+    case persistent_term:get(PKey, undefined) of
+        undefined ->
+            DepsDir = case os:getenv("REBAR_DEPS_DIR") of
+                false ->
+                    guess_deps_dir();
+                Dir ->
+                    Dir
+            end,
+            persistent_term:put(PKey, DepsDir),
+            DepsDir;
+        DDVal ->
+            DDVal
     end.
 
+-spec guess_deps_dir() -> abs_path().
 guess_deps_dir() ->
     {ok, CWD} = file:get_cwd(),
-    case filename:rootname(CWD) == CWD of
+    DepsDir = case filename:rootname(CWD) == CWD of
         true ->
             %% not in .eunit, must be running from console
-            case filelib:is_dir("_build/default/lib") of
+            BDL = filename:join([CWD, "_build", "default", "lib"]),
+            case filelib:is_dir(BDL) of
                 true ->
                     %% running as rebar3 from console
-                    "_build/default/lib/";
-                false ->
-                    case filelib:is_dir("deps") of
+                    BDL;
+                _ ->
+                    Deps = filename:join(CWD, "deps"),
+                    case filelib:is_dir(Deps) of
                         true ->
                             %% probably a root checkout
-                            "deps/";
-                        false ->
+                            Deps;
+                        _ ->
                             %% probably part of an applications deps
-                            "../"
+                            % ".."
+                            filename:dirname(CWD)
                     end
             end;
-        false ->
+        _ ->
             %% probably running in .eunit
-            case filelib:is_dir("../deps") of
+            UpDeps = filename:join(filename:dirname(CWD), "deps"),
+            case filelib:is_dir(UpDeps) of
                 true ->
-                    "../deps/";
-                false ->
+                    UpDeps;
+                _ ->
                     %% maybe we're in a deps/* situation, worse case tests
                     %% fail, which is what they did before this hack
-                    "../../"
+                    % "../.."
+                    filename:dirname(filename:dirname(CWD))
             end
-    end.
-
+    end,
+    % io:format(user, "~n*** Using deps at ~ts~n", [DepsDir]),
+    DepsDir.
 
 -endif. % TEST

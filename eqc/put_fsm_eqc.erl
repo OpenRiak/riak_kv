@@ -1,8 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_put_fsm: coordination of Riak PUT requests
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -30,22 +29,22 @@
 %% Remember, if the eunit test failed the current_counterexample file
 %% is under .eunit dir
 %%
-%% TODO: Would like to clean up the expecte result code and make it dependent
-%%       on the generate vnode responses.  Hard because the update to the last
+%% TODO: Would like to clean up the expected result code and make it dependent
+%%       on the generated vnode responses.  Hard because the update to the last
 %%       modified time stamp breaks the pre-defined lineage code in
 %%       fsm_eqc_util and the current last-w-does-not-check-dw bug makes
 %%       reasoning hard.
 %%
 -module(put_fsm_eqc).
+
 -ifdef(EQC).
+
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("include/riak_kv_vnode.hrl").
 -include("../src/riak_kv_wm_raw.hrl").
-
--compile([export_all, nowarn_export_all]).
--export([postcommit_ok/1]).
 
 -define(REQ_ID, 1234).
 -define(DEFAULT_BUCKET_PROPS,
@@ -59,12 +58,13 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 %%====================================================================
-%% eunit test 
+%% eunit test
 %%====================================================================
 
 setup() ->
+    %% Shut logging up - too noisy.
+    riak_core_test_util:logger_redirect(?MODULE),
     %% Start net_kernel - hopefully can remove this after FSM is purified..
-    Path = riak_kv_test_util:get_test_dir("put_fsm_eqc"),
     State = case net_kernel:stop() of
                 {error, not_allowed} ->
                     running;
@@ -78,12 +78,7 @@ setup() ->
                     {ok, _Pid} = net_kernel:start([TestNode, shortnames]),
                     started
             end,
-    %% Shut logging up - too noisy.
-    application:load(sasl),
-    application:set_env(sasl, sasl_error_logger, {file, Path ++ "/put_fsm_eqc_sasl.log"}),
     application:set_env(riak_kv, fsm_trace_enabled, true),
-    error_logger:tty(false),
-    error_logger:logfile({open, Path ++ "/put_fsm_eqc.log"}),
 
     ok = exometer:start(),
 
@@ -106,7 +101,7 @@ cleanup(running) ->
     meck:unload(riak_core_bucket),
     fsm_eqc_util:cleanup_mock_servers(),
     os:cmd("rm -rf *putfsmeqc*"),
-    ok;
+    riak_core_test_util:logger_restore();
 cleanup(started) ->
     ok = net_kernel:stop(),
     cleanup(running).
@@ -138,7 +133,7 @@ vputpartval() ->
     frequency([{2,Shrink({ok, fsm_eqc_util:lineage()})},
                {1,notfound}]).
 
-vputfirst() ->    
+vputfirst() ->
     frequency([{9, w},
                {1, ?SHRINK({timeout, 1}, [w])}]).
 
@@ -155,7 +150,7 @@ nodestatus() ->
             [primary]).
 
 %% Put FSM options
-%% 
+%%
 detail() ->
     timing.
 
@@ -170,13 +165,13 @@ option() ->
                {1, details},
                {1, {details, details()}},
                {1, disable_hooks}]).
-    
+
 options() ->
     list(option()).
 
 %%
 %% Pre/postcommit hooks
-%% 
+%%
 
 precommit_hook() ->
     frequency([
@@ -190,8 +185,8 @@ precommit_hook() ->
                {1,  {erlang, precommit_undefined}},
                {1,  {garbage, garbage}},
                {1,  {garbage, empty}}]).
-                
-               
+
+
 precommit_hooks() ->
     frequency([{4, []},
                {1, list(precommit_hook())}]).
@@ -202,7 +197,7 @@ postcommit_hook() ->
                {1,  {erlang, postcommit_fail}},
                {1,  {erlang, postcommit_fail_reason}},
                {1,  {garbage, garbage}}]).
- 
+
 postcommit_hooks() ->
     frequency([{5, []},
                {1, list(postcommit_hook())}]).
@@ -226,7 +221,7 @@ prop_basic_put() ->
            ?FORALL({PWSeed, WSeed, DWSeed,
                     Objects, ObjectIdxSeed,
                     VPutResp,
-                    Options0, AllowMult, Precommit, Postcommit}, 
+                    Options0, AllowMult, Precommit, Postcommit},
                    {w_dw_seed(), w_dw_seed(), w_dw_seed(),
                     fsm_eqc_util:riak_objects(), fsm_eqc_util:largenat(),
                     vnodeputresps(),
@@ -239,7 +234,7 @@ prop_basic_put() ->
                        %% W can be 0
                        {W, RealW0} = w_dw_val(N, 0, WSeed),
 
-                       %% {Q, _Ring, NodeStatus} = fsm_eqc_util:mock_ring(N + NQdiff, NodeStatus0), 
+                       %% {Q, _Ring, NodeStatus} = fsm_eqc_util:mock_ring(N + NQdiff, NodeStatus0),
 
                        %% Pick the object to put - as ObjectIdxSeed shrinks, it should go
                        %% towards the end of the list (for current), so simplest to just
@@ -303,11 +298,11 @@ prop_basic_put() ->
                        RealW = erlang:max(EffDW, RealW0),
 
                        ExpectObject = expect_object(H, RealW, EffDW, RealPW, AllowMult, PL2),
-                       {Expected, ExpectedPostCommits, ExpectedVnodePuts} = 
+                       {Expected, ExpectedPostCommits, ExpectedVnodePuts} =
                        expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options,
                               Precommit, Postcommit, ExpectObject, PL2),
 
-                       {RetResult, RetInfo} = case Res of 
+                       {RetResult, RetInfo} = case Res of
                                                   timeout ->
                                                       {Res, undefined};
                                                   ok ->
@@ -368,7 +363,7 @@ make_preflist2([], _Index, PL2) ->
 make_preflist2([{_PartVal, _First, _FirstSeq, _Sec, _SecSeq, down} | Rest], Index, PL2) ->
     make_preflist2(Rest, Index, PL2);
 make_preflist2([{_PartVal, _First, _FirstSeq, _Sec, _SecSeq, NodeStatus} | Rest], Index, PL2) ->
-    make_preflist2(Rest, Index + 1, 
+    make_preflist2(Rest, Index + 1,
                    [{{Index, whereis(fsm_eqc_vnode)}, NodeStatus} | PL2]).
 
 %% make_vput_replies - build the list of vnode replies to pass to the mock
@@ -376,7 +371,7 @@ make_preflist2([{_PartVal, _First, _FirstSeq, _Sec, _SecSeq, NodeStatus} | Rest]
 %%
 %% If the first response is a timeout, no second response is sent.
 %%
-%% If the second response is a dw requests, lookup the object currently 
+%% If the second response is a dw requests, lookup the object currently
 %% on the vnode so the vnode master can merge it.
 %%
 %% Pass on all other requests as they are.
@@ -386,7 +381,7 @@ make_preflist2([{_PartVal, _First, _FirstSeq, _Sec, _SecSeq, NodeStatus} | Rest]
 %% comes first.
 make_vput_replies(VPutResp, Objects, Options) ->
     make_vput_replies(VPutResp, Objects, Options, 1, []).
-    
+
 make_vput_replies([], _Objects, _Options, _LIdx, SeqReplies) ->
     %% Randomize the order of replies - make sure the first vnode
     %% is handled before the others to simulate local/remote vnodes
@@ -395,11 +390,11 @@ make_vput_replies([], _Objects, _Options, _LIdx, SeqReplies) ->
     [Local1, Local2 | Replies];
 make_vput_replies([{_CurObj, _First, _FirstSeq, _Second, _SecondSeq, down} | Rest],
                   Objects, Options, LIdx, Replies) ->
-    make_vput_replies(Rest, Objects, Options, LIdx, Replies); 
+    make_vput_replies(Rest, Objects, Options, LIdx, Replies);
 make_vput_replies([{_CurObj, {timeout, 1}, FirstSeq, _Second, SecondSeq, _NodeStatus} | Rest],
                   Objects, Options, LIdx, Replies) ->
-    make_vput_replies(Rest, Objects, Options, LIdx + 1, 
-                     [{FirstSeq+SecondSeq+1, {LIdx, {timeout, 2}}}, 
+    make_vput_replies(Rest, Objects, Options, LIdx + 1,
+                     [{FirstSeq+SecondSeq+1, {LIdx, {timeout, 2}}},
                       {FirstSeq, {LIdx, {timeout, 1}}} | Replies]);
 make_vput_replies([{CurPartVal, First, FirstSeq, dw, SecondSeq, _NodeStatus} | Rest],
                   Objects, Options, LIdx, Replies) ->
@@ -446,7 +441,7 @@ make_bucket_props(N, AllowMult, Precommit, Postcommit) ->
                               [{postcommit, [HookXform(H) || H <- Postcommit]}]
                       end,
     lists:flatten([RequestProps,
-                   PrecommitProps, PostcommitProps, 
+                   PrecommitProps, PostcommitProps,
                    ?DEFAULT_BUCKET_PROPS]).
 
 %%====================================================================
@@ -454,7 +449,7 @@ make_bucket_props(N, AllowMult, Precommit, Postcommit) ->
 %%====================================================================
 
 %% Work out the expected return value from the FSM and the expected postcommit log.
-expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options, 
+expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options,
        Precommit, Postcommit, Object, PL2) ->
     ReturnObj = case proplists:get_value(returnbody, Options, false) of
                     true ->
@@ -466,7 +461,7 @@ expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options,
     NumPrimaries = length([xx || {_,primary} <- PL2]),
     UpNodes =  length(PL2),
     MinNodes = erlang:max(1, erlang:max(RealW, EffDW)),
-    {ExpectResult, ExpectVnodePuts} = 
+    {ExpectResult, ExpectVnodePuts} =
         if
             PW =:= garbage ->
                 {{error, {pw_val_violation, garbage}}, 0};
@@ -485,12 +480,12 @@ expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options,
 
             UpNodes < MinNodes ->
                 {{error,{insufficient_vnodes,UpNodes,need,MinNodes}}, 0};
-           
+
            true ->
                 HNoTimeout = filter_timeouts(H),
                 VPuts = case precommit_should_fail(Precommit, Options) of
                             false ->
-                                %% If the first local W/DW times out, 
+                                %% If the first local W/DW times out,
                                 %% the remote ones will not be sent.
                                 case hd(VPutResp) of
                                     {_,w,_,dw,_,_} ->
@@ -505,8 +500,8 @@ expect(VPutResp, H, N, PW, RealPW, W, RealW, DW, EffDW, Options,
                     [{w, _, _}, {fail, _, FailedReqId} | _] ->
                         {maybe_add_robj({error, FailedReqId}, ReturnObj, Precommit, Options), VPuts};
                     _ ->
-                        
-                        {expect(HNoTimeout, {H, N, RealW, EffDW, RealPW, 0, 0, 0, 0, ReturnObj, Precommit, PL2}, Options), 
+
+                        {expect(HNoTimeout, {H, N, RealW, EffDW, RealPW, 0, 0, 0, 0, ReturnObj, Precommit, PL2}, Options),
                          VPuts}
                 end
         end,
@@ -542,7 +537,7 @@ expect([{w, _Idx, _}|Rest], {H, N, W, DW, PW, NumW, NumDW, NumPW,  NumFail, RObj
     case enough_replies(S) of
         {true, Expect} ->
             maybe_add_robj(Expect, RObj, Precommit, Options);
-        
+
         false ->
             expect(Rest, S, Options)
     end;
@@ -643,7 +638,7 @@ pw_val(N, Min, Seed) ->
               _ -> Seed
           end,
     {Seed, erlang:min(Min, Val)}.
-                  
+
 
 %% Work out what DW value is being effectively used by the FSM - anything
 %% that needs a result - postcommit or returnbody requires a minimum DW of 1.
@@ -697,7 +692,7 @@ maybe_add_robj(ok, RObj, Precommit, Options) ->
     case precommit_should_fail(Precommit, Options) of
         {true, Expect} ->
             Expect;
-        
+
         false ->
             case RObj of
                 noreply ->
@@ -708,7 +703,7 @@ maybe_add_robj(ok, RObj, Precommit, Options) ->
     end;
 maybe_add_robj({error, timeout}, _Robj, Precommit, Options) ->
     %% Catch cases where it would fail before sending to vnodes, otherwise
-    %% timeout rather than receive an {error, too_many_fails} message - it 
+    %% timeout rather than receive an {error, too_many_fails} message - it
     %% will never come if the put FSM times out.
     case precommit_should_fail(Precommit, Options) of
         {true, {error, precommit_fail}} ->
@@ -738,7 +733,7 @@ precommit_add_md(Obj) ->
     MD = riak_object:get_metadata(Obj),
     UpdMD = dict:store(?MD_USERMETA, [{"X-Riak-Meta-PrecommitHook","was here"}], MD),
     riak_object:update_metadata(Obj, UpdMD).
-    
+
 precommit_append_value(Obj) ->
     r_object = element(1, Obj),
     Val = riak_object:get_value(Obj),
@@ -798,10 +793,10 @@ precommit_should_fail([{garbage, garbage} | _Rest]) ->
 precommit_should_fail([{garbage, empty} | _Rest]) ->
     {true, {error, {precommit_fail, {invalid_hook_def, {struct, []}}}}};
 precommit_should_fail([{erlang,precommit_undefined} | _Rest]) ->
-    {true, {error, {precommit_fail, 
+    {true, {error, {precommit_fail,
                     {hook_crashed,{put_fsm_eqc,precommit_undefined,error,undef}}}}};
 precommit_should_fail([{erlang,precommit_crash} | _Rest]) ->
-    {true, {error, {precommit_fail, 
+    {true, {error, {precommit_fail,
                     {hook_crashed,{put_fsm_eqc,precommit_crash,
                                    error,{badmatch,precommit_crash}}}}}};
 precommit_should_fail([{_Lang,Hook} | _Rest]) when Hook =:= precommit_fail;
@@ -832,7 +827,7 @@ check_details(Info, Options) ->
 
 
 %% Check a 'w' message was sent for each planned response.
-%% i.e. make sure that the put FSM really sent N 
+%% i.e. make sure that the put FSM really sent N
 check_puts_sent(ExpectedPuts, VPutResp) ->
     Requests = [normal || {w,_,_} <- VPutResp] ++
         [timeout || {{timeout, 1},_,_} <- VPutResp],

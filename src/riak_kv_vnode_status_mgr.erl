@@ -1,9 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_vnode_status_mgr: Manages persistence of vnode status data
-%% like vnodeid, vnode op counter etc
-%%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2014-2015 Basho Technologies, Inc.
 %% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
@@ -21,18 +19,19 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+%%
+%% @doc Manages persistence of vnode status data like
+%% vnodeid, vnode op counter etc.
+%%
 -module(riak_kv_vnode_status_mgr).
-
 -behaviour(gen_server).
+
+-compile({inline, [vnode_epoch_instant/0]}).
+-on_load(init_persistent/0).
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
--ifdef(EQC).
--include_lib("eqc/include/eqc.hrl").
--endif.
--include_lib("eunit/include/eunit.hrl").
--endif.
-
+-else.
 %% API
 -export([start_link/3, 
         get_vnodeid_and_counter/2,
@@ -41,18 +40,22 @@
         status/1,
         stop/1]).
 
--ifdef(EQC).
--export([test_link/4]).
--endif.
-
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--compile({inline, [vnode_epoch_instant/0]}).
--on_load(init_persistent/0).
+-ifdef(EQC).
+-export([test_link/4]).
+-endif.
+-endif. % TEST
 
 -include_lib("kernel/include/logger.hrl").
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% only 32 bits per counter, when you hit that, get a new vnode id
 -define(MAX_CNTR, 4294967295).
@@ -491,26 +494,18 @@ assign_vnodeid_restart_same_ts_test() ->
 %% Test
 vnode_status_test_() ->
     {setup,
-     fun() ->
-            TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
-            filelib:ensure_dir(TestPath ++ "/.test"),
-            ?cmd("chmod u+rwx " ++ TestPath),
-            ?cmd("rm -rf " ++ TestPath),
+        fun() ->
+            TestPath = riak_core_test_util:get_test_dir("kv_vnode_status_test"),
             application:set_env(riak_kv, vnode_status, TestPath),
-            ok
-     end,
-     fun(_) ->
-            TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
+            TestPath
+        end,
+        fun(TestPath) ->
             application:unset_env(riak_kv, vnode_status),
-            ?cmd("chmod u+rwx " ++ TestPath),
-            ?cmd("rm -rf " ++ TestPath),
-            ok
-     end,
+            riak_core_test_util:ensure_no_file(TestPath)
+        end,
      [?_test(begin % initial create failure
-                TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
-                ?cmd("rm -rf " ++ TestPath ++ " || true"),
-                ?cmd("mkdir " ++ TestPath),
-                ?cmd("chmod -w " ++ TestPath),
+                TestPath = riak_core_test_util:get_test_dir("kv_vnode_status_test", true),
+                ?cmd("chmod -w '" ++ TestPath ++ "'"),
                 Index = 0,
                 File = vnode_status_filename(Index, TestPath),
                 R =
@@ -522,22 +517,22 @@ vnode_status_test_() ->
                 ?assertEqual({error, eacces}, R)
              end),
       ?_test(begin % create successfully
-                TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
-                ?cmd("chmod +w " ++ TestPath),
+                TestPath = riak_core_test_util:get_test_dir("kv_vnode_status_test"),
+                ?cmd("chmod +w '" ++ TestPath ++ "'"),
                 Index = 0,
                 File = vnode_status_filename(Index, TestPath),
                 ?assertEqual(ok, write_vnode_status([{created, true}], File, ?VNODE_STATUS_VERSION))
              end),
       ?_test(begin % update successfully
-                TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
+                TestPath = riak_core_test_util:get_test_dir("kv_vnode_status_test"),
                 Index = 0,
                 File = vnode_status_filename(Index, TestPath),
                 {ok, [{created, true}, {version, 2}]} = read_vnode_status(File),
                 ?assertEqual(ok, write_vnode_status([{updated, true}], File, ?VNODE_STATUS_VERSION))
              end),
       ?_test(begin % update failure
-                TestPath = riak_kv_test_util:get_test_dir("kv_vnode_status_test"),
-                ?cmd("chmod -r " ++ TestPath ++ "/0"),
+                TestPath = riak_core_test_util:get_test_dir("kv_vnode_status_test"),
+                ?cmd("chmod -r '" ++ TestPath ++ "/0'"),
                 Index = 0,
                 File = vnode_status_filename(Index, TestPath),
                 ?assertEqual({ok, []},  read_vnode_status(File))
@@ -556,7 +551,8 @@ vnode_status_test_() ->
         eqc:on_output(fun(Str, Args) ->
                               io:format(user, Str, Args) end, P)).
 
--define(TEST_FILE, "kv_vnode_status_eqc/vnode_status_test.file").
+-define(TEST_DATA, "kv_vnode_status_eqc").
+-define(TEST_FILE, "vnode_status_test.file").
 -define(VALID_STATUS, [{vnodeid, <<"vnodeid123">>}]).
 %% note this was generated by a r16, and will be written in the r16
 %% style of io_lib:format("~p.", [?R16_STATUS]).
@@ -568,13 +564,15 @@ vnode_status_test_() ->
 %% ~p. in `write_vnode_status/3' for an example of _why_ this test).
 prop_any_bin_consult() ->
     ?SETUP(fun() ->
-                TestFile = riak_kv_test_util:get_test_dir(?TEST_FILE),
+                TestPath = riak_core_test_util:get_test_dir(?TEST_DATA),
+                TestFile = filename:join(TestPath, ?TEST_FILE),
                 file:delete(TestFile),
                 fun() -> file:delete(TestFile) end
            end,
            ?FORALL(Bin, binary(),
                    begin
-                        TestFile = riak_kv_test_util:get_test_dir(?TEST_FILE),
+                        TestPath = riak_core_test_util:get_test_dir(?TEST_DATA),
+                        TestFile = filename:join(TestPath, ?TEST_FILE),
                         Status = [{version, 1}, {vnodeid, Bin}],
                         ok = write_vnode_status(Status, TestFile, 1),
                         equals({ok, Status}, read_vnode_status(TestFile))
@@ -586,14 +584,16 @@ prop_any_bin_consult() ->
 %% a blank status.
 prop_any_file_status() ->
     ?SETUP(fun() ->
-                TestFile = riak_kv_test_util:get_test_dir(?TEST_FILE),
+                TestPath = riak_core_test_util:get_test_dir(?TEST_DATA),
+                TestFile = filename:join(TestPath, ?TEST_FILE),
                 file:delete(TestFile),
                 fun() -> file:delete(TestFile) end
            end,
            ?FORALL({Type, _StatusFile},
                    ?LET(Type, oneof([r16, valid, absent, corrupt]), {Type, gen_status_file(Type)}),
                    begin
-                    TestFile = riak_kv_test_util:get_test_dir(?TEST_FILE),
+                    TestPath = riak_core_test_util:get_test_dir(?TEST_DATA),
+                    TestFile = filename:join(TestPath, ?TEST_FILE),
                     {ok, Status} = read_vnode_status(TestFile),
 
                     case Type of
@@ -614,7 +614,9 @@ prop_any_file_status() ->
 
 
 gen_status_file(Type) ->
-    gen_status_file(riak_kv_test_util:get_test_dir(?TEST_FILE), Type).
+    TestPath = riak_core_test_util:get_test_dir(?TEST_DATA),
+    TestFile = filename:join(TestPath, ?TEST_FILE),
+    gen_status_file(TestFile, Type).
 
 %% @private generate the file on disk TBQH, this might be fine as a
 %% straight up eunit tests, given how little random there really is

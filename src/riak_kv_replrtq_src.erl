@@ -1,6 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_replrtq_src: Source of replication updates from this node
+%% Copyright (c) 2019-2022 Martin Sumner.
+%% Copyright (c) 2023-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,18 +19,13 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc Queue any replication changes emitting from this node due to
 %% a PUT being co-ordinated on this node, a full-sync exchange initiated on
 %% this node, or an aae_fold replication-fold running on vnodes on this
 %% node.
-
-
+%%
 -module(riak_kv_replrtq_src).
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -behaviour(gen_server).
 
 -export([init/1,
@@ -55,6 +52,13 @@
     waitforpop_rtq/2,
     clear_rtq/1,
     stop/0]).
+
+-export_type([repl_entry/0, queue_name/0]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 
@@ -87,8 +91,6 @@
     % queue for a given queue name and priority
 
 -endif.
-
--include_lib("kernel/include/logger.hrl").
 
 -define(RTQ_PRIORITY, 3).
     % Priority for queueing real-time replication of PUTs co-ordinated on this
@@ -183,8 +185,6 @@
     %
     % If the Priority 3 queue is empty (both cache an overflow), then the
     % lower priority queues can be tried in turn.
-
--export_type([repl_entry/0, queue_name/0]).
 
 %%%============================================================================
 %%% API
@@ -896,7 +896,7 @@ generate_replentryfun(Bucket) ->
 
 
 start_rtq() ->
-    FilePath = riak_kv_test_util:get_test_dir("replrtq_eunit"),
+    FilePath = riak_core_test_util:get_test_dir("replrtq_eunit"),
     gen_server:start({local, ?MODULE}, ?MODULE, [FilePath], []).
 
 format_status_test() ->
@@ -1174,7 +1174,7 @@ clear_queue_test() ->
     stop().
 
 wrong_overflowq_size_test() ->
-    FilePath = riak_kv_test_util:get_test_dir("replrtq_eunit"),
+    FilePath = riak_core_test_util:get_test_dir("replrtq_eunit"),
     OFlowQs = [{?QN1, empty_overflow_queue(?QN1, FilePath)}],
     fetch_from_overflow(?RTQ_PRIORITY, ?QN1, OFlowQs, {queue:new(), 0, 2}),
     {queue_empty, {_Q, 0, 0}, _OFQ} =

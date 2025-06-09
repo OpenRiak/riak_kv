@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_kv_queue_manager: A behaviour for a worker managing a queue
@@ -17,15 +18,11 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc A behaviour for a worker managing a queue, where the queue will
 %% overflow to disk
-
+%%
 -module(riak_kv_queue_manager).
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -behaviour(gen_server).
 
 -export([init/1,
@@ -50,6 +47,10 @@
         stop_job/1
     ]
 ).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -define(REDO_PRIORITY, 1).
 -define(REQUEST_PRIORITY, 2).
@@ -291,7 +292,7 @@ create_queue(RootPath, Module)->
 -ifdef(TEST).
 
 format_status_test() ->
-    RootPath = riak_kv_test_util:get_test_dir("reaper_format_status/"),
+    RootPath = riak_core_test_util:get_test_dir("reaper_format_status"),
     {ok, P} = start_job(1, riak_kv_reaper, RootPath),
     {status, P, {module, gen_server}, SItemL} = sys:get_status(P),
     S = lists:keyfind(state, 1, lists:nth(5, SItemL)),

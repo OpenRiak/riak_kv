@@ -1,8 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_multi_backend: switching between multiple storage engines
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2023-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,7 +19,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc riak_kv_multi_backend allows you to run multiple backends within a
 %% single Riak instance. The 'backend' property of a bucket specifies
 %% the backend in which the object should be stored. If no 'backend'
@@ -50,7 +50,6 @@
 %%     riak_core_bucket:set_bucket(<<"MY_BUCKET">>, [{backend, second_backend}])
 %% '''
 %%
-
 -module (riak_kv_multi_backend).
 -behavior(riak_kv_backend).
 
@@ -665,7 +664,7 @@ backend_can_index_reformat(Mod, ModState) ->
 -ifdef(TEST).
 
 multi_backend_test_() ->
-    BPath = riak_kv_test_util:get_test_dir("bitcask-backend"),
+    BPath = riak_core_test_util:get_test_dir("bitcask-backend"),
     {foreach,
      fun() ->
              crypto:start(),
@@ -781,11 +780,11 @@ prop_multi_backend_async_fold() ->
 setup() ->
     %% Start the ring manager...
     crypto:start(),
-    CDPath = riak_kv_test_util:get_test_dir("core/data"),
-    CLPath = riak_kv_test_util:get_test_dir("core/log"),
+    CDPath = riak_core_test_util:get_test_dir("core/data"),
+    CLPath = riak_core_test_util:get_test_dir("core/log"),
     application:set_env(riak_core, platform_data_dir, CDPath),
     application:set_env(riak_core, platform_log_dir, CLPath),
-    error_logger:tty(false),
+    logger:set_primary_config(level, none),
     {ok, P1} = riak_core_ring_events:start_link(),
     {ok, P2} = riak_core_ring_manager:start_link(test),
 
@@ -822,16 +821,14 @@ async_fold_config() ->
 %% Check extra callback messages are ignored by backends
 extra_callback_test() ->
     %% Have to do some prep for bitcask
-    BPath = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    EPath = riak_kv_test_util:get_test_dir("eleveldb-backend"),
+    BPath = riak_core_test_util:get_test_dir("bitcask-backend", true),
+    EPath = riak_core_test_util:get_test_dir("eleveldb-backend", true),
 
     application:load(bitcask),
-    ?assertCmd("rm -rf " ++ BPath ++ "/*"),
     application:set_env(bitcask, data_root, BPath),
 
     %% Have to do some prep for eleveldb
     application:load(eleveldb),
-    ?assertCmd("rm -rf " ++ EPath ++ "/*"),
     application:set_env(eleveldb, data_root, EPath),
 
     %% Start up multi backend

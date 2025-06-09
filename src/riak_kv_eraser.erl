@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_kv_eraser: Process for queueing and applying delete requests
@@ -17,22 +18,13 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% riak_kv_eraser: Process for queueing and applying delete requests
 %% @doc Queue up and act on delete requests, such as delete requests prompted
 %% by aae_folds
-
+%%
 -module(riak_kv_eraser).
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--export([start_link/1]).
--endif.
-
 -behaviour(riak_kv_queue_manager).
-
--define(QUEUE_LIMIT, 100000).
--define(OVERFLOW_LIMIT, 10000000).
--define(REDO_TIMEOUT, 2000).
--define(DELETE_TIMEOUT, 10000).
 
 -export([start_link/0,
             start_job/1,
@@ -51,14 +43,23 @@
             get_limits/0,
             redo/0]).
 
+-export_type([delete_reference/0, job_id/0]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-export([start_link/1]).
+-endif.
+-include_lib("kernel/include/logger.hrl").
+
+-define(QUEUE_LIMIT, 100000).
+-define(OVERFLOW_LIMIT, 10000000).
+-define(REDO_TIMEOUT, 2000).
+-define(DELETE_TIMEOUT, 10000).
+
 -type delete_reference() ::
     {{riak_object:bucket(), riak_object:key()}, vclock:vclock()}.
 
 -type job_id() :: pos_integer().
-
--export_type([delete_reference/0, job_id/0]).
-
--include_lib("kernel/include/logger.hrl").
 
 %%%============================================================================
 %%% API
@@ -193,7 +194,7 @@ standard_eraser_test_() ->
 
 standard_eraser_tester() ->
     NumberOfRefs = 1000,
-    {ok, Pid} = start_link(riak_kv_test_util:get_test_dir("std_eraser")),
+    {ok, Pid} = start_link(riak_core_test_util:get_test_dir("std_eraser")),
     ?assert(is_process_alive(Pid)),
     ok = gen_server:call(Pid, {override_action, fun test_100delete/2}),
     B = {<<"type1">>, <<"B1">>},
