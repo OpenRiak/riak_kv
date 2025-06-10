@@ -65,7 +65,7 @@ To find an exact match on a subset of the provided data (e.g. Date Of Birth = 19
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qfn" : "SMITH", "qgn" : "ANNE"}],
+        "substitutions" : {"dl1" : "|", "dl2" : ".", "qfn" : "SMITH", "qgn" : "ANNE"},
         "query_list" :
             [
                 {
@@ -100,7 +100,7 @@ Note that, in this particular case, there would be a significant performance imp
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qgn" : "ANNE"}],
+        "substitutions" : {"dl1" : "|", "dl2" : ".", "qgn" : "ANNE"},
         "query_list" :
             [
                 {
@@ -138,7 +138,7 @@ If for the same query it is require to have an inexact match (e.g. Born between 
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qfn_begins" : "SM", "qgn" : "ANNE", "qbd" : "0501"}],
+        "substitutions" : {"dl1" : "|", "dl2" : ".", "qfn_begins" : "SM", "qgn" : "ANNE", "qbd" : "0501"},
         "query_list" :
             [
                 {
@@ -178,7 +178,7 @@ This query should filter family names based on a "fn_regex" provided in the subs
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "dl2" : ".", "qgn" : "ANNE", "fn_regex" : "(?P<fn_match>SM[A-Z]+KOWSKI)"}],
+        "substitutions" : {"dl1" : "|", "dl2" : ".", "qgn" : "ANNE", "fn_regex" : "(?P<fn_match>SM[A-Z]+KOWSKI)"},
         "query_list" :
             [
                 {
@@ -249,7 +249,7 @@ This strategy requires more index entries, but potentially simpler and more powe
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531"}],
+        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531"},
         "query_list" :
             [
                 {
@@ -267,7 +267,7 @@ The query definition above will search for every SMITH born in the first 6 month
 
 ```json
     {
-        "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"}],
+        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"},
         "query_list" :
             [
                 {
@@ -288,7 +288,7 @@ If a compound query is required, while this can be managed on a single query wit
 ```json
     {
         "aggregation_expression" : "$1 INTERSECT $2",
-        "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"}],
+        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"},
         "query_list" :
             [
                 {
@@ -358,7 +358,7 @@ If the same results are required, but this time a count by age at today's date (
 
 ```json
     {
-        "substitutions" : [{"current_date" : "0530", "current_year" : 2025, "previous_year" : 2024}],
+        "substitutions" : {"current_date" : "0530", "current_year" : 2025, "previous_year" : 2024},
         "accumulation_option" : "term_with_matchcount",
         "accumulation_term" : "$age",
         "query_list" :
