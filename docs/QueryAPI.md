@@ -63,7 +63,7 @@ So a sample person born on 1st May 1965, with current family name of SMITH; know
 
 To find an exact match on a subset of the provided data (e.g. Date Of Birth = 19650501, FamilyName = SMITH, GivenName = ANNE), the following query could be used:
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "dl2" : ".", "qfn" : "SMITH", "qgn" : "ANNE"}],
         "query_list" :
@@ -98,7 +98,7 @@ The filter expression does not need to qualify the date of birth, as this is alr
 
 Note that, in this particular case, there would be a significant performance improvement by rewriting the query as:
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "dl2" : ".", "qgn" : "ANNE"}],
         "query_list" :
@@ -116,7 +116,7 @@ Note that, in this particular case, there would be a significant performance imp
 
 The query could be further optimised as this (although in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE):
 
-```
+```json
     {
         "query_list" :
             [
@@ -136,7 +136,7 @@ Building such optimisations into queries can add significant complications to ap
 
 If for the same query it is require to have an inexact match (e.g. Born between between 1965 and 1970, birthday of 1st May, Family name of SM*, Given name of ANNE), the following query could be used:
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "dl2" : ".", "qfn_begins" : "SM", "qgn" : "ANNE", "qbd" : "0501"}],
         "query_list" :
@@ -176,7 +176,7 @@ There exists a regex based evaluation function that can be used as a pseudo filt
 
 This query should filter family names based on a "fn_regex" provided in the substitutions. 
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "dl2" : ".", "qgn" : "ANNE", "fn_regex" : "(?P<fn_match>SM[A-Z]+KOWSKI)"}],
         "query_list" :
@@ -247,7 +247,7 @@ So for a sample person, the index entries could be:
 
 This strategy requires more index entries, but potentially simpler and more powerful querying.
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531"}],
         "query_list" :
@@ -265,7 +265,7 @@ This strategy requires more index entries, but potentially simpler and more powe
 
 The query definition above will search for every SMITH born in the first 6 months of 1964.  Note that the delimiter chosen ("|") is after all the standard text characters in the ASCII table (char 124), so that this will match on only the complete name SMITH, where as `"start_term" : "SMITH"` would also match on any surname starting SMITH.
 
-```
+```json
     {
         "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"}],
         "query_list" :
@@ -285,7 +285,7 @@ The query definition above will search for anyone who was born in the first 6 mo
 
 If a compound query is required, while this can be managed on a single query with strategy (1) as index terms are pre-concatenated - an aggregation expression is required now to search for only the SMITHs that meet the address criteria.
 
-```
+```json
     {
         "aggregation_expression" : "$1 INTERSECT $2",
         "substitutions" : [{"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"}],
@@ -338,7 +338,7 @@ So are test record may have an entry like:
 
 So if today's date is 30 May 2025, and one wishes to count all the female smokers over the age of 60 registered in SHA001
 
-```
+```json
     {
         "accumulation_option" : "match_count",
         "query_list" :
@@ -348,7 +348,7 @@ So if today's date is 30 May 2025, and one wishes to count all the female smoker
                     "start_term" : "SHA001",
                     "end_term"   : "SHA001~",
                     "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker)",
-                    "filter_expression" : "($dob <= 19650530) AND ($agc = "F") AND ($smoker = "Y")"
+                    "filter_expression" : "($dob <= 19650530) AND ($agc = \"F\") AND ($smoker = \"Y\")"
                 }
             ]
     }
@@ -356,7 +356,7 @@ So if today's date is 30 May 2025, and one wishes to count all the female smoker
 
 If the same results are required, but this time a count by age at today's date (30th May 2025):
 
-```
+```json
     {
         "substitutions" : [{"current_date" : "0530", "current_year" : 2025, "previous_year" : 2024}],
         "accumulation_option" : "term_with_matchcount",
@@ -367,14 +367,8 @@ If the same results are required, but this time a count by age at today's date (
                     "index_name" : "healthreport_bin",
                     "start_term" : "SHA001",
                     "end_term"   : "SHA001~",
-                    "evaluation_expression" : 
-                    "
-                        index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker) |
-                        index($dob, 0, 4, $yob) | to_integer($yob, $yob) | index($dob, 4, 4, $birthday) |
-                        map($birthday, <=, ((:current_date, :current_year)), :previous_year, $yoc) |
-                        subtract($yoc, $yob, $age) | to_string($age, $age)
-                    ",
-                    "filter_expression" : "($dob <= 19650530) AND ($agc = "F") AND ($smoker = "Y")"
+                    "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker) | index($dob, 0, 4, $yob) | to_integer($yob, $yob) | index($dob, 4, 4, $birthday) | map($birthday, <=, ((:current_date, :current_year)), :previous_year, $yoc) | subtract($yoc, $yob, $age) | to_string($age, $age)",
+                    "filter_expression" : "($dob <= 19650530) AND ($agc = \"F\") AND ($smoker = \"Y\")"
                 }
             ]
     }
