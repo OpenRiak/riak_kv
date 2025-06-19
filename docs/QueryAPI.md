@@ -249,7 +249,7 @@ This strategy requires more index entries, but potentially simpler and more powe
 
 ```json
     {
-        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531"},
+        "substitutions" : {"dl1" : "|", "low_dob" : "19650101", "high_dob" : "19650531"},
         "query_list" :
             [
                 {
@@ -267,7 +267,7 @@ The query definition above will search for every SMITH born in the first 6 month
 
 ```json
     {
-        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"},
+        "substitutions" : {"dl1" : "|", "low_dob" : "19650101", "high_dob" : "19650531", "effective_date" : "19800101"},
         "query_list" :
             [
                 {
@@ -288,7 +288,7 @@ If a compound query is required, while this can be managed on a single query wit
 ```json
     {
         "aggregation_expression" : "$1 INTERSECT $2",
-        "substitutions" : {"dl1" : "|", "low_dob" : "19640101", "high_dob" : "19640531", "effective_date" : "19800101"},
+        "substitutions" : {"dl1" : "|", "low_dob" : "19650101", "high_dob" : "19650531", "effective_date" : "19800101"},
         "query_list" :
             [
                 {
@@ -340,15 +340,15 @@ So if today's date is 30 May 2025, and one wishes to count all the female smoker
 
 ```json
     {
-        "accumulation_option" : "match_count",
+        "accumulation_option" : "raw_count",
         "query_list" :
             [
                 {
                     "index_name" : "healthreport_bin",
-                    "start_term" : "SHA001",
-                    "end_term"   : "SHA001~",
-                    "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker)",
-                    "filter_expression" : "($dob <= 19650530) AND ($agc = \"F\") AND ($smoker = \"Y\")"
+                    "start_term" : "SHA0001",
+                    "end_term"   : "SHA0001~",
+                    "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc) | index($term, 24, 1, $smoker)",
+                    "filter_expression" : "($dob <= \"19650530\") AND ($agc = \"F\") AND ($smoker = \"Y\")"
                 }
             ]
     }
@@ -358,17 +358,17 @@ If the same results are required, but this time a count by age at today's date (
 
 ```json
     {
-        "substitutions" : {"current_date" : "0530", "current_year" : 2025, "previous_year" : 2024},
-        "accumulation_option" : "term_with_matchcount",
+        "substitutions" : {"current_date" : "0530"},
+        "accumulation_option" : "term_with_rawcount",
         "accumulation_term" : "$age",
         "query_list" :
             [
                 {
                     "index_name" : "healthreport_bin",
-                    "start_term" : "SHA001",
-                    "end_term"   : "SHA001~",
-                    "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc), | index($term, 24, 1, $smoker) | index($dob, 0, 4, $yob) | to_integer($yob, $yob) | index($dob, 4, 4, $birthday) | map($birthday, <=, ((:current_date, :current_year)), :previous_year, $yoc) | subtract($yoc, $yob, $age) | to_string($age, $age)",
-                    "filter_expression" : "($dob <= 19650530) AND ($agc = \"F\") AND ($smoker = \"Y\")"
+                    "start_term" : "SHA0001",
+                    "end_term"   : "SHA0001~",
+                    "evaluation_expression" : "index($term, 15, 8, $dob) | index($term, 23, 1, $agc) | index($term, 24, 1, $smoker) | index($dob, 0, 4, $yob) | to_integer($yob, $yob) | index($dob, 4, 4, $birthday) | map($birthday, <=, ((:current_date, 2025)), 2024, $yoc) | subtract($yoc, $yob, $age) | to_string($age, $age)",
+                    "filter_expression" : "($dob <= \"19650530\") AND ($agc = \"F\") AND ($smoker = \"Y\")"
                 }
             ]
     }
@@ -401,8 +401,8 @@ aggregation_expression (optional)
 - If multiple queries are to be run, the aggregation expression is used to inform the database how those results should be combined, using $1, $2 etc to refer to the numeric aggregation_tag for each query - with the key words UNION, INTERSECT and SUBTRACT to show how the sets of results are to be combined.  Parenthesis may be used for clarity. e.g. ($1 INTERSECT $2) UNION ($3 SUBTRACT $1)
 
 accumulation_option (optional - default = keys)
-- There are six options for accumulating the results from a single query:  keys (return a list of keys), term_with_keys (return a list of term/key tuples), match_count (return a count of the matches made), key_count (return a count of unique keys matched), term_with_matchcount/term_with_keycount (return a map of term to either count of matches, or count of unique keys).  If an aggregation_expression is used, only keys, key_count and match_count are valid accumulation options.
-- match counts are generally more efficient than key counts, so if it is possible to reason that duplicate keys are not an issue (i.e. there is only one index entry per key), then match_count should be used in preference to key_count.
+- There are six options for accumulating the results from a single query:  keys (return a list of keys), term_with_keys (return a list of term/key tuples), raw_count (return a count of the matches made, without de-duplicating those matches), count (return a count of unique keys matched), term_with_rawcount/term_with_count (return a map of term to either count of matches, or count of unique keys).  If an aggregation_expression is used, only keys, count and raw_count are valid accumulation options.
+- raw counts are generally more efficient than key counts, so if it is possible to reason that duplicate keys are not an issue (i.e. there is only one index entry per key), then raw_count should be used in preference to key_count.
 
 accumulation_term (optional - default = $term)
 - When using an accumulation option of term_with_keys, term_with_matchcount or term_with_keycount which term in the evaluated index term should be used. The default is $term - the whole term.  However a projected attribute extracted in the evaluation expression may be used instead.  
@@ -414,7 +414,7 @@ continuation (optional)
 - A string returned from a previous query constrained by max_results, used to indicate the starting point for the next page of results.
 
 substitutions (optional)
-- An array of key/value pairs that match string that are referred to in queries to substitution values that should replace those keys in the query. e.g. {"low_dob" : "19550301", "high_dob" : "19560630"} can be passed as substitutions to populate an evaluation of "$dob" BETWEEN ":low_dob" AND ":high_dob".
+- An array of key/value pairs that match string that are referred to in queries to substitution values that should replace those keys in the query. e.g. {"low_dob" : "19550301", "high_dob" : "19560630"} can be passed as substitutions to populate an evaluation of "$dob" BETWEEN ":low_dob" AND ":high_dob".  The values of substitutions should all be strings.
 
 timeout (optional)
 - The timeout in seconds to wait for the query to complete, before a timeout error is returned.
