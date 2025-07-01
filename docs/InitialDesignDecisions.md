@@ -37,7 +37,7 @@ Use of multi-backend should generally be avoided.  It may specifically be used t
 The leveled backend has the following characteristics and features:
 - Pure erlang log-structured-merge (LSM) tree backend, designed and developed specifically for use within Riak.
   - Implementation in Erlang simplifies resource management as CPU scheduling of all Riak activity is under the control of the Erlang virtual machine.  
-- Differs from most other LSM implementations in that values are set-aside in a sequence-ordered journal, and only keys and metadata are placed in key-ordered the LSM-based ledger.  This provides for lower cost and more efficient reads when only keys and metadata is required (which in riak is internally usually the case, even when the external user requires the value).  It also reduces the overhead of write amplification, supporting more efficiently larger object sizes.
+- Differs from most other LSM implementations in that values are set-aside in a sequence-ordered journal, and only keys and metadata are placed in key-ordered the LSM-based ledger.  This provides for lower cost and more efficient reads when only keys and metadata is required (which in Riak is internally usually the case, even when the external user requires the value).  It also reduces the overhead of write amplification, supporting more efficiently larger object sizes.
 - Specific internal optimisations to increase efficiency within Riak for Tictac-based method of anti-entropy and inter-cluster reconciliation.
 - Supports index entries as well as objects in the key-ordered ledger, to allow full use of the Riak query API.
 - Is the priority backend used within the OpenRiak community for both functional and non-functional testing of new releases.
@@ -201,13 +201,18 @@ The delete mode is a per-node configuration which needs to be applied consistent
 
 ## Mapping data to objects - making a choice
 
-Buckets and bucket types
-Object size - store whole / discard part
-Distribution of access to keys
-Query planning
-Object format
+The most important design decision is how to map the data requirements in a project to objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions - but there is some general guidance that tends to be helpful in most cases:
+
+- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is is to fetch multiple objects to fulfill a single application data demand - where possible make the most common read requests fulfilled via a single object read request.
+- By default always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`.
+- Eventually parallel writes will occur, and siblings will exist.  Siblings can be minimised using conditional PUTs, if sibling resolution is complex or requires manual intervention.  Use aae_folds feeding operator dashboards ot track the generation of siblings.  To auto-resolve siblings CRDTs (conflict-free replicated data types) can be used, and third-party client-side libraries are generally a better long-term option than using Riak's internal CRDTs.
+- Values can be large, especially when using the leveled backend.  Objects significantly in excess of 1MB are not in themselves likely to cause a direct performance issue.  Values are compressed before being persisted to disk (unless compression is disabled), when using the leveled-backend, so pre-compression is not necessary unless network bandwidth is a significant factor.
+- Specialist data-types (e.g. conflict-free replicated data types) do not scale well as the objects grow.  The values of CRDTs (e.g. set sizes) should be kept small.
+- There are three aspects to the object key - bucket type, bucket and key.  Bucket types simply allow for bucket metadata to be reduced, as the properties of the bucket are stored once in the type, not multiple times for each bucket: however there is no flexibility in the relationship between types and buckets (i.e. a bucket cannot change its type in the future).  In general scaling the number of buckets and bucket-types adds cognitive load for the developer and operator, especially if bucket properties are used to vary behaviour between different objects.
+- Avoid single hot keys that are more frequently accessed (either for read or write) than any other key.
+- Plan index entries for future query needs.  Conjunction queries are possible across indexes as of Riak 3.4 Query API, but best performance is generally met by pre-concatenating index terms and running range queries with filters on concatenated terms.
+- For very frequently demanded queries, and where false negatives are not tolerable but false positives are - the use of direct index objects managed by the application is preferred over the use of secondary indexes.
 
 ## Mapping data to objects - changing the choice
 
-something about versioning - and lazy migration
-changing bucket properties on buckets with data
+Riak is designed to be agnostic to the format of the data, the schema belongs to the application and not the database.  It is therefore necessary to plan for schema migration within the application - detecting the schema version for an object, finding objects within a given schema version, updating a schema version in parallel to other application activity.  It is strongly recommended a lazy migration strategy is used whereby the application can roll forward each object to the latest version on GET, without necessarily updating the persisted version.  
