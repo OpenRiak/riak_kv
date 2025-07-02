@@ -1,12 +1,12 @@
 When starting with Riak a number of initial design decisions need to be made at the outset of the project.  This is a summary of those decisions, and the factors relevant to making each choice.
 
 The initial design decisions are split into the following categories:
-- Database backend
-- Ring size
-- Intra-cluster data resilience
-- Interconnecting multiple clusters
-- Deleting data
-- Mapping data to objects
+- [Database backend](#database-backend)
+- [Ring size](#ring-size)
+- [Intra-cluster data resilience](#intra-cluster-data-resilience)
+- [Interconnecting multiple clusters](#interconnecting-multiple-clusters)
+- [Deleting data](#deleting-data)
+- [Mapping data to objects](#mapping-data-to-objects)
 
 In addition to making a choice, it is also necessary to consider how to transition when a sub-optimal choice has been made.
 
