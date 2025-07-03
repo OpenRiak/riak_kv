@@ -1533,6 +1533,9 @@
 %% In exceptional circumstances this definition can be extended to
 %% queuename:host:port:protocol - but restricting the definitions of queuename
 %% to the single queue specified in replrtq_sinkqueue is strongly recommended.
+%% ipv6 addresses may be used (using `:` to split address parts), but this
+%% does require that queuenames must never include a delimiter (either `|` or
+%% `:`)
 {mapping, "replrtq_sinkpeers", "riak_kv.replrtq_sinkpeers", [
     {datatype, string},
     {commented, "127.0.0.1:8087:pb"}
