@@ -47,7 +47,9 @@
          process/2,
          process/3,
          process_stream/3,
-         process_stream/4]).
+         process_stream/4,
+         handle_metrics/2
+        ]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -198,6 +200,8 @@ process_stream({pipe_timeout, Ref}, Ref,
 
 process_stream(_,_,State,_) -> % Ignore any late replies from gen_servers/messages from fsms
     {ignore, State}.
+
+handle_metrics(_, _) -> ok.
 
 
 %% ===================================================================

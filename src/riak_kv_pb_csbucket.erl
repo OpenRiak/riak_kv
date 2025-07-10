@@ -45,7 +45,9 @@
          process/2,
          process/3,
          process_stream/3,
-         process_stream/4]).
+         process_stream/4,
+         handle_metrics/2
+        ]).
 
 -record(state, {client, req_id, req, continuation, result_count=0}).
 
@@ -132,6 +134,8 @@ process_stream({ReqId, Error}, ReqId, State=#state{req_id=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req_id=undefined}};
 process_stream(_,_,State,_) ->
     {ignore, State}.
+
+handle_metrics(_, _) -> ok.
 
 encode_result(B, {K, V}) ->
     RObj = riak_object:from_binary(B, K, V),

@@ -41,6 +41,8 @@
 -module(riak_kv_pb_bucket).
 
 -type optional(A) :: A | undefined.
+
+-include_lib("kernel/include/logger.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 
 -behaviour(riak_api_pb_service).
@@ -52,6 +54,7 @@
          process/3,
          process_stream/3,
          process_stream/4,
+         handle_metrics/2,
          bucket_type/2,
          maybe_create_bucket_type/2]).
 
@@ -225,6 +228,16 @@ process_stream({ReqId, Error}, ReqId,
                State=#state{ req=#rpblistbucketsreq{}, req_ctx=ReqId}, _Options) ->
     {error, {format, Error}, State#state{req = undefined, req_ctx = undefined}}.
 
+handle_metrics(_Message, #{req_end_time := undefined}) ->
+    ok;
+handle_metrics(#rpblistbucketsreq{}, _Metrics) ->
+    riak_kv_stat:update({pb_client, list_buckets});
+handle_metrics(#rpblistkeysreq{}, #{req_start_time := Start, req_end_time := End}) ->
+    ElapsedUs = erlang:convert_time_unit(End - Start, native, microsecond),
+    riak_kv_stat:update({pb_client, list_keys, ElapsedUs});
+handle_metrics(Message, _Metrics) ->
+    ?LOG_ERROR("Unhandled metrics for message: ~p", [Message]),
+    ok.
 
 -spec do_list_buckets(binary(), optional(pos_integer()), optional(boolean()), #rpblistbucketsreq{}, #state{}) ->
                              {reply, tuple(), #state{}} |

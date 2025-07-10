@@ -53,7 +53,9 @@
          process/2,
          process/3,
          process_stream/3,
-         process_stream/4]).
+         process_stream/4,
+         handle_metrics/2
+        ]).
 
 -record(state, {client :: riak_client:riak_client()}).
 
@@ -260,6 +262,8 @@ process_stream(_,_,State) ->
 
 process_stream(_,_,State,_) ->
     {ignore, State}.
+
+handle_metrics(_, _) -> ok.
 
 %% Construct a {Type, Bucket} tuple, if not working with the default bucket
 maybe_bucket_type(undefined, B) ->

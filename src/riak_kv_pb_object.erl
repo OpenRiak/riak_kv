@@ -70,7 +70,9 @@
          process/2,
          process/3,
          process_stream/3,
-         process_stream/4]).
+         process_stream/4,
+         handle_metrics/2
+        ]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -164,6 +166,12 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
         make_option(basic_quorum, BQ) ++
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
+    StatsKey = case Head of
+        true ->
+            heads;
+        _ ->
+            gets
+    end,
     riak_kv_stat:update(pb_get_request),
     case riak_core_util:evaluate_timeouts(Options) of
         {true, UpdatedOptions} ->
@@ -196,12 +204,12 @@ process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
                 {error, notfound} ->
                     {reply, #rpbgetresp{}, State};
                 {error, Reason} = Resp ->
-                    update_error_stat(gets, Resp),
+                    update_error_stat(StatsKey, Resp),
                     {error, {format, Reason}, State}
             end;
         {false, _} ->
             ?LOG_ERROR("Not bothering to call riak_client:get because of timeout"),
-            update_error_stat(gets, {error, timeout}),
+            update_error_stat(StatsKey, {error, timeout}),
             {error, {format, timeout}, State}
     end;
 
@@ -622,6 +630,26 @@ process_stream(_,_,State) ->
 process_stream(_,_,State,_) ->
     {ignore, State}.
 
+handle_metrics(#rpbgetreq{head = true}, Metrics) ->
+    update_stat(heads, Metrics);
+handle_metrics(#rpbgetreq{}, Metrics) ->
+    update_stat(gets, Metrics);
+handle_metrics(#rpbputreq{}, Metrics) ->
+    update_stat(puts, Metrics);
+handle_metrics(#rpbdelreq{}, Metrics) ->
+    update_stat(deletes, Metrics);
+handle_metrics(#rpbclonereq{delete_src = true}, Metrics) ->
+    update_stat(moves, Metrics);
+handle_metrics(#rpbclonereq{}, Metrics) ->
+    update_stat(copies, Metrics);
+handle_metrics(Message, _Metrics) ->
+    ?LOG_ERROR("Unhandled metrics for message: ~p", [Message]),
+    ok.
+
+update_stat(Action, #{req_start_time := Start, req_end_time := End}) ->
+    ElapsedUs = erlang:convert_time_unit(End - Start, native, microsecond),
+    riak_kv_stat:update({pb_client, Action, ElapsedUs}).
+
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
@@ -790,6 +818,7 @@ bucket_type(T, B) ->
 update_error_stat(Action, Resp)
     when (is_tuple(Resp) andalso tuple_size(Resp) >= 2 andalso element(1, Resp) =:= error)
          andalso (Action =:= gets
+                  orelse Action =:= heads
                   orelse Action =:= puts
                   orelse Action =:= deletes
                   orelse Action =:= moves

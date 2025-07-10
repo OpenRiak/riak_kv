@@ -340,9 +340,19 @@ do_update(write_once_merge) ->
 do_update({BackendInstanceName, {expired_keys, NumKeys, Bytes}}) ->
     exometer:update([?PFX, ?APP, expired_keys, BackendInstanceName], NumKeys),
     exometer:update([?PFX, ?APP, expired_bytes, BackendInstanceName], Bytes);
+do_update({pb_client, list_buckets}) ->
+    ok = exometer:update([?PFX, ?APP, node, pb_client, list_buckets], 1);
+do_update({pb_client, Action, USecs}) ->
+    case lists:member(Action, [gets, heads, puts, deletes, moves, copies, list_keys]) of
+        true ->
+            ok = exometer:update([?PFX, ?APP, node, pb_client, Action], 1),
+            ok = create_or_update([?PFX, ?APP, node, pb_client, Action, time], USecs, histogram);
+        _ ->
+            ?LOG_ERROR("`pb_client` stat not handled: ~p", [Action])
+    end;
 do_update({pb_client_error, Action, Type}) when Type =:= general;
                                                 Type =:= timeout ->
-    case lists:member(Action, [gets, puts, deletes, moves, copies]) of
+    case lists:member(Action, [gets, heads, puts, deletes, moves, copies]) of
         true ->
             ok = exometer:update([?PFX, ?APP, node, pb_client, Action, errors, Type], 1);
         _ ->
@@ -631,11 +641,15 @@ stats() ->
                                                   {99    , vnode_map_update_time_99},
                                                   {max   , vnode_map_update_time_100}]},
 
-     %% node stats: errors
+     %% node pb stats: errors
      {[node, pb_client, gets, errors, general], spiral, [], [{one, node_pb_client_get_errors},
                                                           {count, node_pb_client_get_errors_total}]},
      {[node, pb_client, gets, errors, timeout], spiral, [], [{one, node_pb_client_get_errors_timeouts},
                                                           {count, node_pb_client_get_errors_timeouts_total}]},
+     {[node, pb_client, heads, errors, general], spiral, [], [{one, node_pb_client_head_errors},
+                                                          {count, node_pb_client_head_errors_total}]},
+     {[node, pb_client, heads, errors, timeout], spiral, [], [{one, node_pb_client_head_errors_timeouts},
+                                                          {count, node_pb_client_head_errors_timeouts_total}]},
      {[node, pb_client, puts, errors, general], spiral, [], [{one, node_pb_client_put_errors},
                                                           {count, node_pb_client_put_errors_total}]},
      {[node, pb_client, puts, errors, timeout], spiral, [], [{one, node_pb_client_put_errors_timeouts},
@@ -652,6 +666,65 @@ stats() ->
                                                           {count, node_pb_client_copy_errors_total}]},
      {[node, pb_client, copies, errors, timeout], spiral, [], [{one, node_pb_client_copy_errors_timeouts},
                                                           {count, node_pb_client_copy_errors_timeouts_total}]},
+
+     {[node, pb_client, gets], spiral, [], [{one  , node_pb_client_get},
+                                        {count, node_pb_client_get_total}]},
+     {[node, pb_client, heads], spiral, [], [{one  , node_pb_client_head},
+                                        {count, node_pb_client_head_total}]},
+     {[node, pb_client, puts], spiral, [], [{one  , node_pb_client_put},
+                                        {count, node_pb_client_put_total}]},
+     {[node, pb_client, deletes], spiral, [], [{one  , node_pb_client_delete},
+                                        {count, node_pb_client_delete_total}]},
+     {[node, pb_client, moves], spiral, [], [{one  , node_pb_client_move},
+                                        {count, node_pb_client_move_total}]},
+     {[node, pb_client, copies], spiral, [], [{one  , node_pb_client_copy},
+                                        {count, node_pb_client_copy_total}]},
+     {[node, pb_client, list_keys], spiral, [], [{one  , node_pb_client_list_key},
+                                        {count, node_pb_client_list_key_total}]},
+     {[node, pb_client, list_buckets], spiral, [], [{one  , node_pb_client_list_bucket},
+                                        {count, node_pb_client_list_bucket_total}]},
+     %% node pb stats: latencies
+     {[node, pb_client, gets, time], histogram, [], [{mean, node_pb_client_get_mean},
+                                                  {median, node_pb_client_get_median},
+                                                  {95    , node_pb_client_get_95},
+                                                  {99    , node_pb_client_get_99},
+                                                  {max   , node_pb_client_get_100}]},
+
+     {[node, pb_client, heads, time], histogram, [], [{mean, node_pb_client_head_mean},
+                                                  {median, node_pb_client_head_median},
+                                                  {95    , node_pb_client_head_95},
+                                                  {99    , node_pb_client_head_99},
+                                                  {max   , node_pb_client_head_100}]},
+
+     {[node, pb_client, puts, time], histogram, [], [{mean, node_pb_client_put_mean},
+                                                  {median, node_pb_client_put_median},
+                                                  {95    , node_pb_client_put_95},
+                                                  {99    , node_pb_client_put_99},
+                                                  {max   , node_pb_client_put_100}]},
+
+     {[node, pb_client, deletes, time], histogram, [], [{mean, node_pb_client_delete_mean},
+                                                  {median, node_pb_client_delete_median},
+                                                  {95    , node_pb_client_delete_95},
+                                                  {99    , node_pb_client_delete_99},
+                                                  {max   , node_pb_client_delete_100}]},
+
+     {[node, pb_client, moves, time], histogram, [], [{mean, node_pb_client_move_mean},
+                                                  {median, node_pb_client_move_median},
+                                                  {95    , node_pb_client_move_95},
+                                                  {99    , node_pb_client_move_99},
+                                                  {max   , node_pb_client_move_100}]},
+
+     {[node, pb_client, copies, time], histogram, [], [{mean, node_pb_client_copy_mean},
+                                                  {median, node_pb_client_copy_median},
+                                                  {95    , node_pb_client_copy_95},
+                                                  {99    , node_pb_client_copy_99},
+                                                  {max   , node_pb_client_copy_100}]},
+
+     {[node, pb_client, list_keys, time], histogram, [], [{mean, node_pb_client_list_key_mean},
+                                                  {median, node_pb_client_list_key_median},
+                                                  {95    , node_pb_client_list_key_95},
+                                                  {99    , node_pb_client_list_key_99},
+                                                  {max   , node_pb_client_list_key_100}]},
 
      %% node stats: timeouts
      {[node, puts, vnode_put_timeout], counter, [], [{value, vnode_put_timeout_total}]},
