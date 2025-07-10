@@ -871,10 +871,12 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                         fun(_RepairList) -> [] end;
                     PeerQueueName ->
                         {PeerClient, PeerMod} =
-                            init_client(State#state.peer_protocol,
-                                        State#state.peer_ip,
-                                        State#state.peer_port,
-                                        State#state.ssl_credentials),
+                            init_client(
+                                State#state.peer_protocol,
+                                State#state.peer_ip,
+                                State#state.peer_port,
+                                State#state.ssl_credentials
+                            ),
                         EncodeClockFun =
                             encode_clock_fun(State#state.peer_protocol),
                         EncodeKeyClockFun =
@@ -901,29 +903,38 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                     {ReqID0, Ref, WorkType}),
 
             ExchangePause =
-                app_helper:get_env(riak_kv,
-                                    tictacaae_exchangepause,
-                                    ?EXCHANGE_PAUSE_MS),
+                app_helper:get_env(
+                    riak_kv, tictacaae_exchangepause, ?EXCHANGE_PAUSE_MS),
             {ok, ExPid, ExID} =
-                aae_exchange:start(Ref,
-                                    [{LocalSendFun, all}],
-                                    [{RemoteSendFun, all}],
-                                    RepairFun,
-                                    ReplyFun,
-                                    Filter, 
-                                    [{transition_pause_ms, ExchangePause},
-                                        {max_results, MaxResults},
-                                        {scan_timeout, ?CRASH_TIMEOUT div 2},
-                                        {purpose, WorkType}]),
+                aae_exchange:start(
+                    Ref,
+                    [{LocalSendFun, all}],
+                    [{RemoteSendFun, all}],
+                    RepairFun,
+                    ReplyFun,
+                    Filter, 
+                    [
+                        {transition_pause_ms, ExchangePause},
+                        {max_results, MaxResults},
+                        {scan_timeout, ?CRASH_TIMEOUT div 2},
+                        {purpose, WorkType},
+                        {key_filter_fun, fun riak_kv_util:get_tree_exclude/1}
+                    ]
+                ),
             
-            ?LOG_INFO("Starting ~w full-sync work_item=~w " ++ 
-                                "reqid=~w exchange id=~s pid=~w",
-                            [Ref, WorkType, ReqID0, ExID, ExPid]),
+            ?LOG_INFO(
+                "Starting ~w full-sync "
+                "work_item=~w reqid=~w exchange id=~s pid=~w",
+                [Ref, WorkType, ReqID0, ExID, ExPid]
+            ),
             riak_kv_stat:update({ttaaefs, WorkType}),
-            
-            {State#state{bucket_list = NextBucketList,
-                            last_exchange_start = os:timestamp()},
-                ?CRASH_TIMEOUT}
+            {
+                State#state{
+                    bucket_list = NextBucketList,
+                    last_exchange_start = os:timestamp()
+                },
+                ?CRASH_TIMEOUT
+            }
     end.
 
 

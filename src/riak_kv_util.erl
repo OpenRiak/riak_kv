@@ -47,6 +47,7 @@
         gets_active/0,
         consistent_object/1,
         get_write_once/1,
+        get_tree_exclude/1,
         overload_reply/1,
         get_backend_config/3,
         is_modfun_allowed/2,
@@ -226,6 +227,48 @@ get_write_once(Bucket) ->
             lists:member({write_once, true}, Props);
         {error, _}=Err ->
             Err
+    end.
+
+%% @doc
+%% It is expected that long-lived processes will frequently check for the
+%% aae_tree_exclude property - so have a function (to be passed to
+%% aae_controller and aae_exchange) that allows for the results to be cached
+%% on the process dictionary (as with n_val fetch in riak_core_repair).
+%% 
+%% This does therefore require for a reset message to be processed by the
+%% function should this property change on a given bucket
+-spec get_tree_exclude(
+    {riak_object:bucket(), riak_object:key()}|reset) -> boolean()|ok.
+get_tree_exclude(reset) ->
+    erase(aae_cache_filter_map),
+    ok;
+get_tree_exclude({Bucket, _Key}) ->
+    CacheMap =
+        case get(aae_cache_filter_map) of
+            FilterMap when is_map(FilterMap) ->
+                FilterMap;
+            _ ->
+                maps:new()
+        end,
+    case maps:get(Bucket, CacheMap, not_cached) of
+        not_cached ->
+            TreeInclude =
+                case riak_core_bucket:get_bucket(Bucket) of
+                    Props when is_list(Props) ->
+                        R = not lists:member({aae_tree_exclude, true}, Props),
+                        put(
+                            aae_cache_filter_map,
+                            maps:put(Bucket, R, CacheMap)
+                        ),
+                        R;
+                    {error, _} ->
+                        %% Don't cache an error result, but assume the result
+                        %% should be in the filter
+                        true
+                end,
+            TreeInclude;
+        CachedResult ->
+            CachedResult
     end.
 
 -spec kv_ready() -> boolean().

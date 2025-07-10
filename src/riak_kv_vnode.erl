@@ -382,7 +382,8 @@ maybe_start_aaecontroller(active, State=#state{mod=Mod,
             RootPath, 
             ObjSplitFun,
             AAELogLevels,
-            UpdLeveledOpts
+            UpdLeveledOpts,
+            fun riak_kv_util:get_tree_exclude/1
         ),
     ?LOG_INFO("AAE Controller started with pid=~w", [AAECntrl]),
     
@@ -1265,24 +1266,33 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
             % This is normal.  On subsequent runs we expected to see expected
             % and complete to be aligned (and the loop duration with be about
             % expected * tictacaae_exchangetick).
-            ?LOG_INFO("Tictac AAE loop completed for partition=~w with "
-                            ++ "exchanges expected=~w "
-                            ++ "exchanges completed=~w "
-                            ++ "total deltas=~w "
-                            ++ "total exchange_time=~w seconds "
-                            ++ "loop duration=~w seconds (elapsed)",
-                        [Idx,
-                            length(Exchanges),
-                            State#state.tictac_exchangecount,
-                            State#state.tictac_deltacount,
-                            State#state.tictac_exchangetime div (1000 * 1000),
-                            LoopDuration div (1000 * 1000)]),
-            {noreply, State#state{tictac_exchangequeue =
-                                        riak_kv_util:shuffle_list(Exchanges),
-                                    tictac_exchangecount = 0,
-                                    tictac_deltacount = 0,
-                                    tictac_exchangetime = 0,
-                                    tictac_startqueue = Now}};
+            ?LOG_INFO(
+                "Tictac AAE loop completed for partition=~w with "
+                "exchanges expected=~w "
+                "exchanges completed=~w "
+                "total deltas=~w "
+                "total exchange_time=~w seconds "
+                "loop duration=~w seconds (elapsed)",
+                [
+                    Idx,
+                    length(Exchanges),
+                    State#state.tictac_exchangecount,
+                    State#state.tictac_deltacount,
+                    State#state.tictac_exchangetime div (1000 * 1000),
+                    LoopDuration div (1000 * 1000)
+                ]
+            ),
+            {
+                noreply,
+                State#state{
+                    tictac_exchangequeue =
+                        riak_kv_util:shuffle_list(Exchanges),
+                    tictac_exchangecount = 0,
+                    tictac_deltacount = 0,
+                    tictac_exchangetime = 0,
+                    tictac_startqueue = Now
+                }
+            };
         {[{Local, Remote, {DocIdx, N}}|Rest], 0} ->
             PrimaryOnly =
                 app_helper:get_env(riak_kv, tictacaae_primaryonly, true),
@@ -1321,21 +1331,30 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
                         
                         ?AAE_SKIP_COUNT;
                     _ ->
-                        ?LOG_WARNING("Proposed exchange between ~w and ~w " ++ 
-                                        "not currently supported within " ++
-                                        "preflist for IndexN=~w possibly " ++
-                                        "due to node failure",
-                                        [Local, Remote, {DocIdx, N}]),
-                            0
+                        ?LOG_WARNING(
+                            "Proposed exchange between ~w and ~w "
+                            "not currently supported within "
+                            "preflist for IndexN=~w possibly "
+                            "due to node failure",
+                            [Local, Remote, {DocIdx, N}]
+                        ),
+                        0
                 end,
-            ok = aae_controller:aae_ping(State#state.aae_controller,
-                                            os:timestamp(),
-                                            self()),
-            {noreply, State#state{tictac_exchangequeue = Rest,
-                                    tictac_skiptick = SkipCount}};
+            ok =
+                aae_controller:aae_ping(
+                    State#state.aae_controller, os:timestamp(), self()),
+            {
+                noreply,
+                State#state{
+                    tictac_exchangequeue = Rest,
+                    tictac_skiptick = SkipCount
+                }
+            };
         {_, SkipCount} ->
-            ?LOG_WARNING("Skipping a tick due to non_zero " ++
-                            "skip_count=~w", [SkipCount]),
+            ?LOG_WARNING(
+                "Skipping a tick due to non_zero skip_count=~w",
+                [SkipCount]
+            ),
             {noreply, State#state{tictac_skiptick = max(0, SkipCount - 1)}}
     end;
 
