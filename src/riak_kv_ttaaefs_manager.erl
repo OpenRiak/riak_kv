@@ -845,17 +845,17 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
             MaxResults =
                 case WorkType of
                     range_check ->
-                        RB = app_helper:get_env(riak_kv,
-                                                ttaaefs_rangeboost,
-                                                ?RANGE_BOOST),
-                        MR = app_helper:get_env(riak_kv,
-                                                ttaaefs_maxresults,
-                                                ?MAX_RESULTS),
+                        {RB, MR} =
+                            {
+                                app_helper:get_env(
+                                    riak_kv, ttaaefs_rangeboost, ?RANGE_BOOST),
+                                app_helper:get_env(
+                                    riak_kv, ttaaefs_maxresults, ?MAX_RESULTS)
+                            },
                         RB * MR;
                     _ ->
-                        app_helper:get_env(riak_kv,
-                                            ttaaefs_maxresults,
-                                            ?MAX_RESULTS)
+                        app_helper:get_env(
+                            riak_kv, ttaaefs_maxresults, ?MAX_RESULTS)
                 end,
             
             LocalRepairFun =
@@ -894,7 +894,13 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                             RepairList
                         end
                 end,
-
+            KeyFilter =
+                case Filter of
+                    none ->
+                        fun riak_kv_util:get_tree_exclude/1;
+                    _ ->
+                        fun(_BK) -> true end
+                end,
             RepairFun =
                 generate_repairfun(
                     LocalRepairFun,
@@ -918,7 +924,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                         {max_results, MaxResults},
                         {scan_timeout, ?CRASH_TIMEOUT div 2},
                         {purpose, WorkType},
-                        {key_filter_fun, fun riak_kv_util:get_tree_exclude/1}
+                        {key_filter_fun, KeyFilter}
                     ]
                 ),
             
