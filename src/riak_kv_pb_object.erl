@@ -134,13 +134,25 @@ process(#rpbgetreq{key = <<>>}, State) ->
     {error, "Key cannot be zero-length", State};
 process(#rpbgetreq{type = <<>>}, State) ->
     {error, "Type cannot be zero-length", State};
-process(#rpbgetreq{bucket=B0, type=T, key=K, r=R0, pr=PR0,
-                    notfound_ok=NFOk, node_confirms=NC,
-                    basic_quorum=BQ, if_modified=VClock,
-                    head=Head, deletedvclock=DeletedVClock,
-                    n_val=N_val, sloppy_quorum=SloppyQuorum,
-                    timeout=Timeout},
-            #state{client=C} = State) ->
+process(
+    #rpbgetreq{
+        bucket=B0,
+        type=T,
+        key=K,
+        r=R0,
+        pr=PR0,
+        notfound_ok=NFOk,
+        node_confirms=NC,
+        basic_quorum=BQ,
+        if_modified=VClock,
+        head=Head,
+        deletedvclock=DeletedVClock,
+        n_val=N_val,
+        sloppy_quorum=SloppyQuorum,
+        timeout=Timeout
+    },
+    #state{client=C} = State
+) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
     B = maybe_bucket_type(T, B0),
@@ -277,14 +289,27 @@ process(#rpbputreq{type = <<>>}, State) ->
     {error, "Type cannot be zero-length", State};
 process(
     #rpbputreq{
-        bucket=B0, type=T, key=K, vclock=PbVC,
+        bucket=B0,
+        type=T,
+        key=K,
+        vclock=PbVC,
         content=RpbContent,
-        w=W0, dw=DW0, pw=PW0,
-        n_val=N_val, sloppy_quorum=SloppyQuorum, node_confirms=NodeConfirms0,
-        return_body=ReturnBody, return_head=ReturnHead,
+        w=W0,
+        dw=DW0,
+        pw=PW0,
+        n_val=N_val,
+        sloppy_quorum=SloppyQuorum,
+        node_confirms=NodeConfirms0,
+        sync_on_write=SyncOnWrite0,
+        return_body=ReturnBody,
+        return_head=ReturnHead,
         timeout=Timeout,
-        asis=AsIs, if_not_modified=IfNotModified, if_none_match=IfNoneMatch},
-        #state{client=C} = State) ->
+        asis=AsIs,
+        if_not_modified=IfNotModified,
+        if_none_match=IfNoneMatch
+    },
+    #state{client=C} = State
+) ->
 
     B = maybe_bucket_type(T, B0),
     case K of
@@ -369,6 +394,17 @@ process(
             DW = decode_quorum(DW0),
             PW = decode_quorum(PW0),
             NodeConfirms = decode_quorum(NodeConfirms0),
+            SyncOnWrite =
+                case SyncOnWrite0 of
+                    undefined ->
+                        undefined;
+                    <<"one">> ->
+                        one;
+                    <<"backend">> ->
+                        backend;
+                    <<"all">> ->
+                        all
+                end,
             BodyOptions =
                 case ReturnBody of
                     1 -> [returnbody];
@@ -383,11 +419,18 @@ process(
                 CondPutOpts ++
                     BodyOptions ++
                     make_options(
-                        [{w, W}, {dw, DW}, {pw, PW},
+                        [
+                            {w, W},
+                            {dw, DW},
+                            {pw, PW},
                             {node_confirms, NodeConfirms},
-                            {timeout, Timeout}, {asis, AsIs},
+                            {sync_on_write, SyncOnWrite},
+                            {timeout, Timeout},
+                            {asis, AsIs},
                             {n_val, N_val},
-                            {sloppy_quorum, SloppyQuorum}]),
+                            {sloppy_quorum, SloppyQuorum}
+                        ]
+                    ),
             PutRsp =
                 case SessionToken of
                     none ->
