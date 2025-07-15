@@ -72,6 +72,8 @@ Setting distinct `n_val`s on a per-bucket basis is not recommended, it is prefer
 
 The value of `1` is sometimes used in read-only clusters, to reduce storage costs in clusters purposed for backups or offline-reporting.  The value of `5` is used only in very large clusters, either as the probability of concurrent failures requires higher redundancy, or because there is a need to improve the efficiency of secondary index queries.
 
+Changing an n_val on a bucket which already contains data will have unexpected and untested consequences, especially when contracting the n_val.
+
 ## node_confirms
 
 The `node_confirms` bucket property has a default value of `0`, and may be set to any non-negative integer less than or equal to the n_val (for that bucket).  The purpose of `node_confirms` is to offer a guarantee that the data is available on multiple machines, for example setting node_confirms to 2 will guarantee that at least two machines have the data - and the risk of the data being lost can be considered accordingly.
@@ -102,7 +104,9 @@ The purpose of `aae_tree_exclude` is to not include the bucket in the cached tre
 
 If a bucket is configured to `{aae_tree_exclude, true}` then the keys in that bucket are not added to the cached tree, and are not considered when running either inter-cluster or intra-cluster anti-entropy reconciliation jobs.  The keys are still visible to aae_folds, and if using parallel-mode tictacaae modification will still impact the parallel mode key store.
 
-The preferred long-term strategy for temporary objects is to use the eraser and reaper processes to garbage collect objects, rather than relying on backend TTL.  However when migrating from a multi-backend store with TTL-based backends, the migration should be easier if: those temporary buckets are excluded from aae trees, are replicated separately using range_repl, and reconciled using bucket-specific aae full-sync jobs. 
+The preferred long-term strategy for temporary objects is to use the eraser and reaper processes to garbage collect objects, rather than relying on backend TTL.  However when migrating from a multi-backend store with TTL-based backends, the migration should be easier if: those temporary buckets are excluded from aae trees, are replicated separately using range_repl, and reconciled using bucket-specific aae full-sync jobs.
+
+The `aae_tree_exclude` bucket property may be cached by processes within a cluster, so changing the property will not have immediate.  If changing the property it should be coordinated with a rolling restart.
 
 ## small_vclock
 
