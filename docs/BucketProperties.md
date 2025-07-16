@@ -128,7 +128,11 @@ There are two circumstances where setting `{notfound_ok, false}` may be used:
 
 The `pr` and `pw` bucket properties default to `0`, and are used to require primary vnodes to be involved in reads and writes.  This may prevent writing to minority partitions, however when `{n_val, 3}` this will probably lead to intermittent failures when only two nodes fail in a cluster.  As clusters grow the probability of two concurrent failures will increase significantly.
 
-It is strongly recommended to consider using `node_confirms`, `sync_on_write` or token-based conditional PUTs to achieve controls in preference to configuring `pr`/`pw`.
+It is strongly recommended to consider using `node_confirms`, `sync_on_write` or token-based conditional PUTs to achieve controls in preference to configuring `pr`/`pw` to values greater than 1.
+
+It is normally best practice to configure either `{pr, 1}` or `{notfound_ok, false}`, rather than rely on defaults.  Other wise there is a potential issue when at least two nodes have failed and for some objects 2 of the 3 vnodes are unpopulated fallbacks.  In this case, without changing defaults, the two unpopulated fallback vnodes can return `not_found` and the GET request can achieve quorum and return a false not_found to the client.  By configuring either `{pr, 1}` or `{notfound_ok, false}`, when there is only one populated/primary vnode, the GET request must wait for this vnode to respond.
+
+As a consequence though, in the case where there are at least three node failures, and for an unfortunate preflist all three primaries are down - this will then lead to failing requests, which may be preferable to false not_found responses.
 
 ## General read/write parameters
 
