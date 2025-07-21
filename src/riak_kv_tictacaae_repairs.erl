@@ -98,7 +98,7 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
             {purpose, kv_aae},
             {max_results, MaxResults},
             {log_levels, aae_loglevels()},
-            {key_filter_fun, fun riak_kv_util:get_tree_exclude/1}
+            {key_filter, fun riak_kv_util:tree_include/1}
         ],
     
     BlueList = 

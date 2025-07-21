@@ -897,7 +897,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
             KeyFilter =
                 case Filter of
                     none ->
-                        fun riak_kv_util:get_tree_exclude/1;
+                        fun riak_kv_util:tree_include/1;
                     _ ->
                         fun(_BK) -> true end
                 end,
@@ -924,7 +924,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                         {max_results, MaxResults},
                         {scan_timeout, ?CRASH_TIMEOUT div 2},
                         {purpose, WorkType},
-                        {key_filter_fun, KeyFilter}
+                        {key_filter, KeyFilter}
                     ]
                 ),
             

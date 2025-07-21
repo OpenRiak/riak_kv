@@ -383,7 +383,7 @@ maybe_start_aaecontroller(active, State=#state{mod=Mod,
             ObjSplitFun,
             AAELogLevels,
             UpdLeveledOpts,
-            fun riak_kv_util:get_tree_exclude/1
+            fun riak_kv_util:tree_include/1
         ),
     ?LOG_INFO("AAE Controller started with pid=~w", [AAECntrl]),
     

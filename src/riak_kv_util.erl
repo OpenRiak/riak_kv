@@ -47,7 +47,7 @@
         gets_active/0,
         consistent_object/1,
         get_write_once/1,
-        get_tree_exclude/1,
+        tree_include/1,
         overload_reply/1,
         get_backend_config/3,
         is_modfun_allowed/2,
@@ -238,12 +238,14 @@ get_write_once(Bucket) ->
 %% 
 %% This does therefore require for a reset message to be processed by the
 %% function should this property change on a given bucket
--spec get_tree_exclude(
+%% 
+%% Function returns true if aae_tree_exclude bucket property is not present
+-spec tree_include(
     {riak_object:bucket(), riak_object:key()}|reset) -> boolean().
-get_tree_exclude(reset) ->
+tree_include(reset) ->
     erase(aae_cache_filter_map),
     true;
-get_tree_exclude({Bucket, _Key}) ->
+tree_include({Bucket, _Key}) ->
     CacheMap =
         case get(aae_cache_filter_map) of
             FilterMap when is_map(FilterMap) ->
