@@ -1553,6 +1553,13 @@ handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, State) ->
             put(hashtree_tokens, MaxToken)
     end,
     {reply, ok, State};
+handle_command(reset_aae_key_filter, _Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            {reply, false, State};
+        Controller ->
+            {reply, aae_controller:aae_reset_key_filter(Controller), State}
+    end;
 
 handle_command({block_vnode, BlockRequest, BlockTimeMS}, Sender, State) ->
     riak_core_vnode:reply(Sender, {blocked, self()}),

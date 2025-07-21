@@ -57,6 +57,7 @@
         sys_monitor_count/0
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
+-export([reset_aae_key_filter/0]).
 
 -export([
     profile_riak/1,
@@ -238,10 +239,10 @@ get_write_once(Bucket) ->
 %% This does therefore require for a reset message to be processed by the
 %% function should this property change on a given bucket
 -spec get_tree_exclude(
-    {riak_object:bucket(), riak_object:key()}|reset) -> boolean()|ok.
+    {riak_object:bucket(), riak_object:key()}|reset) -> boolean().
 get_tree_exclude(reset) ->
     erase(aae_cache_filter_map),
-    ok;
+    true;
 get_tree_exclude({Bucket, _Key}) ->
     CacheMap =
         case get(aae_cache_filter_map) of
@@ -295,9 +296,8 @@ report_hashtree_tokens() ->
     ReportTokenFun = 
         fun({{P, N}, _T}, {Min, Max}) ->
             HT =
-                riak_core_vnode_master:sync_command({P, N},
-                                                    report_hashtree_tokens,
-                                                    riak_kv_vnode_master),
+                riak_core_vnode_master:sync_command(
+                    {P, N}, report_hashtree_tokens, riak_kv_vnode_master),
             {min(Min, HT), max(Max, HT)}
         end,
     lists:foldl(ReportTokenFun, {infinity, 0}, OnlinePrimaries).
@@ -311,14 +311,42 @@ reset_hashtree_tokens(MinToken, MaxToken) when MaxToken >= MinToken ->
     ResetTokenFun = 
         fun({{P, N}, _T}) ->
             ok =
-                riak_core_vnode_master:sync_command({P, N},
-                                                    {reset_hashtree_tokens,
-                                                        MinToken, MaxToken},
-                                                    riak_kv_vnode_master)
+                riak_core_vnode_master:sync_command(
+                    {P, N},
+                    {reset_hashtree_tokens, MinToken, MaxToken},
+                    riak_kv_vnode_master
+                )
         end,
     lists:foreach(ResetTokenFun, OnlinePrimaries),
     ok.
 
+%% @doc
+%% Reset the key filter function in the aae_controllers.  Can be used when
+%% bucket properties have changed on an existing bucket which has already been
+%% partially populated - otherwise a restart is necessary.
+%% Returns count of success/failure of the operation.
+%% Note that resetting the function, will simply clear the cache so that future
+%% function calls will see the latest state of the property.  This is not
+%% sufficient to update the bucket property - as previously added keys in that
+%% bucket will be misrepresented in the tree.  For this a rebuild of all trees
+%% is also required.
+-spec reset_aae_key_filter() -> {non_neg_integer(), non_neg_integer()}.
+reset_aae_key_filter() ->
+    OnlinePrimaries = riak_core_apl:active_owners(riak_kv),
+    ResetAAEKeyFilterFun = 
+        fun({{P, N}, _T}, {Success, Fail}) ->
+            R =
+                riak_core_vnode_master:sync_command(
+                    {P, N}, reset_aae_key_filter, riak_kv_vnode_master
+                ),
+            case R of
+                true ->
+                    {Success + 1, Fail};
+                _ ->
+                    {Success, Fail + 1}
+            end
+        end,
+    lists:foldl(ResetAAEKeyFilterFun, {0, 0}, OnlinePrimaries).
 
 %% ===================================================================
 %% Preflist utility functions
