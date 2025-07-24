@@ -300,7 +300,7 @@ process(
         n_val=N_val,
         sloppy_quorum=SloppyQuorum,
         node_confirms=NodeConfirms0,
-        sync_on_write=SyncOnWrite0,
+        sync_on_write=SyncOnWrite,
         return_body=ReturnBody,
         return_head=ReturnHead,
         timeout=Timeout,
@@ -394,17 +394,6 @@ process(
             DW = decode_quorum(DW0),
             PW = decode_quorum(PW0),
             NodeConfirms = decode_quorum(NodeConfirms0),
-            SyncOnWrite =
-                case SyncOnWrite0 of
-                    undefined ->
-                        undefined;
-                    <<"one">> ->
-                        one;
-                    <<"backend">> ->
-                        backend;
-                    <<"all">> ->
-                        all
-                end,
             BodyOptions =
                 case ReturnBody of
                     1 -> [returnbody];

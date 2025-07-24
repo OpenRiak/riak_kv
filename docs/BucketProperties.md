@@ -45,7 +45,7 @@ The `allow_mult` bucket property has a default value of `true`, for any typed bu
 
 The internal workings of Riak are identical for the two allow_mult settings, with the exception of the case when an unresolvable conflict is discovered in the object change history.  In this case: if `{allow_mult, true}`, all conflicting versions are returned to the client to resolve (on the next GET); if `{allow_mult, false}` only the object with the most recent last_modified_date is returned.
 
-The last_modified _date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match of conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  When using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is strongly recommended.   
+The last_modified_date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match of conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  When using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is strongly recommended.   
 
 When using conflict-free replicated data types, `{allow_mult, true}` must always be used.
 
@@ -78,7 +78,7 @@ Changing an n_val on a bucket which already contains data will have unexpected a
 
 The `node_confirms` bucket property has a default value of `0`, and may be set to any non-negative integer less than or equal to the n_val (for that bucket).  The purpose of `node_confirms` is to offer a guarantee that the data is available on multiple machines, for example setting node_confirms to 2 will guarantee that at least two machines have the data - and the risk of the data being lost can be considered accordingly.
 
-the `node_confirms` property were added as an alternative to using the `pr` and `pw` parameters to provide guarantees that distinct nodes were used for storage before confirming reads/writes.  The use of `pw` could both fail to provide the desired guarantee of physical redundancy; but also could prompt false failures in circumstances where the data was still resiliently stored, reducing availability.
+the `node_confirms` property was added as an alternative to using the `pr` and `pw` parameters to provide guarantees that distinct nodes were used for storage before confirming reads/writes.  The use of `pw` could both fail to provide the desired guarantee of physical redundancy; but also could prompt false failures in circumstances where the data was still resiliently stored, reducing availability.
 
 Note that `node_confirms` is applied on both reads and writes.  The parameter is also applied on reads so that an application can understand on read that a previous put has not yet reached the required level of diversity.
 
@@ -92,7 +92,7 @@ The `sync_on_write` property is used only for PUTs via the API.  Internal PUTs (
 
 It is recommended not to use backend sync configuration, and instead control flushing only through use of this bucket property.
 
-If replicating between clusters and `one` is used as the `sync_on_write` bucket property, then the cluster that receives the PUT form the application will flush to disk on one node - but all clusters receiving the PUT via replication will not be required to flush to disk on any node.  The properties of `backend` or `all` are treated equally in source and sink clusters.
+If replicating between clusters and `one` is used as the `sync_on_write` bucket property, then the cluster that receives the PUT from the application will flush to disk on one node - but all clusters receiving the PUT via replication will not be required to flush to disk on any node.  The properties of `backend` or `all` are treated equally in source and sink clusters.
 
 ## aae_tree_exclude
 
@@ -130,7 +130,7 @@ The `pr` and `pw` bucket properties default to `0`, and are used to require prim
 
 It is strongly recommended to consider using `node_confirms`, `sync_on_write` or token-based conditional PUTs to achieve controls in preference to configuring `pr`/`pw` to values greater than 1.
 
-It is normally best practice to configure either `{pr, 1}` or `{notfound_ok, false}`, rather than rely on defaults.  Other wise there is a potential issue when at least two nodes have failed and for some objects 2 of the 3 vnodes are unpopulated fallbacks.  In this case, without changing defaults, the two unpopulated fallback vnodes can return `not_found` and the GET request can achieve quorum and return a false not_found to the client.  By configuring either `{pr, 1}` or `{notfound_ok, false}`, when there is only one populated/primary vnode, the GET request must wait for this vnode to respond.
+It is normally best practice to configure either `{pr, 1}` or `{notfound_ok, false}`, rather than rely on defaults.  Otherwise there is a potential issue when at least two nodes have failed and for some objects 2 of the 3 vnodes are unpopulated fallbacks.  In this case, without changing defaults, the two unpopulated fallback vnodes can return `not_found` and the GET request can achieve quorum and return a false not_found to the client.  By configuring either `{pr, 1}` or `{notfound_ok, false}`, when there is only one populated/primary vnode, the GET request must wait for this vnode to respond.
 
 As a consequence though, in the case where there are at least three node failures, and for an unfortunate preflist all three primaries are down - this will then lead to failing requests, which may be preferable to false not_found responses.
 
