@@ -26,11 +26,6 @@
 %%      Update each stat with the exported function update/1. Add
 %%      a new stat to the internal stats/0 func to register a new stat with
 %%      folsom.
-%%
-%%      Get the latest aggregation of stats with the exported function
-%%      get_stats/0. Or use folsom_metrics:get_metric_value/1,
-%%      or riak_core_stat_q:get_stats/1.
-%%
 
 -module(riak_kv_stat).
 
@@ -41,7 +36,7 @@
 -endif.
 
 %% API
--export([start_link/0, get_stats/0,
+-export([start_link/0,
          update/1, perform_update/1, register_stats/0, unregister_vnode_stats/1, produce_stats/0,
          leveldb_read_block_errors/0, stat_update_error/3, stop/0]).
 -export([track_bucket/1, untrack_bucket/1]).
@@ -70,11 +65,6 @@ unregister_vnode_stats(Index) ->
     unregister_per_index(gets, Index),
     unregister_per_index(heads, Index),
     unregister_per_index(puts, Index).
-
-%% @spec get_stats() -> proplist()
-%% @doc Get the current aggregation of stats.
-get_stats() ->
-    riak_kv_wm_stats:get_stats().
 
 
 %% Creation of a dynamic stat _must_ be serialized.
@@ -1006,7 +996,6 @@ bc_stats(Pfx) ->
                           {sys_global_heaps_size, ?MODULE, value, [deprecated]},
                           {sys_heap_type, erlang, system_info, [heap_type]},
                           {sys_logical_processors, erlang, system_info, [logical_processors]},
-                          {sys_monitor_count, riak_kv_stat_bc, sys_monitor_count, []},
                           {sys_otp_release, riak_kv_stat_bc, otp_release, []},
                           {sys_port_count, erlang, system_info, [port_count]},
                           {sys_process_count, erlang, system_info, [process_count]},
@@ -1164,7 +1153,7 @@ create_or_update_histogram_test() ->
         Metric = [riak_kv,put_fsm,counter,time],
         ok = repeat_create_or_update(Metric, 1, histogram, 100),
         ?assertNotEqual(exometer:get_value(Metric), 0),
-        Stats = get_stats(),
+        Stats = riak_kv_status:get_stats(web),
         ?LOG_INFO("stats prop list ~s", [Stats]),
         ?assertNotEqual(proplists:get_value({node_put_fsm_counter_time_mean}, Stats), 0)
     after

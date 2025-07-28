@@ -78,7 +78,7 @@
     % accepting HEAD/GET/FOLD requests).  There is no neat way of doing this
     % so we will back everything off.
 
--record(state, {bookie :: pid(),
+-record(state, {bookie :: pid() | undefined,
                 reference :: reference(),
                 partition :: integer(),
                 db_path :: string(),
@@ -203,8 +203,10 @@ return_self(State) -> State#state.bookie.
 
 %% @doc Stop the leveled backend
 -spec stop(state()) -> ok.
-stop(#state{bookie=Bookie}) ->
-    ok = leveled_bookie:book_close(Bookie).
+stop(#state{bookie=Bookie}) when Bookie =/= undefined ->
+    ok = leveled_bookie:book_close(Bookie);
+stop(_State) ->
+    ok.
 
 
 %% @doc Retrieve an object from the leveled backend as a binary
@@ -577,9 +579,9 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
 
 %% @doc Delete all objects from this leveled backend
 -spec drop(state()) -> {ok, state()} | {error, term(), state()}.
-drop(#state{bookie=Bookie, partition=Partition, config=Config}=_State) ->
+drop(#state{bookie=Bookie}=State) ->
     ok = leveled_bookie:book_destroy(Bookie),
-    start(Partition, Config).
+    {ok, State#state{bookie = undefined}}.
 
 %% @doc Returns true if this leveled backend contains any
 %% non-tombstone values; otherwise returns false.

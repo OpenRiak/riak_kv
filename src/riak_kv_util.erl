@@ -52,7 +52,8 @@
         is_modfun_allowed/2,
         shuffle_list/1,
         kv_ready/0,
-        ngr_initial_timeout/0
+        ngr_initial_timeout/0,
+        sys_monitor_count/0
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 
@@ -714,7 +715,24 @@ get_initial_call(P) ->
         _ ->
             undefined
     end.
-    
+
+%% @doc sys_monitor_count/0
+%% Count up all monitors, unfortunately has to obtain process_info
+%% from all processes to work it out.
+sys_monitor_count() ->
+    lists:foldl(
+        fun(Pid, Count) ->
+                case erlang:process_info(Pid, monitors) of
+                    {monitors, Mons} ->
+                        Count + length(Mons);
+                    _ ->
+                        Count
+                end
+        end,
+        0, processes()
+    ).
+
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
