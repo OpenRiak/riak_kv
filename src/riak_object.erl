@@ -1197,12 +1197,12 @@ to_binary_version(v0, _, _, <<131,_/binary>>=Bin) ->
     Bin;
 to_binary_version(v1, _, _, <<?MAGIC:8/integer, 1:8/integer, _/binary>>=Bin) ->
     Bin;
-to_binary_version(v1, B, K, Bin) when is_binary(Bin) ->
+to_binary_version(Vsn, B, K, Bin) when is_binary(Bin) ->
     case from_binary(B, K, Bin) of
         #p_object{proxy = {FetchFun, Pid, FetchKey}} when is_pid(Pid) ->
             FetchFun(Pid, FetchKey);
         RObj ->
-            to_binary(v1, RObj)
+            to_binary(Vsn, RObj)
     end;
 to_binary_version(Vsn, _B, _K, Obj = #r_object{}) ->
     to_binary(Vsn, Obj).

@@ -2535,10 +2535,11 @@ encode_handoff_item({B, K}, V) ->
         Value  = riak_object:to_binary_version(?CAP_OBJECT_FORMAT, B, K, V),
         encode_binary_object(B, K, Value)
     catch Error:Reason ->
-            ?LOG_WARNING(
-                "Handoff encode failed: ~0p:~0p", [Error, Reason]),
-            riak_kv_reader:request_read({B, K}),
-            corrupted
+        ?LOG_WARNING("Handoff encode failed: ~0p:~0p", [Error, Reason]),
+        %% If there has been a failure to encode, assume some form of
+        %% corruption.  Need to find an uncorrupt version and repair from there
+        riak_kv_reader:request_read({B, K}),
+        corrupted
     end.
 
 set_vnode_forwarding(Forward, State) ->
@@ -3691,15 +3692,13 @@ do_fold(Fun, Acc0, Sender, ReqOpts, State=#state{async_folding=AsyncFolding,
 %% then the fold_heads function can be used on the backend if it suppports that
 %% capability.
 maybe_use_fold_heads(Capabilities, Opts, Mod) ->
-    case proplists:get_value(fold_heads, Opts) of
+    MaybeFoldHeads =
+        proplists:get_bool(fold_heads, Opts) andalso
+        lists:member(fold_heads, Capabilities),
+    case MaybeFoldHeads of
         true ->
-            case lists:member(fold_heads, Capabilities) of
-                true ->
-                    fun Mod:fold_heads/4;
-                false ->
-                    fun Mod:fold_objects/4
-            end;
-        _ ->
+            fun Mod:fold_heads/4;
+        false ->
             fun Mod:fold_objects/4
     end.
 
