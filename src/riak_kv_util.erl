@@ -47,14 +47,17 @@
         gets_active/0,
         consistent_object/1,
         get_write_once/1,
+        tree_include/1,
         overload_reply/1,
         get_backend_config/3,
         is_modfun_allowed/2,
         shuffle_list/1,
         kv_ready/0,
-        ngr_initial_timeout/0
+        ngr_initial_timeout/0,
+        sys_monitor_count/0
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
+-export([reset_aae_key_filter/0]).
 
 -export([
     profile_riak/1,
@@ -227,6 +230,50 @@ get_write_once(Bucket) ->
             Err
     end.
 
+%% @doc
+%% It is expected that long-lived processes will frequently check for the
+%% aae_tree_exclude property - so have a function (to be passed to
+%% aae_controller and aae_exchange) that allows for the results to be cached
+%% on the process dictionary (as with n_val fetch in riak_core_repair).
+%% 
+%% This does therefore require for a reset message to be processed by the
+%% function should this property change on a given bucket
+%% 
+%% Function returns true if aae_tree_exclude bucket property is not present
+-spec tree_include(
+    {riak_object:bucket(), riak_object:key()}|reset) -> boolean().
+tree_include(reset) ->
+    erase(aae_cache_filter_map),
+    true;
+tree_include({Bucket, _Key}) ->
+    CacheMap =
+        case get(aae_cache_filter_map) of
+            FilterMap when is_map(FilterMap) ->
+                FilterMap;
+            _ ->
+                maps:new()
+        end,
+    case maps:get(Bucket, CacheMap, not_cached) of
+        not_cached ->
+            TreeInclude =
+                case riak_core_bucket:get_bucket(Bucket) of
+                    Props when is_list(Props) ->
+                        R = not lists:member({aae_tree_exclude, true}, Props),
+                        put(
+                            aae_cache_filter_map,
+                            maps:put(Bucket, R, CacheMap)
+                        ),
+                        R;
+                    {error, _} ->
+                        %% Don't cache an error result, but assume the result
+                        %% should be in the filter
+                        true
+                end,
+            TreeInclude;
+        CachedResult ->
+            CachedResult
+    end.
+
 -spec kv_ready() -> boolean().
 kv_ready() ->
     lists:member(riak_kv, riak_core_node_watcher:services(node())).
@@ -251,9 +298,8 @@ report_hashtree_tokens() ->
     ReportTokenFun = 
         fun({{P, N}, _T}, {Min, Max}) ->
             HT =
-                riak_core_vnode_master:sync_command({P, N},
-                                                    report_hashtree_tokens,
-                                                    riak_kv_vnode_master),
+                riak_core_vnode_master:sync_command(
+                    {P, N}, report_hashtree_tokens, riak_kv_vnode_master),
             {min(Min, HT), max(Max, HT)}
         end,
     lists:foldl(ReportTokenFun, {infinity, 0}, OnlinePrimaries).
@@ -267,14 +313,42 @@ reset_hashtree_tokens(MinToken, MaxToken) when MaxToken >= MinToken ->
     ResetTokenFun = 
         fun({{P, N}, _T}) ->
             ok =
-                riak_core_vnode_master:sync_command({P, N},
-                                                    {reset_hashtree_tokens,
-                                                        MinToken, MaxToken},
-                                                    riak_kv_vnode_master)
+                riak_core_vnode_master:sync_command(
+                    {P, N},
+                    {reset_hashtree_tokens, MinToken, MaxToken},
+                    riak_kv_vnode_master
+                )
         end,
     lists:foreach(ResetTokenFun, OnlinePrimaries),
     ok.
 
+%% @doc
+%% Reset the key filter function in the aae_controllers.  Can be used when
+%% bucket properties have changed on an existing bucket which has already been
+%% partially populated - otherwise a restart is necessary.
+%% Returns count of success/failure of the operation.
+%% Note that resetting the function, will simply clear the cache so that future
+%% function calls will see the latest state of the property.  This is not
+%% sufficient to update the bucket property - as previously added keys in that
+%% bucket will be misrepresented in the tree.  For this a rebuild of all trees
+%% is also required.
+-spec reset_aae_key_filter() -> {non_neg_integer(), non_neg_integer()}.
+reset_aae_key_filter() ->
+    OnlinePrimaries = riak_core_apl:active_owners(riak_kv),
+    ResetAAEKeyFilterFun = 
+        fun({{P, N}, _T}, {Success, Fail}) ->
+            R =
+                riak_core_vnode_master:sync_command(
+                    {P, N}, reset_aae_key_filter, riak_kv_vnode_master
+                ),
+            case R of
+                true ->
+                    {Success + 1, Fail};
+                _ ->
+                    {Success, Fail + 1}
+            end
+        end,
+    lists:foldl(ResetAAEKeyFilterFun, {0, 0}, OnlinePrimaries).
 
 %% ===================================================================
 %% Preflist utility functions
@@ -714,7 +788,24 @@ get_initial_call(P) ->
         _ ->
             undefined
     end.
-    
+
+%% @doc sys_monitor_count/0
+%% Count up all monitors, unfortunately has to obtain process_info
+%% from all processes to work it out.
+sys_monitor_count() ->
+    lists:foldl(
+        fun(Pid, Count) ->
+                case erlang:process_info(Pid, monitors) of
+                    {monitors, Mons} ->
+                        Count + length(Mons);
+                    _ ->
+                        Count
+                end
+        end,
+        0, processes()
+    ).
+
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================

@@ -91,33 +91,64 @@ get_stats(console) ->
         ++ riak_kv_stat_bc:disk_stats()
         ++ riak_kv_stat_bc:app_stats().
 
-aliases() ->
-    Grouped = exometer_alias:prefix_foldl(
-                <<>>,
-                fun(Alias, Entry, DP, Acc) ->
-                        orddict:append(Entry, {DP, Alias}, Acc)
-                end, orddict:new()),
-    lists:keysort(
-      1,
-      lists:foldl(
-        fun({K, DPs}, Acc) ->
-                case exometer:get_value(K, [D || {D,_} <- DPs]) of
-                    {ok, Vs} when is_list(Vs) ->
-                        lists:foldr(fun({D,V}, Acc1) ->
-                                            {_,N} = lists:keyfind(D,1,DPs),
-                                            [{N,V}|Acc1]
-                                    end, Acc, Vs);
-                    Other ->
-                        Val = case Other of
-                                  {ok, disabled} -> undefined;
-                                  _ -> 0
-                              end,
-                        lists:foldr(fun({_,N}, Acc1) ->
-                                            [{N,Val}|Acc1]
-                                    end, Acc, DPs)
-                end
-        end, [], orddict:to_list(Grouped))).
 
+aliases() ->
+    AllStats =
+        exometer_alias:prefix_foldl(
+            <<>>,
+            fun(Alias, Entry, DP, Acc) -> [{Entry, {DP, Alias}}|Acc] end,
+            []
+        ),
+        %% It is assumed that prefix_foldl/3 will return an ordered list of
+        %% entries - and that ordering will be used for efficiency below.
+        %% Note if unordered, stats will still be produced, but requiring more
+        %% calls to exometer:get_value/2.
+    case AllStats of
+        [] ->
+            [];
+        AllStats when is_list(AllStats) ->
+            {{FinalEntry, FinalDPMap}, AliasVals} =
+                lists:foldl(
+                    fun({Entry, {DP, Alias}}, {{PrevEntry, DPmap}, Acc}) ->
+                        case Entry of
+                            Entry when Entry == PrevEntry ->
+                                {{PrevEntry, maps:put(DP, Alias, DPmap)}, Acc};
+                            Entry when PrevEntry == none ->
+                                {{Entry, maps:put(DP, Alias, DPmap)}, Acc};
+                            Entry ->
+                                UpdAcc = get_exometer_values(PrevEntry, DPmap),
+                                {{Entry, #{DP => Alias}}, UpdAcc ++ Acc}
+                        end
+                    end,
+                    {{none, #{}}, []},
+                    AllStats
+                ),
+            lists:keysort(
+                1, 
+                get_exometer_values(FinalEntry, FinalDPMap) ++ AliasVals
+            )
+    end.
+
+get_exometer_values(Entry, DPmap) ->
+    case exometer:get_value(Entry, maps:keys(DPmap)) of
+        {ok, Vs} when is_list(Vs) ->
+            lists:map(
+                fun({D, V}) ->
+                    {maps:get(D, DPmap), V}
+                end,
+                Vs
+            );
+        Other ->
+            DefaultValue =
+                case Other of
+                    {ok, disabled} -> disabled;
+                    _ -> 0
+                end,
+            lists:map(
+                fun(A) -> {A, DefaultValue} end,
+                maps:values(DPmap)
+            )
+    end.
 
 expand_disk_stats([{disk, Stats}]) ->
     [{disk, [{struct, [{id, list_to_binary(Id)}, {size, Size}, {used, Used}]}

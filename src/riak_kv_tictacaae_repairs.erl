@@ -64,27 +64,26 @@ aae_loglevels() ->
             [info, warn, error, critical]
     end.
 
--spec prompt_tictac_exchange({riak_core_ring:partition_id(), node()},
-                        {riak_core_ring:partition_id(), node()},
-                        {non_neg_integer(), pos_integer()},
-                        pos_integer(), pos_integer(),
-                        fun((term()) -> ok),
-                        aae_exchange:filters()) -> ok.
+-spec prompt_tictac_exchange(
+    {riak_core_ring:partition_id(), node()},
+    {riak_core_ring:partition_id(), node()},
+    {non_neg_integer(), pos_integer()},
+    pos_integer(), pos_integer(),
+    fun((term()) -> ok),
+    aae_exchange:filters()) -> ok.
 prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
                     ScanTimeout, LoopCount,
                     ReplyFun, Filter) ->
     ExchangePause =
-        app_helper:get_env(riak_kv,
-                            tictacaae_exchangepause,
-                            ?EXCHANGE_PAUSE_MS),
+        app_helper:get_env(
+            riak_kv, tictacaae_exchangepause, ?EXCHANGE_PAUSE_MS),
     RangeBoost =
         case Filter of
             none ->
                 1;
             _ ->
-                app_helper:get_env(riak_kv,
-                                    tictacaae_rangeboost,
-                                    ?AAE_RANGE_BOOST)
+                app_helper:get_env(
+                    riak_kv, tictacaae_rangeboost, ?AAE_RANGE_BOOST)
         end,
     MaxResults = 
         case app_helper:get_env(riak_kv, tictacaae_maxresults) of
@@ -94,11 +93,13 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
                 ?AAE_MAX_RESULTS * RangeBoost
         end,
     ExchangeOptions =
-        [{scan_timeout, ScanTimeout},
+        [
+            {scan_timeout, ScanTimeout},
             {transition_pause_ms, ExchangePause},
             {purpose, kv_aae},
             {max_results, MaxResults},
-            {log_levels, aae_loglevels()}
+            {log_levels, aae_loglevels()},
+            {key_filter, fun riak_kv_util:tree_include/1}
         ],
     
     BlueList = 
@@ -107,23 +108,28 @@ prompt_tictac_exchange(LocalVnode, RemoteVnode, IndexN,
         [{riak_kv_vnode:aae_send(RemoteVnode), [IndexN]}],
     PromptRehash = Filter == none,
     RepairFun = 
-        prompt_readrepair([LocalVnode, RemoteVnode],
-                            IndexN,
-                            MaxResults,
-                            LoopCount,
-                            PromptRehash,
-                            os:timestamp()),
+        prompt_readrepair(
+            [LocalVnode, RemoteVnode],
+            IndexN,
+            MaxResults,
+            LoopCount,
+            PromptRehash,
+            os:timestamp()
+        ),
     {ok, _AAEPid, AAExid} =
-        aae_exchange:start(full,
-                        BlueList, 
-                        PinkList, 
-                        RepairFun, 
-                        ReplyFun,
-                        Filter,
-                        ExchangeOptions),
-    _ = 
-        ?LOG_DEBUG("Exchange prompted with exchange_id=~s between ~w and ~w",
-                [AAExid, LocalVnode, RemoteVnode]),
+        aae_exchange:start(
+            full,
+            BlueList, 
+            PinkList, 
+            RepairFun, 
+            ReplyFun,
+            Filter,
+            ExchangeOptions
+        ),
+    ?LOG_DEBUG(
+        "Exchange prompted with exchange_id=~s between ~w and ~w",
+        [AAExid, LocalVnode, RemoteVnode]
+    ),
     ok.
 
 
