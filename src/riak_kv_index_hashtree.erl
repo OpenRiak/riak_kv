@@ -546,7 +546,7 @@ check_upgrade_env() ->
             false
     end.
 
--spec get_cap_hash_version() -> version().
+-spec get_cap_hash_version() -> 0.
 get_cap_hash_version() ->
     ?CAP_OBJECT_HASH_VERSION.
 
@@ -554,18 +554,14 @@ get_cap_hash_version() ->
 find_version(Root, Index) ->
     check_root_version(Root, Index, get_cap_hash_version()).
 
--spec check_root_version(list(), index(), version()) -> version().
+-spec check_root_version(list(), index(), 0) -> version().
 check_root_version(Root, Index, Version) when is_integer(Version) ->
     case filelib:is_dir(filename:join(filename:join(Root, "v" ++ integer_to_list(Version)),integer_to_list(Index))) of
         true ->
             Version;
         false ->
             legacy
-    end
-%     ;
-% check_root_version(_Root, _Index, Version) ->
-%     Version
-    .
+    end.
 
 %% @doc Init the trees.
 %%

@@ -193,19 +193,15 @@ make_ack_options(Options) ->
     RetryCoord =
         app_helper:get_env(riak_kv, retry_put_coordinator_failure, true) andalso
         get_option(retry_put_coordinator_failure, Options, true),
-    case {AckOption, ?CAP_PUTFSM_ACK, RetryCoord} of
-        {Pid, _, _} when is_pid(Pid) ->
-            %% Some process (probably on another node) is already waiting
-            %% for an ack, no need to monitor here.
-            {false, Options};
-        % {undefined, disabled, _} ->
-        %     {false, Options};
-        {undefined, _, false} ->
-            {false, Options};
-        {undefined, enabled, true} ->
-            {true, [
-                %% ack forwarder
-                {ack_execute, self()}| Options]}
+    RequestAck =
+        RetryCoord andalso
+        ?CAP_PUTFSM_ACK == enabled andalso
+        not is_pid(AckOption),
+    case RequestAck of
+        true ->
+            {true, [{ack_execute, self()}| Options]};
+        false ->
+            {false, Options}
     end.
 
 spawn_coordinator_proc(CoordNode, Mod, Fun, Args) ->
