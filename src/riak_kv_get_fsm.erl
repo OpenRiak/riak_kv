@@ -19,7 +19,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% @doc coordination of Riak GET requests
+%%
 -module(riak_kv_get_fsm).
 -behaviour(gen_fsm).
 -include_lib("riak_kv_vnode.hrl").
@@ -36,6 +38,8 @@
             prepare/2,
             validate/2,
             execute/2,
+            read_repair_fetch/2,
+            waiting_read_repair_fetch/2,
             waiting_vnode_r/2,
             waiting_read_repair/2]).
 
@@ -85,7 +89,9 @@
                 request_type :: undefined | request_type(),
                 override_vnodes = [] :: list(),
                 return_tombstone = false :: boolean(),
-                expected_fetchclock = false :: false | vclock:vclock()
+                expected_fetchclock = false :: false | vclock:vclock(),
+                repair_indices = [] :: list(),
+                repair_fetch_idx :: non_neg_integer() | undefined
                }).
 
 -include("riak_kv_dtrace.hrl").
@@ -483,6 +489,71 @@ waiting_vnode_r(request_timeout, StateData = #state{trace=Trace}) ->
     finalize(S2).
 
 %% @private
+-spec read_repair_fetch(timeout, #state{}) ->
+    {stop, normal, #state{}} | {next_state, waiting_read_repair_fetch, #state{}}.
+read_repair_fetch(timeout, StateData=#state{preflist2 = Preflist2,
+                                           bkey = BKey,
+                                           req_id = ReqId,
+                                           repair_fetch_idx = FetchIdx,
+                                           repair_indices = RepairIndices
+                                        }) ->
+
+    ?LOG_DEBUG("Starting fetch for repair - FetchIdx=~p, RepairIndices=~p",
+              [FetchIdx, RepairIndices]),
+
+    FetchVnode = case lists:keyfind(FetchIdx, 1,
+                                   [IndexNode || {IndexNode, _Type} <- Preflist2]) of
+        {FetchIdx, Node} ->
+            ?LOG_DEBUG("Found vnode {~p, ~p} for fetch", [FetchIdx, Node]),
+            [{FetchIdx, Node}];
+        false ->
+            ?LOG_WARNING("FetchIdx ~p not in current preflist, skipping repair",
+                         [FetchIdx]),
+            []
+    end,
+
+    case FetchVnode of
+        [] ->
+            ?LOG_WARNING("No vnode available, stopping"),
+            {stop, normal, StateData};
+        _ ->
+            
+            riak_kv_vnode:get(FetchVnode, BKey, ReqId),
+            new_state(waiting_read_repair_fetch, StateData)
+    end.
+
+-spec waiting_read_repair_fetch({r, {ok, term()} | {error, notfound | term()}, non_neg_integer(), non_neg_integer()}, #state{}) ->
+                                    {stop, normal, #state{}};
+                                ({timeout, reference(), request_timeout}, #state{}) ->
+                                    {stop, normal, #state{}}.
+waiting_read_repair_fetch({r, VnodeResult, Idx, _ReqId},
+                         StateData=#state{repair_indices = RepairIndices}) ->
+
+    ?LOG_DEBUG("Received response from Idx=~p, VnodeResult=~p",
+              [Idx, VnodeResult]),
+
+    case VnodeResult of
+        {ok, RepairObj} ->
+            ?LOG_DEBUG("Got repair object, performing read repair for ~p",
+                      [RepairIndices]),
+            maybe_read_repair(RepairIndices, RepairObj, StateData),
+            {stop, normal, StateData};
+
+        {error, notfound} ->
+            ?LOG_DEBUG("Object not found during fetch, skipping repair"),
+            {stop, normal, StateData};
+
+        {error, Reason} ->
+            ?LOG_DEBUG("Error during fetch: ~p, skipping repair", [Reason]),
+            {stop, normal, StateData}
+    end;
+
+waiting_read_repair_fetch({timeout, TRef, request_timeout},
+                         StateData=#state{tref = TRef0})
+        when TRef =:= TRef0 ->
+    ?LOG_WARNING("Timeout during repair fetch, skipping repair"),
+    {stop, normal, StateData}.
+
 waiting_read_repair({r, VnodeResult, Idx, _ReqId},
                     StateData = #state{get_core = GetCore, trace=Trace}) ->
     case Trace of
@@ -601,29 +672,48 @@ new_state_timeout(StateName, StateData) ->
     {next_state, StateName, StateData, 0}.
 
 maybe_finalize(StateData=#state{get_core = GetCore}) ->
+    ?LOG_DEBUG("Checking if all results received"),
     case riak_kv_get_core:has_all_results(GetCore) of
-        true -> finalize(StateData);
-        false -> {next_state,waiting_read_repair,StateData}
+        true ->
+            ?LOG_DEBUG("All results received, calling finalize"),
+            finalize(StateData);
+        false ->
+            ?LOG_DEBUG("Not all results received, continuing in waiting_read_repair"),
+            {next_state,waiting_read_repair,StateData}
     end.
 
 finalize(StateData=#state{get_core = GetCore, trace = Trace}) ->
+    ?LOG_DEBUG("Starting finalize"),
     {Action, UpdGetCore} = riak_kv_get_core:final_action(GetCore),
+    ?LOG_DEBUG("final_action returned Action=~p", [Action]),
     UpdStateData = StateData#state{get_core = UpdGetCore},
 
     case Action of
         delete ->
-            maybe_delete(UpdStateData);
+            ?LOG_DEBUG("Executing delete action"),
+            maybe_delete(UpdStateData),
+            {stop,normal,StateData};
         {read_repair, Indices, RepairObj} ->
-            maybe_read_repair(Indices, RepairObj, UpdStateData);
-        {delete_repair, Indices, RepairObj} ->
+            ?LOG_DEBUG("Executing read_repair action with Indices=~p", [Indices]),
             maybe_read_repair(Indices, RepairObj, UpdStateData),
-            maybe_delete(UpdStateData);
+            {stop,normal,StateData};
+        {delete_repair, Indices, RepairObj} ->
+            ?LOG_DEBUG("Executing delete_repair action with Indices=~p", [Indices]),
+            maybe_read_repair(Indices, RepairObj, UpdStateData),
+            maybe_delete(UpdStateData),
+            {stop,normal,StateData};
+        {read_repair_fetch, Indices, FetchIdx} ->
+            %% Need to fetch full object before doing read repair
+            ?LOG_DEBUG("Executing read_repair_fetch action - Indices=~w, FetchIdx=~w",
+                      [Indices, FetchIdx]),
+            RepairState = UpdStateData#state{repair_indices = Indices,
+                                repair_fetch_idx = FetchIdx},
+            new_state_timeout(read_repair_fetch, RepairState);
         _Nop ->
+            ?LOG_DEBUG("FSM finalize: No action needed (nop)"),
             ?DTRACE(Trace, ?C_GET_FSM_FINALIZE, [], ["finalize"]),
-            ok
-    end,
-    {stop,normal,StateData}.
-
+            {stop,normal,StateData}
+    end.
 
 %% Maybe issue deletes if all primary nodes are available.
 %% Get core will only requestion deletion if all vnodes
