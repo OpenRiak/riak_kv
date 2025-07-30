@@ -1,6 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,15 +19,16 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc Riak get logic
-
+%%
 -module(riak_kv_get_core).
 -export([init/10, update_init/2, head_merge/1,
             add_result/4, update_result/5, result_shortcode/1,
             enough/1, response/1, has_all_results/1, final_action/1, info/1]).
 -export_type([getcore/0, result/0, reply/0, final_action/0]).
 
+-include_lib("kernel/include/logger.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -46,6 +49,9 @@
     {delete_repair,
         [{non_neg_integer(), repair_reason()}],
         riak_object:riak_object()} |
+    {read_repair_fetch,
+        [{non_neg_integer(), repair_reason()}],
+        non_neg_integer()} |
     delete.
 -type idxresult() :: {non_neg_integer(), result()}.
 -type idx_type() :: [{non_neg_integer, 'primary' | 'fallback'}].
@@ -213,7 +219,8 @@ result_shortcode(_)                 -> -1.
 %% Check if enough results have been added to respond
 -spec enough(getcore()) -> boolean().
 %% Found expected clock
-enough(#getcore{expected_fetchclock = true}) ->
+enough(#getcore{expected_fetchclock = true} = _GetCore) ->
+    ?LOG_DEBUG("Found expected clock, returning true"),
     true;
 %% Met quorum
 enough(#getcore{r = R, ur = UR, pr= PR,
@@ -224,11 +231,15 @@ enough(#getcore{r = R, ur = UR, pr= PR,
                 NumPOK >= PR andalso
                 NumUPD >= UR andalso
                 length(Nodes) >= RequiredConfirms ->
+    ?LOG_DEBUG("Met quorum - R=~p/~p, PR=~p/~p, UR=~p/~p, NodeConfirms=~p/~p",
+              [NumOK, R, NumPOK, PR, NumUPD, UR, length(Nodes), RequiredConfirms]),
     true;
 %% Too many failures
 enough(#getcore{fail_threshold = FailThreshold, num_notfound = NumNotFound,
             num_fail = NumFail})
         when NumNotFound + NumFail >= FailThreshold ->
+    ?LOG_DEBUG("Too many failures - NotFound=~p, Fail=~p, Threshold=~p",
+              [NumNotFound, NumFail, FailThreshold]),
     true;
 %% Got all N responses, and no updated reads outstanding - not waiting on
 %% anything.
@@ -238,9 +249,17 @@ enough(#getcore{fail_threshold = FailThreshold, num_notfound = NumNotFound,
 enough(#getcore{n = N, ur = UR, num_ok = NumOK, num_notfound = NumNotFound,
             num_fail = NumFail})
         when NumOK + NumNotFound + NumFail >= N andalso UR == 0 ->
+    ?LOG_DEBUG("Got all N responses - OK=~p, NotFound=~p, Fail=~p, N=~p, UR=~p",
+              [NumOK, NumNotFound, NumFail, N, UR]),
     true;
 %% Awaiting outstanding responses
-enough(_) ->
+enough(#getcore{r = R, ur = UR, pr = PR, num_ok = NumOK, num_pok = NumPOK,
+                num_upd = NumUPD, node_confirms = RequiredConfirms,
+                confirmed_nodes = Nodes, num_notfound = NumNotFound,
+                num_fail = NumFail, n = N}) ->
+    ?LOG_DEBUG("Still waiting - R=~p/~p, PR=~p/~p, UR=~p/~p, NodeConfirms=~p/~p, Total=~p/~p",
+              [NumOK, R, NumPOK, PR, NumUPD, UR, length(Nodes), RequiredConfirms,
+               NumOK + NumNotFound + NumFail, N]),
     false.
 
 %% Get success/fail response once enough results received
@@ -322,13 +341,6 @@ has_all_results(#getcore{n = N, num_ok = NOk,
     NOk + NFail + NNF >= N.
 
 
--spec isnot_head(tuple()) -> boolean().
-%% Is a result an object head
-isnot_head({ok, Robj}) ->
-    not riak_object:is_head(Robj);
-isnot_head(_Result) ->
-    false.
-
 %% Decide on any post-response actions
 %% nop - do nothing
 %% {readrepair, Indices, MObj} - send read repairs iff any vnode has ancestor data
@@ -338,55 +350,119 @@ isnot_head(_Result) ->
 %%
 -spec final_action(getcore()) -> {final_action(), getcore()}.
 final_action(GetCore = #getcore{n = N, merged = Merged0, results = Results,
-                                allow_mult = AllowMult}) ->
-    PredFun = fun({_Idx, Res}) -> isnot_head(Res) end,
-    {FilteredResults, _ResultHEADs} = lists:partition(PredFun, Results),
-    Merged =
-        case Merged0 of
-            undefined ->
-                % We will only repair from a fetched object (not a head_only
-                % object).  It is possible that we may have, when n > r,
-                % received a better HEAD response after r has been fulfilled,
-                % and after the GET response was received. This will not now
-                % reliably be read repaired.  We only read repair a superior
-                % object discovered up to 'enough' and the receipt of the GET
-                % response.
-                merge(FilteredResults, AllowMult);
-            _ ->
-                Merged0
-            end,
-    {ObjState, MObj} = Merged,
+                                allow_mult = AllowMult, head_merge = HeadMerge}) ->
 
-    ReadRepairs =
-        case ObjState of
-            notfound ->
-                [];
-            _ -> % ok or tombstone
-                %% Any object that is strictly descended by
-                %% the merge result must be read-repaired,
-                %% this ensures even tombstones get repaired
-                %% so reap will work. We join the list of
-                %% dominated (in need of repair) indexes and
-                %% the list of not_found (in need of repair)
-                %% indexes.
-                [{Idx, outofdate} || {Idx, {ok, RObj}} <- Results,
-                        riak_object:strict_descendant(MObj, RObj)] ++
-                    [{Idx, notfound} || {Idx, {error, notfound}} <- Results]
-        end,
-    AllResults = length([xx || {_Idx, {ok, _RObj}} <- Results]) == N,
-    Action =
-        case ReadRepairs of
-            [] when ObjState == tombstone, AllResults ->
-                delete;
-            [] ->
-               nop;
-            _ when ObjState == tombstone, AllResults ->
-                {delete_repair, ReadRepairs, MObj};
-            _ ->
-                {read_repair, ReadRepairs, MObj}
-        end,
+    ?LOG_DEBUG("Starting with HeadMerge=~w, Merged0=~w, Results count=~w",
+              [HeadMerge, Merged0 =/= undefined, length(Results)]),
+
+    IsHead = fun({_Idx, Res}) -> riak_object:is_head(Res) end,
+    {SuccessfulHeads, NonHeadResults} = lists:partition(IsHead, Results),
+
+    ?LOG_DEBUG("NonHeadResults count=~w, SuccessfulHeads count=~w", [length(NonHeadResults), length(SuccessfulHeads)]),
+
+    MergeResults = case NonHeadResults of
+        [] -> Results;
+        _ -> NonHeadResults
+    end,
+
+    ?LOG_DEBUG("Using MergeResults count=~w for merging", [length(MergeResults)]),
+
+    Merged = case Merged0 of
+        undefined ->
+            ?LOG_DEBUG("No existing merge, creating new merge"),
+            merge(MergeResults, AllowMult);
+        _ ->
+            ?LOG_DEBUG("Using existing merge: ~p", [Merged0]),
+            Merged0
+    end,
+
+    {ObjState, MObj} = Merged,
+    ?LOG_DEBUG("Merged result - ObjState=~w, MObj defined=~w",
+              [ObjState, MObj =/= undefined]),
+
+    ReadRepairs = case {ObjState, SuccessfulHeads} of
+        {notfound, []} ->
+            ?LOG_DEBUG("No objects found anywhere, no read repairs"),
+            [];
+        {notfound, _} ->
+            ?LOG_DEBUG("notfound state but have successful HEADs, checking for repairs"),
+            %% We have successful HEAD responses but merged state is notfound
+            %% This means we need read repair for the notfound vnodes
+            Repairs = [{Idx, notfound} || {Idx, {error, notfound}} <- Results],
+            ?LOG_DEBUG("Repairs for notfound vnodes count=~w", [length(Repairs)]),
+            Repairs;
+        _ ->
+            ?LOG_DEBUG("Normal case - ObjState=~w, checking standard repairs", [ObjState]),
+            %% Normal case: ok or tombstone
+            %% Include both dominated objects and notfound responses
+            OutOfDateRepairs = [{Idx, outofdate} || {Idx, {ok, RObj}} <- Results,
+                    riak_object:strict_descendant(MObj, RObj)],
+            NotFoundRepairs = [{Idx, notfound} || {Idx, {error, notfound}} <- Results],
+            AllRepairs = OutOfDateRepairs ++ NotFoundRepairs,
+            ?LOG_DEBUG("OutOfDate=~w, NotFound=~w, Total=~w",
+                      [length(OutOfDateRepairs), length(NotFoundRepairs), length(AllRepairs)]),
+            AllRepairs
+    end,
+
+    AllResultsReceived = length([ok || {_Idx, {ok, _RObj}} <- Results]) == N,
+    ?LOG_DEBUG("AllResultsReceived=~w (N=~w)", [AllResultsReceived, N]),
+
+    %% Determine if we need to fetch full object for read repair
+    NeedsFetch = HeadMerge andalso
+                 ReadRepairs /= [] andalso
+                 SuccessfulHeads /= [] andalso %% We have HEAD responses to fetch from
+                 (ObjState == notfound orelse length(NonHeadResults) == 0),
+
+    ?LOG_DEBUG("NeedsFetch decision - HeadMerge=~w, ReadRepairs!=[]? ~w, SuccessfulHeads!=[]? ~w, ObjState=notfound? ~w, NonHeadResults==[]? ~w => NeedsFetch=~w",
+              [HeadMerge, ReadRepairs /= [], SuccessfulHeads /= [], ObjState == notfound, length(NonHeadResults) == 0, NeedsFetch]),
+
+    Action = case {ReadRepairs, NeedsFetch} of
+        {[], _} when ObjState == tombstone, AllResultsReceived ->
+            ?LOG_DEBUG("Action=delete (tombstone, all results)"),
+            delete;
+        {[], _} ->
+            ?LOG_DEBUG("Action=nop (no repairs needed)"),
+            nop;
+        {_, true} ->
+            %% Need to fetch full object before read repair
+            case find_best_head_for_fetch(SuccessfulHeads) of
+                undefined ->
+                    ?LOG_WARNING("Action=read_repair_fetch -- Cancelled read repair HEAD fetch"),
+                    nop;
+                BestIdx ->
+                    ?LOG_DEBUG("Action=read_repair_fetch (BestIdx=~w, ReadRepairs count=~w)",
+                    [BestIdx, length(ReadRepairs)]),
+                    {read_repair_fetch, ReadRepairs, BestIdx}
+            end;
+        {_, false} when ObjState == tombstone, AllResultsReceived ->
+            ?LOG_DEBUG("Action=delete_repair (tombstone, repairs count=~w)", [length(ReadRepairs)]),
+            {delete_repair, ReadRepairs, MObj};
+        {_, false} ->
+            ?LOG_DEBUG("Action=read_repair (repairs count=~w)", [length(ReadRepairs)]),
+            {read_repair, ReadRepairs, MObj}
+    end,
+
     {Action, GetCore#getcore{merged = Merged}}.
 
+-spec find_best_head_for_fetch([{ok, idxresult()}]) -> non_neg_integer() | undefined.
+find_best_head_for_fetch(SuccessfulHeads) ->
+    Objects = [RObj || {_Idx, {ok, RObj}} <- SuccessfulHeads],
+    NonDominatedObjects = riak_object:remove_dominated(Objects),
+
+    case NonDominatedObjects of
+        [Obj] ->
+            {Idx, _} = lists:keyfind({ok, Obj}, 2, SuccessfulHeads),
+            Idx;
+        [] ->
+            %% This condition should never hit.
+            ?LOG_ERROR("Skipping read repair due to missing non-dominated object"),
+            undefined;
+        Siblings ->
+            %% Multiple siblings - not safe to repair since current mechanism
+            %% only handles fetching from a single HEAD request
+            ?LOG_WARNING("Skipping read repair due to ~b siblings", [erlang:length(Siblings)]),
+            undefined
+    end.
 
 %% Return request info
 -spec info(undefined | getcore()) -> [{vnode_oks, non_neg_integer()} |

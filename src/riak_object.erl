@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
@@ -18,9 +19,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc container for Riak data and metadata
-
+%%
 -module(riak_object).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -371,24 +372,18 @@ find_bestobject(FetchedItems) ->
     % responder
     lists:partition(ObjNotJustHeadFun, DominantList).
 
-
-
--spec is_head({ok, riak_object()}|riak_object()) -> boolean().
-%% @private Check if an object is simply a head response
-is_head({ok, #r_object{contents=[]}}) ->
-    false;
-is_head({ok, #r_object{contents=Contents}}) ->
-    C0 = lists:nth(1, Contents),
-    case C0#r_content.value of
-        head_only ->
-            true;
-        _ ->
-            false
-    end;
-is_head({ok, #p_object{}}) ->
+-spec is_head(
+    riak_object() | proxy_object() | {ok, riak_object() | proxy_object()}
+    | term()) -> boolean().
+%% @private Check if any object is simply a head response.
+is_head(#r_object{contents = [#r_content{value = head_only} |_]}) ->
     true;
-is_head(Obj) ->
-    is_head({ok, Obj}).
+is_head(#p_object{}) ->
+    true;
+is_head({ok, Obj}) ->
+    is_head(Obj);
+is_head(_) ->
+    false.
 
 -spec spoof_getdeletedobject(riak_object()) -> riak_object().
 %% @doc
