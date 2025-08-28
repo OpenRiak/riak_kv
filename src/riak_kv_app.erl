@@ -249,7 +249,8 @@ start(_Type, _StartArgs) ->
                 {bucket_validator, riak_kv_bucket},
                 {stat_mod, riak_kv_stat},
                 {permissions, [get, put, delete, list_keys, list_buckets,
-                               mapreduce, index, get_preflist]}
+                               mapreduce, index, get_preflist,
+                               riak_control]}
             ]
             ++ [{health_check, {?MODULE, check_kv_health, []}} || HealthCheckOn]
 

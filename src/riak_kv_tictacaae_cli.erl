@@ -487,52 +487,14 @@ treestatus_specs() ->
 treestatus_usage() ->
     ["Generate the tree rebuild report:\n\n",
      "  riak admin tictacaae treestatus [--show STATES]\n\n",
-     "STATES is a comma-separated list of ''empty', 'partial', 'built',\n",
+     "STATES is a comma-separated list of 'empty', 'partial', 'built',\n",
      "'rebuilding', 'building', or 'all'. Default is\n",
      "'partial,rebuilding,building'.\n"
     ].
 
 treestatus_cmd([_, _, _], _, Options) ->
-    Report = get_aae_progress_report(),
+    Report = riak_kv_tictacaae_report:produce(),
     print_aae_progress_report(Report, Options).
-
-get_aae_progress_report() ->
-    VVSS =
-        lists:append(
-          [case sys:get_state(P) of
-               {active, _CoreVnodeState =
-                    {state, Idx, riak_kv_vnode, VSx, _, _, _, _, _, _, _, _}} ->
-                   [{Idx, VSx}];
-               _ ->
-                   []
-           end || {_, P, _, _} <- supervisor:which_children(riak_core_vnode_sup)]),
-    [begin
-         AAECntrl = riak_kv_vnode:aae_controller(VNState),
-         TictacRebuilding = riak_kv_vnode:aae_rebuilding(VNState),
-         InProgress = TictacRebuilding /= false,
-         AAEReport = aae_controller:aae_produce_progress_report(AAECntrl),
-         IsEmpty = proplists:get_value(is_empty, AAEReport),
-         LastRebuild = proplists:get_value(last_rebuild, AAEReport),
-         NextRebuild = proplists:get_value(next_rebuild, AAEReport),
-         Status =
-             case {IsEmpty, LastRebuild, InProgress, NextRebuild} of
-                 {true, _, _, _} ->
-                     empty;
-                 {_, never, false, Scheduled} when Scheduled /= undefined ->
-                     partial;
-                 {_, Built, false, _} when Built /= never ->
-                     built;
-                 {_, Built, true, _} when Built /= never ->
-                     rebuilding;
-                 {_, never, true, _} ->
-                     building
-             end,
-         Extra = [{status, Status},
-                  {partition, Idx},
-                  {controller_pid, list_to_binary(pid_to_list(AAECntrl))}
-                 ],
-         AAEReport ++ Extra
-     end || {Idx, VNState} <- VVSS].
 
 print_aae_progress_report(Report, Options) ->
     Show_ =

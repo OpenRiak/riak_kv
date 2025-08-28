@@ -3,6 +3,7 @@
 %% Riak: A lightweight, decentralized key-value store.
 %%
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%%               2026 TI Tokyo
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -26,7 +27,9 @@
 -export([client_connect/1,client_connect/2,
          client_test/1,
          local_client/0,local_client/1,
-         join/1]).
+         join/1,
+         deadmans_hand_restart/0
+        ]).
 -export([code_hash/0]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -151,6 +154,24 @@ client_test(Node) ->
 
 join(Node) ->    
     riak_core:join(Node).
+
+
+%% Helper function called from wm_cluster, as an action to initiate
+%% riak restart.  Actual restart (strictly, `riak stop` followed by
+%% `riak start`) is performed by an external script, run as a systemd
+%% service alongside riak. See rel/files/riak-deadmanshand.
+-spec deadmans_hand_restart() -> ok.
+deadmans_hand_restart() ->
+    P =
+        case lists:keyfind("RELEASE_PROG", 1, os:env()) of
+            {_, "/usr" ++ _} ->
+                "/run/riak/";
+            _ ->
+                ""
+        end,
+    _ = file:write_file(P ++ "RESTART_RIAK", <<>>),
+    ok.
+
 
 code_hash() ->
     {ok, AllMods0} = application:get_key(riak, modules),

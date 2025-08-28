@@ -42,7 +42,8 @@
          ensure_bucket_type/3,
          bucket_type_exists/1,
          maybe_bucket_type/2,
-         method_to_perm/1
+         method_to_perm/1,
+         cors_headers/0
         ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -503,3 +504,20 @@ method_to_perm('GET') ->
     "riak_kv.get";
 method_to_perm('DELETE') ->
     "riak_kv.delete".
+
+-spec cors_headers() -> [{string(), string()}].
+cors_headers() ->
+    [ {"Access-Control-Allow-Origin", "*"}
+    , {"Access-Control-Allow-Credentials", "true"}
+    , {"Access-Control-Allow-Methods", "POST,PUT,GET,OPTIONS,DELETE"}
+    , {"Access-Control-Allow-Headers",
+       "host,"
+       "origin,"
+       "referer,"
+       "authorization,"
+       "content-type,"
+       "content-md5,"
+       "accept,"
+       "accept-encoding"
+      }
+    ].

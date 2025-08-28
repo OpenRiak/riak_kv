@@ -44,7 +44,13 @@ dispatch_table() ->
         riak_kv_wm_mapred, MapredProps},
        {[proplists:get_value(prefix, StatsProps)],
         riak_kv_wm_stats, StatsProps},
-       {["ping"], riak_kv_wm_ping, []}]).
+       {["ping"], riak_kv_wm_ping, []},
+       {["system_info"], riak_kv_wm_system, []},
+       {["cluster"], riak_kv_wm_cluster, []},
+       {["vnode"], riak_kv_wm_vnode, []},
+       {["security"], riak_kv_wm_security, []},
+       {["tictacaae"], riak_kv_wm_tictacaae, []}
+      ]).
 
 raw_dispatch() ->
     case app_helper:get_env(riak_kv, raw_name) of

@@ -1,9 +1,10 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_wm_ping: simple Webmachine resource for availability test
+%% riak_kv_wm_system: simple Webmachine resource returning uptime
+%%                    and riak and otp versions.
+%%                    Called by riak_control.
 %%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
-%% Copyright (c) 2025 TI Tokyo.  All Rights Reserved.
+%% Copyright (c) 2026 TI Tokyo.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,18 +22,17 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc simple Webmachine resource for availability test
-
--module(riak_kv_wm_ping).
+-module(riak_kv_wm_system).
 
 %% webmachine resource exports
 -export([
          init/1,
          service_available/2,
          allowed_methods/2,
+         content_types_provided/2,
          is_authorized/2,
          options/2,
-         to_html/2
+         to_json/2
         ]).
 
 -include_lib("webmachine/include/webmachine.hrl").
@@ -53,8 +53,6 @@ allowed_methods(RD, Ctx) ->
 options(RD, Ctx) ->
     {riak_kv_wm_utils:cors_headers(), RD, Ctx}.
 
--spec is_authorized(#wm_reqdata{}, undefined) ->
-          {string()|boolean()|{halt, 426}, #wm_reqdata{}, undefined}.
 is_authorized(RD, Ctx) ->
     case wrq:method(RD) of
         'OPTIONS' ->
@@ -69,13 +67,27 @@ is_authorized2(RD, Ctx) ->
         {true, _SecContext} ->
             {true, RD, Ctx};
         insecure ->
-            %% XXX 301 may be more appropriate here, but since the http and
-            %% https port are different and configurable, it is hard to figure
-            %% out the redirect URL to serve.
             {{halt, 426}, wrq:append_to_resp_body(<<"Security is enabled and "
                     "Riak does not accept credentials over HTTP. Try HTTPS "
                     "instead.">>, RD), Ctx}
     end.
 
-to_html(ReqData, Ctx) ->
-    {"OK", ReqData, Ctx}.
+content_types_provided(RD, Ctx) ->
+    {[{"application/json", to_json}], RD, Ctx}.
+
+-spec to_json(#wm_reqdata{}, undefined) -> {binary(), #wm_reqdata{}, undefined}.
+to_json(RD, Ctx) ->
+    A = riak_kv_util:system_info(),
+    {mochijson2:encode(A#{http_listeners => get_http_listeners()}), RD, Ctx}.
+
+get_http_listeners() ->
+    lists:flatten(
+      [begin
+           case rpc:call(N, application, get_env, [riak_api, https]) of
+               {ok, [{IP, Port}]} ->
+                   [{N, iolist_to_binary(["https://", IP, $:, integer_to_binary(Port)])}];
+               _ ->
+                   []
+           end
+       end || N <- [node() | nodes()]]
+     ).
