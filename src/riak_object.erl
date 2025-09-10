@@ -244,7 +244,7 @@ reconcile(Objects, AllowMultiple) ->
 %% conflicting objects will remain.
 remove_dominated(Objects) ->
     All = sets:from_list(Objects, [{version, 2}]),
-    Del = sets:from_list(ancestors(Objects)),
+    Del = sets:from_list(ancestors(Objects), [{version, 2}]),
     sets:to_list(sets:subtract(All, Del)).
 
 %% @doc Take a list of {Idx, {ok, Object}} tuples that have been the
