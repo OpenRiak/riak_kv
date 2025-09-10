@@ -227,6 +227,8 @@ strict_descendant(O1, O2) ->
 %%       contain the value of the most-recently-updated object, as per the
 %%       X-Riak-Last-Modified header.
 -spec reconcile([riak_object()], boolean()) -> riak_object().
+reconcile([RObj], _AllowMultiple) ->
+    RObj;
 reconcile(Objects, AllowMultiple) ->
     RObj = reconcile(remove_dominated(Objects)),
     case AllowMultiple of
@@ -241,7 +243,7 @@ reconcile(Objects, AllowMultiple) ->
 %% dominated by any other object in the list. Only concurrent /
 %% conflicting objects will remain.
 remove_dominated(Objects) ->
-    All = sets:from_list(Objects),
+    All = sets:from_list(Objects, [{version, 2}]),
     Del = sets:from_list(ancestors(Objects)),
     sets:to_list(sets:subtract(All, Del)).
 
