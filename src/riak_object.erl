@@ -243,9 +243,9 @@ reconcile(Objects, AllowMultiple) ->
 %% dominated by any other object in the list. Only concurrent /
 %% conflicting objects will remain.
 remove_dominated(Objects) ->
-    All = sets:from_list(Objects, [{version, 2}]),
-    Del = sets:from_list(ancestors(Objects), [{version, 2}]),
-    sets:to_list(sets:subtract(All, Del)).
+    All = ordsets:from_list(Objects),
+    Del = ordsets:from_list(ancestors(Objects)),
+    ordsets:to_list(ordsets:subtract(All, Del)).
 
 %% @doc Take a list of {Idx, {ok, Object}} tuples that have been the
 %% result of HEAD requests or GET requests. This list MUST be in the
