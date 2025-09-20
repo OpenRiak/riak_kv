@@ -3,7 +3,8 @@
 %% riak_kv_vnode_status_mgr: Manages persistence of vnode status data
 %% like vnodeid, vnode op counter etc
 %%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -47,6 +48,9 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-compile({inline, [vnode_epoch_instant/0]}).
+-on_load(init_persistent/0).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -344,8 +348,29 @@ vnode_status_filename(Index, Path) ->
 %% unique by incrementing into the future if necessary.
 -spec assign_vnodeid(binary()) -> binary().
 assign_vnodeid(NodeId) ->
-    VnodeEpoch = riak_kv_vnode_id:next_vnode_epoch(),
+    EpochAtomic = persistent_term:get({?MODULE, last_vnode_epoch}),
+    VnodeEpoch = next_vnode_epoch(EpochAtomic, atomics:get(EpochAtomic, 1)),
     <<NodeId/binary, VnodeEpoch:32/integer>>.
+
+%% @hidden
+%% Handles contention between parallel calls to ensure the sequence and
+%% uniqueness invariants hold.
+-spec next_vnode_epoch(
+    Atomic :: atomics:atomics_ref(), Last :: vnode_epoch()) -> vnode_epoch().
+next_vnode_epoch(Atomic, Last) ->
+    Now = vnode_epoch_instant(),
+    Next = if
+        Last >= Now ->
+            (Last + 1);
+        true ->
+            Now
+    end,
+    case atomics:compare_exchange(Atomic, 1, Last, Next) of
+        ok ->
+            Next;
+        NewLast ->
+            next_vnode_epoch(Atomic, NewLast)
+    end.
 
 %% @private read the vnode status from `File'. Returns `{ok,
 %% status()}' or `{error, Reason}'. If the file does not exist, an
@@ -408,6 +433,26 @@ consult_stream(Fd, Line, Acc) ->
 	{eof,_Line} ->
 	    {ok,lists:reverse(Acc)}
     end.
+
+-type vnode_epoch() :: 0..16#ffffffff.
+
+%% Seconds between 1970-01-01 and 2000-01-01.
+-define(EPOCH_OFFSET_Secs,  946684800).
+
+-spec vnode_epoch_instant() -> vnode_epoch().
+%% @hidden
+%% At time of writing the returned value is less than 30 bits.
+%% This function will be inlined away, it's here only for code clarity.
+vnode_epoch_instant() ->
+    (erlang:system_time(second) - ?EPOCH_OFFSET_Secs).
+
+-spec init_persistent() -> ok.
+%% @hidden
+%% Run at module load, initialization gets too difficult otherwise.
+init_persistent() ->
+    EpochAtomic = atomics:new(1, [{signed, false}]),
+    ok = atomics:put(EpochAtomic, 1, vnode_epoch_instant()),
+    ok = persistent_term:put({?MODULE, last_vnode_epoch}, EpochAtomic).
 
 -ifdef(TEST).
 %% @private don't make testers suffer through the fsync time
