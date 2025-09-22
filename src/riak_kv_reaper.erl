@@ -183,7 +183,7 @@ action({{Bucket, Key}, DeleteHash, Indices}, Redo)
             %% But pause first - so that the process is not in a tight loop
             %% re-checking
             timer:sleep(TombPause),
-            maybe_redo(Redo);
+            respond_asfail_ifredo(Redo);
         {Available, Deferred} when Available =/= [] ->
             case check_all_mailboxes(Available) of
                 ok ->
@@ -210,12 +210,12 @@ action({{Bucket, Key}, DeleteHash, Indices}, Redo)
                      %% The cluster is busy - reaps need to slow down, so pause
                     %% then requeue this message as-is.
                     timer:sleep(TombPause * ?BUSY_FACTOR),
-                    maybe_redo(Redo)
+                    respond_asfail_ifredo(Redo)
                 end;
         {[], []} ->
             %% This may occur during shutdown - as no preflist can be accessed
             %% Just pass at this stage without pausing
-            maybe_redo(Redo)
+            respond_asfail_ifredo(Redo)
     end;
 action({{Bucket, Key}, TombClock, ToRepl}, Redo)
         when is_boolean(ToRepl) ->
@@ -240,7 +240,7 @@ action({{Bucket, Key}, TombClock, ToRepl}, Redo)
                     %% The cluster is busy - reaps need to slow down, so pause
                     %% then requeue this message as-is.  Reap is not replicated
                     %% yet as it has not been applied
-                    maybe_redo(Redo)
+                    respond_asfail_ifredo(Redo)
                 end;
         _ ->
             maybe_repl_reap(Bucket, Key, TombClock, ToRepl),
@@ -288,8 +288,8 @@ setup_reap(Bucket, Key) ->
 %% if the request is marked as valid for redo (i.e. the Redo passed to the
 %% request is true).  If the redo passes is false (redo not supported) - make a
 %% false claim of success (true), so as not to trigger Redo.
--spec maybe_redo(boolean()) -> boolean().
-maybe_redo(Redo) ->
+-spec respond_asfail_ifredo(boolean()) -> boolean().
+respond_asfail_ifredo(Redo) ->
     not Redo.
 
 %% @doc
