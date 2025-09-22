@@ -201,6 +201,10 @@ action({{Bucket, Key}, DeleteHash, Indices}, Redo)
                     %% Some indices were available and the cluster is not
                     %% stressed - so some updates made, and the remaining are
                     %% deferred
+                    %% As an updated request has been sent to redo - this
+                    %% request must be marked as success (i.e. return `true`),
+                    %% to end the cycle of redo for this partially completed
+                    %% request.
                     true;
                 soft_loaded ->
                      %% The cluster is busy - reaps need to slow down, so pause
@@ -280,10 +284,13 @@ setup_reap(Bucket, Key) ->
     }.
 
 %% @doc
-%% Redo by indicating the original request was not successful (false)
+%% Redo by indicating the original request was not successful (false), but only
+%% if the request is marked as valid for redo (i.e. the Redo passed to the
+%% request is true).  If the redo passes is false (redo not supported) - make a
+%% false claim of success (true), so as not to trigger Redo.
 -spec maybe_redo(boolean()) -> boolean().
 maybe_redo(Redo) ->
-    if Redo -> false; true -> true end.
+    not Redo.
 
 %% @doc
 %% Find the available primaries (i.e. primaries on Up nodes) out of a sublist
