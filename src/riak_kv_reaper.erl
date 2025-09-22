@@ -286,7 +286,7 @@ setup_reap(Bucket, Key) ->
 %% @doc
 %% Redo by indicating the original request was not successful (false), but only
 %% if the request is marked as valid for redo (i.e. the Redo passed to the
-%% request is true).  If the redo passes is false (redo not supported) - make a
+%% request is true).  If the redo passed is false (redo not supported) - make a
 %% false claim of success (true), so as not to trigger Redo.
 -spec respond_asfail_ifredo(boolean()) -> boolean().
 respond_asfail_ifredo(Redo) ->
