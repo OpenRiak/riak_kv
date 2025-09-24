@@ -47,11 +47,14 @@ register_all_usage() ->
     clique:register_usage(["riak-admin", "tictacaae", "rangeboost"], simple_envvar_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rangeboost", '*'], simple_envvar_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuildtreeworkers"], pool_size_usage()),
+    clique:register_usage(["riak-admin", "tictacaae", "rebuildtreeworkers", '*', '*'], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuildtreeworkers", '*'], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuildstoreworkers"], pool_size_usage()),
+    clique:register_usage(["riak-admin", "tictacaae", "rebuildstoreworkers", '*', '*'], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuildstoreworkers", '*'], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "aaefoldworkers"], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "aaefoldworkers", '*'], pool_size_usage()),
+    clique:register_usage(["riak-admin", "tictacaae", "aaefoldworkers", '*', '*'], pool_size_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuild-soon"], rebuild_soon_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "rebuild-now"], rebuild_now_usage()),
     clique:register_usage(["riak-admin", "tictacaae", "treestatus"], treestatus_usage()),
@@ -75,10 +78,13 @@ register_all_commands() ->
        get_rangeboost_specs(),
        set_rangeboost_specs(),
        get_rebuildtreeworkers_specs(),
+       set_rebuildtreeworkers_specs2(),
        set_rebuildtreeworkers_specs(),
        get_rebuildstoreworkers_specs(),
+       set_rebuildstoreworkers_specs2(),
        set_rebuildstoreworkers_specs(),
        get_aaefoldworkers_specs(),
+       set_aaefoldworkers_specs2(),
        set_aaefoldworkers_specs(),
        rebuild_soon_specs(),
        rebuild_now_specs(),
@@ -349,6 +355,11 @@ set_rebuildtreeworkers_specs() ->
      '_', [?NODEOPT],
      fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
     ].
+set_rebuildtreeworkers_specs2() ->
+    [["riak-admin", "tictacaae", "rebuildtreeworkers", '*', '*'],
+     '_', [?NODEOPT],
+     fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
+    ].
 
 get_rebuildstoreworkers_specs() ->
     [["riak-admin", "tictacaae", "rebuildstoreworkers"],
@@ -357,6 +368,11 @@ get_rebuildstoreworkers_specs() ->
     ].
 set_rebuildstoreworkers_specs() ->
     [["riak-admin", "tictacaae", "rebuildstoreworkers", '*'],
+     '_', [?NODEOPT],
+     fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
+    ].
+set_rebuildstoreworkers_specs2() ->
+    [["riak-admin", "tictacaae", "rebuildstoreworkers", '*', '*'],
      '_', [?NODEOPT],
      fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
     ].
@@ -371,16 +387,45 @@ set_aaefoldworkers_specs() ->
      '_', [?NODEOPT],
      fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
     ].
+set_aaefoldworkers_specs2() ->
+    [["riak-admin", "tictacaae", "aaefoldworkers", '*', '*'],
+     '_', [?NODEOPT],
+     fun(A, B, C) -> main(fun pool_size_cmd/3, A, B, C) end
+    ].
 
 pool_size_usage() ->
-    ["Set/show node worker pool sizes on NODE:\n\n",
-     "  riak admin tictacaae POOL [-n NODE] [VAL]\n\n",
+    ["Set/show node worker pool size (optionally also max_overflow) on NODE:\n\n",
+     "  riak admin tictacaae POOL [-n NODE] [SIZE [MAX_OVERFLOW]]\n\n",
      "POOL is one of rebuildtreeworkers, rebuildstoreworkers, aaefoldworkers.\n"
     ].
 
 pool_size_cmd([_, _, Var | Args], _, Options) ->
     Nodes = extract_nodes(Options),
     case Args of
+        [Arg1, Arg2] ->
+            case Var of
+                "rebuildtreeworkers" ->
+                    SZ = ensure_valid_range(Arg1, 1, 500),
+                    OF = ensure_valid_range(Arg2, 0, 500),
+                    set_worker_pool_size(Nodes, af1_pool, SZ, OF),
+                    [clique_status_text(
+                       "Set ~s size and max_overflow to ~b and ~b on ~b node~s\n",
+                       [af1_pool, SZ, OF, length(Nodes), ending(Nodes)])];
+                "aaefoldworkers" ->
+                    SZ = ensure_valid_range(Arg1, 1, 500),
+                    OF = ensure_valid_range(Arg2, 0, 500),
+                    set_worker_pool_size(Nodes, af4_pool, SZ, OF),
+                    [clique_status_text(
+                       "Set ~s size and max_overflow to ~b and ~b on ~b node~s\n",
+                       [af4_pool, SZ, OF, length(Nodes), ending(Nodes)])];
+                "rebuildstoreworkers" ->
+                    SZ = ensure_valid_range(Arg1, 1, 500),
+                    OF = ensure_valid_range(Arg2, 0, 500),
+                    set_worker_pool_size(Nodes, be_pool, SZ, OF),
+                    [clique_status_text(
+                       "Set ~s size and max_overflow to ~b on ~b node~s\n",
+                       [be_pool, SZ, OF, length(Nodes), ending(Nodes)])]
+            end;
         [Arg1] ->
             case Var of
                 "rebuildtreeworkers" ->
@@ -415,12 +460,20 @@ pool_size_cmd([_, _, Var | Args], _, Options) ->
 print_pool_size(Pool, Nodes) ->
     [clique_status:table(
        [begin
-            Res = rpc:call(Node, riak_core_node_worker_pool, get_worker_pool_size, [Pool]),
-            [{node, Node}, {Pool, Res}]
+            case rpc:call(Node, riak_core_node_worker_pool, get_worker_pool_size, [Pool]) of
+                {ok, {Size, LatchedSize, MaxOverflow}} ->
+                    [{node, Node}, {size, Size}, {latched_size, LatchedSize}, {max_overflow, MaxOverflow}];
+                {error, Reason} ->
+                    [{node, Node}, {error, Reason}]
+            end
         end || Node <- Nodes])].
 
-set_worker_pool_size(Nodes, Pool, Val) ->
-    [ok = rpc:call(Node, riak_core_node_worker_pool, set_worker_pool_size, [Pool, Val])
+set_worker_pool_size(Nodes, Pool, SZ) ->
+    [ok = rpc:call(Node, riak_core_node_worker_pool, set_worker_pool_size, [Pool, SZ])
+     || Node <- Nodes],
+    Nodes.
+set_worker_pool_size(Nodes, Pool, SZ, OF) ->
+    [ok = rpc:call(Node, riak_core_node_worker_pool, set_worker_pool_size, [Pool, SZ, OF])
      || Node <- Nodes],
     Nodes.
 
