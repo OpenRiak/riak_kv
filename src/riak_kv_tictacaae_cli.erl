@@ -111,7 +111,7 @@ main_usage() ->
 
 -define(NODEOPT, {node, [{shortname, "n"},
                          {longname, "node"},
-                         {typecast, fun clique_typecast:to_node/1}]}).
+                         {typecast, fun to_node/1}]}).
 -define(PARTITIONOPT, {partition, [{shortname, "p"},
                                    {longname, "partition"},
                                    {typecast, fun to_partition/1}]}).
@@ -524,6 +524,11 @@ extract_partitions(Options, Nodes) ->
         false ->
             PP
     end.
+
+to_node("all") ->
+    all;
+to_node(A) ->
+    clique_typecast:to_node(A).
 
 to_partition("all") ->
     all;
