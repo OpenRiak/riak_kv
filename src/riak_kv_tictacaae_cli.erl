@@ -114,7 +114,7 @@ main_usage() ->
      "See individual subcommand usage for options and arguments\n",
      "\n",
      "Unless given specifically with -n NODE, commands are executed on the current node.\n",
-     "NODE (also PARTITION where applicable) can be \"all\"\n"
+     "NODE (also PARTITION where applicable) can be \"all\".\n"
     ].
 
 
