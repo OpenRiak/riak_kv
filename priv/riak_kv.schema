@@ -799,7 +799,7 @@
 %% * 1: Riak 1.4, default buckets, and earlier default - may duplicate siblings
 %%      from interleaved writes (sibling explosion.)
 {mapping, "buckets.default.merge_strategy", "riak_core.default_bucket_props.dvv_enabled", [
-  {default, '1'},
+  {default, '2'},
   {datatype, {flag, '2', '1'}},
   hidden
 ]}.
@@ -1657,7 +1657,7 @@
 %% is not keep, tombstones will still be reaped.
 {mapping, "handoff_deletes", "riak_kv.handoff_deletes", [
     {datatype, {flag, enabled, disabled}},
-    {default, disabled}
+    {default, enabled}
 ]}.
 
 %% @doc Default Secondary Index Timeout (milliseconds)
