@@ -87,7 +87,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", false),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.default_bucket_props.precommit"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.default_bucket_props.postcommit"),
-    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dvv_enabled", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dvv_enabled", true),
     cuttlefish_unit:assert_config(Config, "riak_dt.binary_compression", 1),
     cuttlefish_unit:assert_config(Config, "riak_kv.handoff_use_background_manager", false),
     cuttlefish_unit:assert_config(Config, "riak_kv.aae_use_background_manager", false),
@@ -259,7 +259,7 @@ multi_backend_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", false),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.default_bucket_props.precommit"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.default_bucket_props.postcommit"),
-    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dvv_enabled", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dvv_enabled", true),
     cuttlefish_unit:assert_config(Config, "riak_dt.binary_compression", 1),
 
     cuttlefish_unit:assert_config(Config, "riak_kv.multi_backend_default", <<"backend_one">>),
