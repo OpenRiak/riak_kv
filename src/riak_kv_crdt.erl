@@ -39,6 +39,7 @@
 -include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
 -include_lib("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -524,7 +525,7 @@ to_record(?GSET_TYPE, Val) ->
 
 %% @doc Check cluster capability for crdt support
 supported(Mod) ->
-    lists:member(Mod, riak_core_capability:get({riak_kv, crdt}, [])).
+    lists:member(Mod, ?CAP_CRDT_TYPES).
 
 %% @private get the binary version for a crdt mod, default to `1' for
 %% pre-versioned.
@@ -542,8 +543,7 @@ crdt_version(Mod) ->
             %% use any term except the integer `1' to unset app env
             %% and use capability negotiated CRDT version epoch.
             %% Default to 1 for any unknown CRDT version.
-            NegotiatedCap = riak_core_capability:get({riak_kv, crdt_epoch_versions}, ?E1_DATATYPE_VERSIONS),
-            proplists:get_value(Mod, NegotiatedCap, 1)
+            proplists:get_value(Mod, ?CAP_CRDT_EPOCH, 1)
     end.
 
 %% @doc turn a string token / atom into a

@@ -362,6 +362,21 @@
     {commented, enabled}
 ]}.
 
+%% @doc Allow for deferred fetch on repair
+%% To be used with repair_span option of `double_pair` to improve the eficiency
+%% of repair.  If repair_deferred is enabled, and the backend supports the
+%% fold_heads capability (e.g. leveled), then the fetch of the object will be
+%% deferred until filter functions have been checked - and this will
+%% potentially reduce the number of objects to be read.
+%% If repair_deferred is disabled, an object fold will be used instead of a
+%% head fold - and this has the disadvantage of reading from disk objects which
+%% are either compacted, or being sent by another fold
+{mapping, "repair_deferred", "riak_kv.repair_deferred", [
+    {datatype, {flag, enabled, disabled}},
+    {default, disabled},
+    {commented, disabled}
+]}.
+
 %% @doc Specifies the storage engine used for Riak's key-value data
 %% and secondary indexes (if supported).
 {mapping, "storage_backend", "riak_kv.storage_backend", [

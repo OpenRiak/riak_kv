@@ -42,6 +42,7 @@
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
 -include("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -behaviour(riak_api_pb_service).
 
@@ -87,7 +88,7 @@ process(#rpbcountergetreq{bucket=B, key=K, r=R0, pr=PR0,
                             node_confirms=NC,
                             basic_quorum=BQ},
         #state{client=C} = State) ->
-    case lists:member(pncounter, riak_core_capability:get({riak_kv, crdt}, [])) of
+    case lists:member(pncounter, ?CAP_CRDT_TYPES) of
         true ->
             R = decode_quorum(R0),
             PR = decode_quorum(PR0),
@@ -113,7 +114,7 @@ process(#rpbcounterupdatereq{bucket=B, key=K,  w=W0, dw=DW0, pw=PW0,
                              amount=CounterOp,
                              returnvalue=RetVal},
         #state{client=C} = State) ->
-    case {allow_mult(B), lists:member(pncounter, riak_core_capability:get({riak_kv, crdt}, []))} of
+    case {allow_mult(B), lists:member(pncounter, ?CAP_CRDT_TYPES)} of
         {true, true} ->
             O = riak_kv_crdt:new(B, K, ?V1_COUNTER_TYPE),
 

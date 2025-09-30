@@ -24,6 +24,7 @@
 -behaviour(gen_fsm).
 -include_lib("riak_kv_vnode.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([test_link/7, test_link/5]).
@@ -92,7 +93,6 @@
 -define(DEFAULT_TIMEOUT, 60000).
 -define(DEFAULT_R, default).
 -define(DEFAULT_PR, default).
--define(DEFAULT_RT, head).
 -define(QUEUE_EMPTY_LOOPS, 8).
 
 %% ===================================================================
@@ -292,7 +292,7 @@ prepare(timeout, StateData=#state{bkey=BKey={Bucket,_Key},
                         UpNodes = riak_core_node_watcher:nodes(riak_kv),
                         riak_core_apl:get_apl_ann(DocIdx, N, UpNodes)
                 end,
-            RequestType = get_default_support_request_type(?DEFAULT_RT),
+            RequestType = ?CAP_GETREQUEST_TYPE,
             
             new_state_timeout(validate,
                                 StateData#state{
@@ -835,7 +835,7 @@ update_stats({ok, Obj}, #state{options=Options,
     %% Stat the number of siblings and the object size, and timings
     CRDTMod = get_option(crdt_op, Options),
     NumSiblings = riak_object:value_count(Obj),
-    ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
+    ObjFmt = ?CAP_OBJECT_FORMAT,
     ObjSize = riak_object:approximate_size(ObjFmt, Obj),
     Bucket = riak_object:bucket(Obj),
     ok = riak_kv_stat:update({get_fsm, Bucket, ResponseUSecs, Stages,
@@ -869,11 +869,6 @@ add_timing(Stage, State = #state{timing = Timing}) ->
 details() ->
     [timing,
      vnodes].
-
--spec get_default_support_request_type(Default::request_type()) -> request_type().
-get_default_support_request_type(Default) ->
-    Type = riak_core_capability:get({riak_kv, get_request_type}, Default),
-    Type.
 
 -ifdef(TEST).
 -define(expect_msg(Exp,Timeout),

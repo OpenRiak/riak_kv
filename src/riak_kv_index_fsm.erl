@@ -38,6 +38,7 @@
 -behaviour(riak_core_coverage_fsm).
 
 -include_lib("riak_kv_vnode.hrl").
+-include("riak_kv_capability.hrl").
 
 -define(SLOW_TIME, application:get_env(riak_kv, index_fsm_slow_timems, 200)).
 -define(FAST_TIME, application:get_env(riak_kv, index_fsm_fast_timems, 10)).
@@ -90,7 +91,7 @@
 %% environment.
 -spec use_ack_backpressure() -> boolean().
 use_ack_backpressure() ->
-    riak_core_capability:get({riak_kv, index_backpressure}, false) == true.
+    ?CAP_INDEX_BACKPRESSURE == true.
 
 %% @doc Construct the correct index command record.
 -spec req(binary(), term(), term()) -> term().

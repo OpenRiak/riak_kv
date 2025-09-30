@@ -95,6 +95,7 @@
 -include_lib("riak_kv_map_phase.hrl").
 -include_lib("riak_core_pb.hrl").
 -include("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -382,7 +383,8 @@ maybe_start_aaecontroller(active, State=#state{mod=Mod,
             RootPath, 
             ObjSplitFun,
             AAELogLevels,
-            UpdLeveledOpts
+            UpdLeveledOpts,
+            fun riak_kv_util:tree_include/1
         ),
     ?LOG_INFO("AAE Controller started with pid=~w", [AAECntrl]),
     
@@ -1265,24 +1267,33 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
             % This is normal.  On subsequent runs we expected to see expected
             % and complete to be aligned (and the loop duration with be about
             % expected * tictacaae_exchangetick).
-            ?LOG_INFO("Tictac AAE loop completed for partition=~w with "
-                            ++ "exchanges expected=~w "
-                            ++ "exchanges completed=~w "
-                            ++ "total deltas=~w "
-                            ++ "total exchange_time=~w seconds "
-                            ++ "loop duration=~w seconds (elapsed)",
-                        [Idx,
-                            length(Exchanges),
-                            State#state.tictac_exchangecount,
-                            State#state.tictac_deltacount,
-                            State#state.tictac_exchangetime div (1000 * 1000),
-                            LoopDuration div (1000 * 1000)]),
-            {noreply, State#state{tictac_exchangequeue =
-                                        riak_kv_util:shuffle_list(Exchanges),
-                                    tictac_exchangecount = 0,
-                                    tictac_deltacount = 0,
-                                    tictac_exchangetime = 0,
-                                    tictac_startqueue = Now}};
+            ?LOG_INFO(
+                "Tictac AAE loop completed for partition=~w with "
+                "exchanges expected=~w "
+                "exchanges completed=~w "
+                "total deltas=~w "
+                "total exchange_time=~w seconds "
+                "loop duration=~w seconds (elapsed)",
+                [
+                    Idx,
+                    length(Exchanges),
+                    State#state.tictac_exchangecount,
+                    State#state.tictac_deltacount,
+                    State#state.tictac_exchangetime div (1000 * 1000),
+                    LoopDuration div (1000 * 1000)
+                ]
+            ),
+            {
+                noreply,
+                State#state{
+                    tictac_exchangequeue =
+                        riak_kv_util:shuffle_list(Exchanges),
+                    tictac_exchangecount = 0,
+                    tictac_deltacount = 0,
+                    tictac_exchangetime = 0,
+                    tictac_startqueue = Now
+                }
+            };
         {[{Local, Remote, {DocIdx, N}}|Rest], 0} ->
             PrimaryOnly =
                 app_helper:get_env(riak_kv, tictacaae_primaryonly, true),
@@ -1321,21 +1332,30 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
                         
                         ?AAE_SKIP_COUNT;
                     _ ->
-                        ?LOG_WARNING("Proposed exchange between ~w and ~w " ++ 
-                                        "not currently supported within " ++
-                                        "preflist for IndexN=~w possibly " ++
-                                        "due to node failure",
-                                        [Local, Remote, {DocIdx, N}]),
-                            0
+                        ?LOG_WARNING(
+                            "Proposed exchange between ~w and ~w "
+                            "not currently supported within "
+                            "preflist for IndexN=~w possibly "
+                            "due to node failure",
+                            [Local, Remote, {DocIdx, N}]
+                        ),
+                        0
                 end,
-            ok = aae_controller:aae_ping(State#state.aae_controller,
-                                            os:timestamp(),
-                                            self()),
-            {noreply, State#state{tictac_exchangequeue = Rest,
-                                    tictac_skiptick = SkipCount}};
+            ok =
+                aae_controller:aae_ping(
+                    State#state.aae_controller, os:timestamp(), self()),
+            {
+                noreply,
+                State#state{
+                    tictac_exchangequeue = Rest,
+                    tictac_skiptick = SkipCount
+                }
+            };
         {_, SkipCount} ->
-            ?LOG_WARNING("Skipping a tick due to non_zero " ++
-                            "skip_count=~w", [SkipCount]),
+            ?LOG_WARNING(
+                "Skipping a tick due to non_zero skip_count=~w",
+                [SkipCount]
+            ),
             {noreply, State#state{tictac_skiptick = max(0, SkipCount - 1)}}
     end;
 
@@ -1534,6 +1554,13 @@ handle_command({reset_hashtree_tokens, MinToken, MaxToken}, _Sender, State) ->
             put(hashtree_tokens, MaxToken)
     end,
     {reply, ok, State};
+handle_command(reset_aae_key_filter, _Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            {reply, false, State};
+        Controller ->
+            {reply, aae_controller:aae_reset_key_filter(Controller), State}
+    end;
 
 handle_command({block_vnode, BlockRequest, BlockTimeMS}, Sender, State) ->
     riak_core_vnode:reply(Sender, {blocked, self()}),
@@ -2456,7 +2483,23 @@ handoff_starting({_HOType, TargetNode}=HandoffDest, State=#state{handoffs_reject
 handoff_started(SrcPartition, WorkerPid) ->
     case maybe_get_vnode_lock(SrcPartition, WorkerPid) of
         ok ->
-            FoldOpts = [{iterator_refresh, true}],
+            MaybeFoldHeads =
+                application:get_env(riak_kv, repair_deferred, false)
+                andalso
+                ?CAP_OBJECT_FORMAT == v1,
+            RepairOpts =
+                case MaybeFoldHeads of
+                    true ->
+                        [
+                            {
+                                repair,
+                                [{fold_heads, true}, {check_presence, defer}]
+                            }
+                        ];
+                    _ ->
+                        []
+                end,
+            FoldOpts = [{iterator_refresh, true}|RepairOpts],
             {ok, FoldOpts};
         max_concurrency -> {error, max_concurrency}
     end.
@@ -2488,14 +2531,15 @@ encode_handoff_item({B, K}, V) ->
     %% before sending data to another node change binary version
     %% to one supported by the cluster. This way we don't send
     %% unsupported formats to old nodes
-    ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
     try
-        Value  = riak_object:to_binary_version(ObjFmt, B, K, V),
+        Value  = riak_object:to_binary_version(?CAP_OBJECT_FORMAT, B, K, V),
         encode_binary_object(B, K, Value)
     catch Error:Reason ->
-            ?LOG_WARNING("Handoff encode failed: ~p:~p",
-                          [Error,Reason]),
-            corrupted
+        ?LOG_WARNING("Handoff encode failed: ~0p:~0p", [Error, Reason]),
+        %% If there has been a failure to encode, assume some form of
+        %% corruption.  Need to find an uncorrupt version and repair from there
+        riak_kv_reader:request_read({B, K}),
+        corrupted
     end.
 
 set_vnode_forwarding(Forward, State) ->
@@ -3648,14 +3692,12 @@ do_fold(Fun, Acc0, Sender, ReqOpts, State=#state{async_folding=AsyncFolding,
 %% then the fold_heads function can be used on the backend if it suppports that
 %% capability.
 maybe_use_fold_heads(Capabilities, Opts, Mod) ->
-    case lists:member(fold_heads, Opts) of
+    MaybeFoldHeads =
+        proplists:get_bool(fold_heads, Opts) andalso
+        lists:member(fold_heads, Capabilities),
+    case MaybeFoldHeads of
         true ->
-            case lists:member(fold_heads, Capabilities) of
-                true ->
-                    fun Mod:fold_heads/4;
-                false ->
-                    fun Mod:fold_objects/4
-            end;
+            fun Mod:fold_heads/4;
         false ->
             fun Mod:fold_objects/4
     end.
@@ -4068,7 +4110,7 @@ object_info({Bucket, _Key}=BKey) ->
 %% Encoding and decoding selection:
 
 handoff_data_encoding_method() ->
-    riak_core_capability:get({riak_kv, handoff_data_encoding}, encode_zlib).
+    ?CAP_HANDOFF_DATA_ENCODING.
 
 %% Decode a binary object. Assumes data is in new format, legacy no longer 
 %% format supported
@@ -4177,7 +4219,7 @@ object_format(Mod, ModState) ->
         true ->
             v1;
         false ->
-            riak_core_capability:get({riak_kv, object_format}, v0)
+            ?CAP_OBJECT_FORMAT
     end.
 
 sanitize_bkey({{<<"default">>, B}, K}) ->

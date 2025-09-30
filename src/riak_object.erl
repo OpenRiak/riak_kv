@@ -28,6 +28,7 @@
 -endif.
 -include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
+-include("riak_kv_capability.hrl").
 
 -export_type([riak_object/0, proxy_object/0, bucket/0, key/0, value/0, binary_version/0, index_value/0]).
 
@@ -226,6 +227,8 @@ strict_descendant(O1, O2) ->
 %%       contain the value of the most-recently-updated object, as per the
 %%       X-Riak-Last-Modified header.
 -spec reconcile([riak_object()], boolean()) -> riak_object().
+reconcile([RObj], _AllowMultiple) ->
+    RObj;
 reconcile(Objects, AllowMultiple) ->
     RObj = reconcile(remove_dominated(Objects)),
     case AllowMultiple of
@@ -240,9 +243,9 @@ reconcile(Objects, AllowMultiple) ->
 %% dominated by any other object in the list. Only concurrent /
 %% conflicting objects will remain.
 remove_dominated(Objects) ->
-    All = sets:from_list(Objects),
-    Del = sets:from_list(ancestors(Objects)),
-    sets:to_list(sets:subtract(All, Del)).
+    All = ordsets:from_list(Objects),
+    Del = ordsets:from_list(ancestors(Objects)),
+    ordsets:to_list(ordsets:subtract(All, Del)).
 
 %% @doc Take a list of {Idx, {ok, Object}} tuples that have been the
 %% result of HEAD requests or GET requests. This list MUST be in the
@@ -1197,7 +1200,12 @@ to_binary_version(v0, _, _, <<131,_/binary>>=Bin) ->
 to_binary_version(v1, _, _, <<?MAGIC:8/integer, 1:8/integer, _/binary>>=Bin) ->
     Bin;
 to_binary_version(Vsn, B, K, Bin) when is_binary(Bin) ->
-    to_binary(Vsn, from_binary(B, K, Bin));
+    case from_binary(B, K, Bin) of
+        #p_object{proxy = {FetchFun, Pid, FetchKey}} when is_pid(Pid) ->
+            FetchFun(Pid, FetchKey);
+        RObj ->
+            to_binary(Vsn, RObj)
+    end;
 to_binary_version(Vsn, _B, _K, Obj = #r_object{}) ->
     to_binary(Vsn, Obj).
 
@@ -1674,7 +1682,7 @@ get_last_modified(MD) ->
 %% Fetch the preferred vclock encoding method:
 -spec vclock_encoding_method() -> atom().
 vclock_encoding_method() ->
-    riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib).
+    ?CAP_VCLOCK_ENCODING.
 
 %% Encode a vclock in accordance with our capability setting:
 encode_vclock(VClock) ->

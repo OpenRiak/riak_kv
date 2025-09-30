@@ -148,6 +148,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-include("riak_kv_capability.hrl").
+
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [uses_r_object, async_fold]).
 
@@ -279,16 +281,15 @@ put(_Bucket, _PKey, _IndexSpecs, _Val, #state{op_put = Puts} = S) ->
     {ok, S#state{op_put = Puts + 1}}.
 
 put_object(Bucket, PKey, _IndexSpecs, RObj, #state{op_put = Puts} = S) ->
-    EncodedVal = case S#state.aae_mode of
-                     constant_binary ->
-                         S#state.constant_r_object;
-                     bkey ->
-                         term_to_binary(riak_object:new(Bucket, PKey, <<>>));
-                     r_object ->
-                         ObjFmt = riak_core_capability:get(
-                                    {riak_kv, object_format}, v0),
-                         riak_object:to_binary(ObjFmt, RObj)
-                 end,
+    EncodedVal =
+        case S#state.aae_mode of
+            constant_binary ->
+                S#state.constant_r_object;
+            bkey ->
+                term_to_binary(riak_object:new(Bucket, PKey, <<>>));
+            r_object ->
+                riak_object:to_binary(?CAP_OBJECT_FORMAT, RObj)
+        end,
     {{ok, S#state{op_put = Puts + 1}}, EncodedVal}.
 
 %% @doc Delete an object, yes, sir!

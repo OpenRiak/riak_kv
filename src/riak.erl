@@ -30,6 +30,7 @@
 -export([code_hash/0]).
 
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -106,7 +107,7 @@ client_connect(Node, ClientId= <<_:32>>) ->
             %% or the new vnode based vclocks should be used.
             %% N.B. all nodes must be upgraded to 1.0 before
             %% this can be enabled.
-            case vnode_vclocks(Node) of
+            case ?CAP_RPC_VNODE_VCLOCKS(Node) of
                 {badrpc, _Reason} ->
                     {error, {could_not_reach_node, Node}};
                 true ->
@@ -120,15 +121,6 @@ client_connect(Node, undefined) ->
 client_connect(Node, Other) ->
     client_connect(Node, <<(erlang:phash2(Other)):32>>).
 
-vnode_vclocks(Node) ->
-    case rpc:call(Node, riak_core_capability, get,
-                  [{riak_kv, vnode_vclocks}]) of
-        {badrpc, {'EXIT', {undef, _}}} ->
-            rpc:call(Node, app_helper, get_env,
-                     [riak_kv, vnode_vclocks, false]);
-        Result ->
-            Result
-    end.
 
 %%
 %% @doc Validate that a specified node is accessible and functional.

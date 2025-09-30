@@ -142,6 +142,7 @@
 -include_lib("riak_pipe/include/riak_pipe_log.hrl").
 -include("riak_kv_mrc_sink.hrl").
 -include("riak_kv_index.hrl").
+-include("riak_kv_capability.hrl").
 
 -export_type([map_query_fun/0,
               reduce_query_fun/0,
@@ -274,10 +275,11 @@ mapred_stream_sink({index, _Bucket, <<"$bucket">>, _Start, _End} = Inputs, Query
     %% Optimization exactly when folding whole bucket and using 2i:
     %% set return_body=true as csbucket does, and omit duplicate read
     %% from disk by riak_kv_pipe_listkeys and riak_kv_pipe_get.
-    Options = case riak_core_capability:get({riak_kv, mapred_2i_pipe}, false) of
-                  true -> [?USE_RETURN_BODY_TRUE];
-                  _ -> []
-              end,
+    Options =
+        case ?CAP_MAPRED_2I_PIPE of
+            true -> [?USE_RETURN_BODY_TRUE];
+            _ -> []
+        end,
     mapred_stream_sink(Inputs, Query, Options, Timeout);
 mapred_stream_sink(Inputs, Query, Timeout) ->
     mapred_stream_sink(Inputs, Query, [], Timeout).
@@ -622,7 +624,7 @@ send_inputs(Pipe, {Bucket, FilterExprs}, Timeout) ->
     end;
 send_inputs(Pipe, {index, Bucket, Index, Key}, Timeout) ->
     Query = {eq, Index, Key},
-    case riak_core_capability:get({riak_kv, mapred_2i_pipe}, false) of
+    case ?CAP_MAPRED_2I_PIPE of
         true ->
             riak_kv_pipe_index:queue_existing_pipe(
               Pipe, Bucket, Query, Timeout);
@@ -635,7 +637,7 @@ send_inputs(Pipe, {index, Bucket, Index, Key}, Timeout) ->
 
 send_inputs(Pipe, {index, Bucket, Index, StartKey, EndKey}, Timeout) ->
     Query = {range, Index, StartKey, EndKey},
-    case riak_core_capability:get({riak_kv, mapred_2i_pipe}, false) of
+    case ?CAP_MAPRED_2I_PIPE of
         true ->
             Query2 = case Index of
                         %% This head is special optimization to omit

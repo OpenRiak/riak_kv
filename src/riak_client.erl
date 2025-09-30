@@ -54,6 +54,8 @@
 -export([remove_node_from_coverage/0, reset_node_for_coverage/0]).
 -export([repair_node/0]).
 
+-include("riak_kv_capability.hrl").
+
 -compile({no_auto_import,[put/2]}).
 %% @type default_timeout() = 60000
 -define(DEFAULT_TIMEOUT, 60000).
@@ -127,13 +129,13 @@ maybe_update_consistent_stat(Node, Stat, Bucket, StartTS, Result) ->
     case node() of
         Node ->
             Duration = timer:now_diff(os:timestamp(), StartTS),
-            ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
-            ObjSize = case Result of
-                          {ok, Obj} ->
-                              riak_object:approximate_size(ObjFmt, Obj);
-                          _ ->
-                              undefined
-                      end,
+            ObjSize =
+                case Result of
+                    {ok, Obj} ->
+                        riak_object:approximate_size(?CAP_OBJECT_FORMAT, Obj);
+                    _ ->
+                        undefined
+                end,
             ok = riak_kv_stat:update({Stat, Bucket, Duration, ObjSize});
         _ ->
             ok

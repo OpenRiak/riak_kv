@@ -51,6 +51,7 @@
 
 -include("riak_kv_wm_raw.hrl").
 -include("riak_kv_index.hrl").
+-include("riak_kv_capability.hrl").
 -define(TIMEOUT, 30000).
 -define(BUCKETFIELD, <<"$bucket">>).
 -define(KEYFIELD, <<"$key">>).
@@ -315,8 +316,7 @@ to_index_query(OldVersion, Args) ->
     end.
 
 to_index_query(Args) ->
-    Version = riak_core_capability:get({riak_kv, secondary_index_version}, v1),
-    to_index_query(Version, Args).
+    to_index_query(?CAP_2I_VERSION, Args).
 
 %% @doc upgrade a V1 Query to a v2 Query
 make_query({eq, ?BUCKETFIELD, _Bucket}, Q) ->
