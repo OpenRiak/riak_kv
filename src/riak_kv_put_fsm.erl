@@ -306,6 +306,7 @@ init({test, Args, StateProps}) ->
 
 %% @private
 prepare(timeout, State = #state{robj = RObj, options=Options}) ->
+    riak_kv_stat:update({fsm_spawned, puts}),
     Bucket = riak_object:bucket(RObj),
     BucketProps = get_bucket_props(Bucket),
     StatTracked = get_option(stat_tracked, BucketProps, false),
@@ -720,6 +721,7 @@ handle_info(_Info, _StateName, StateData) ->
 
 %% @private
 terminate(Reason, _StateName, _State) ->
+    riak_kv_stat:update({fsm_exit, puts}),
     Reason.
 
 %% @private

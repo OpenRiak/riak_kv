@@ -49,6 +49,15 @@ init([]) ->
     HTTPCache = {riak_kv_http_cache,
 		 {riak_kv_http_cache, start_link, []},
 		 permanent, 5000, worker, [riak_kv_http_cache]},
+    FloNightingale =
+        {
+            riak_kv_flo_nightingale,
+		    {riak_kv_flo_nightingale, start_link, []},
+            permanent,
+            5000,
+            worker,
+            [riak_kv_flo_nightingale]
+        },
     FastPutSup = {riak_kv_w1c_sup,
                  {riak_kv_w1c_sup, start_link, []},
                  permanent, infinity, supervisor, [riak_kv_w1c_sup]},
@@ -137,8 +146,9 @@ init([]) ->
         ClusterAAEFsmSup,
         HotBackupAAEFsmSup,
         [EnsemblesKV || riak_core_sup:ensembles_enabled()],
+        FloNightingale,
         HTTPCache
     ]),
 
-    % Run the proesses...
+    % Run the processes...
     {ok, {{one_for_one, 10, 10}, Processes}}.

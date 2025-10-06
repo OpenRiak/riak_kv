@@ -40,8 +40,8 @@
          update/1, perform_update/1, register_stats/0, unregister_vnode_stats/1, produce_stats/0,
          leveldb_read_block_errors/0, stat_update_error/3, stop/0]).
 -export([track_bucket/1, untrack_bucket/1]).
--export([active_gets/0, active_puts/0]).
 -export([value/1]).
+-export([flo_stats/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -96,22 +96,6 @@ track_bucket(Bucket) when is_binary(Bucket) ->
 
 untrack_bucket(Bucket) when is_binary(Bucket) ->
     riak_core_bucket:set_bucket(Bucket, [{stat_tracked, false}]).
-
-%% The current number of active get fsms in riak
-active_gets() ->
-    counter_value([?PFX, ?APP, node, gets, fsm, active]).
-
-%% The current number of active put fsms in riak
-active_puts() ->
-    counter_value([?PFX, ?APP, node, puts, fsm, active]).
-
-counter_value(Name) ->
-    case exometer:get_value(Name, [value]) of
-	{ok, [{value, N}]} ->
-	    N;
-	_ ->
-	    0
-    end.
 
 stop() ->
     gen_server:cast(?SERVER, stop).
@@ -175,21 +159,17 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% @doc Update the given stat
-do_update({vnode_get, Idx, USecs}) ->
+do_update({vnode_get, _Idx, USecs}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, vnode, gets], 1),
-    ok = create_or_update([P, ?APP, vnode, gets, time], USecs, histogram),
-    do_per_index(gets, Idx, USecs);
-do_update({vnode_head, Idx, USecs}) ->
+    ok = create_or_update([P, ?APP, vnode, gets, time], USecs, histogram);
+do_update({vnode_head, _Idx, USecs}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, vnode, heads], 1),
-    ok = create_or_update([P, ?APP, vnode, heads, time], USecs, histogram),
-    do_per_index(heads, Idx, USecs);
-do_update({vnode_put, Idx, USecs}) ->
-    P = ?PFX,
-    ok = exometer:update([P, ?APP, vnode, puts], 1),
-    ok = create_or_update([P, ?APP, vnode, puts, time], USecs, histogram),
-    do_per_index(puts, Idx, USecs);
+    ok = create_or_update([P, ?APP, vnode, heads, time], USecs, histogram);
+do_update({vnode_put, _Idx, USecs}) ->
+    riak_kv_flo_nightingale:update_count(vnode_puts),
+    riak_kv_flo_nightingale:update_lossyhistogram(vnode_put_fsm_time, USecs);
 do_update(vnode_index_refresh) ->
     P = ?PFX,
     exometer:update([P, ?APP, vnode, index, refreshes], 1);
@@ -207,9 +187,21 @@ do_update({vnode_index_delete, Postings}) ->
     exometer:update([P, ?APP, vnode, index, deletes, postings], Postings);
 do_update({vnode_dt_update, Mod, Micros}) ->
     P = ?PFX,
-    Type = riak_kv_crdt:from_mod(Mod),
-    ok = create_or_update([P, ?APP, vnode, Type, update], 1, spiral),
-    create_or_update([P, ?APP, vnode, Type, update, time], Micros, histogram);
+    case riak_kv_crdt:from_mod(Mod) of
+        counter ->
+            riak_kv_flo_nightingale:update_count(vnode_counter_update),
+            riak_kv_flo_nightingale:update_lossyhistogram(
+                vnode_counter_update_time,
+                Micros
+            );
+        Type ->
+            ok = create_or_update([P, ?APP, vnode, Type, update], 1, spiral),
+            create_or_update(
+                [P, ?APP, vnode, Type, update, time],
+                Micros,
+                histogram
+            )
+    end;
 do_update({riak_object_merge, undefined, Micros}) ->
     P = ?PFX,
     ok = exometer:update([P, ?APP, object, merge], 1),
@@ -217,8 +209,27 @@ do_update({riak_object_merge, undefined, Micros}) ->
 do_update({riak_object_merge, Mod, Micros}) ->
     P = ?PFX,
     Type = riak_kv_crdt:from_mod(Mod),
-    ok = create_or_update([P, ?APP, object, Type, merge], 1, spiral),
-    create_or_update([P, ?APP, object, Type, merge, time], Micros, histogram);
+    case Type of
+        counter ->
+            riak_kv_flo_nightingale:update_count(
+                object_counter_merge
+            ),
+            riak_kv_flo_nightingale:update_lossyhistogram(
+                object_counter_merge_time,
+                Micros
+            );
+        _ ->
+            ok = create_or_update(
+                [P, ?APP, object, Type, merge],
+                1,
+                spiral
+            ),
+            create_or_update(
+                [P, ?APP, object, Type, merge, time],
+                Micros,
+                histogram
+            )
+        end;
 do_update({get_fsm, Bucket, Microsecs, Stages, undefined, undefined, PerBucket, undefined}) ->
     P = riak_core_stat:prefix(),
     ok = exometer:update([P, ?APP, node, gets], 1),
@@ -258,8 +269,21 @@ do_update({put_fsm_time, Bucket,  Microsecs, Stages, PerBucket, undefined}) ->
 do_update({put_fsm_time, Bucket,  Microsecs, Stages, PerBucket, CRDTMod}) ->
     P = ?PFX,
     Type = riak_kv_crdt:from_mod(CRDTMod),
-    ok = create_or_update([P, ?APP, node, puts, Type], 1, spiral),
-    ok = create_or_update([P, ?APP, node, puts, Type, time], Microsecs, histogram),
+    case Type of
+        counter ->
+            riak_kv_flo_nightingale:update_lossyhistogram(
+                node_put_fsm_counter_time,
+                Microsecs
+            ),
+            riak_kv_flo_nightingale:update_count(node_puts_counter);
+        Type ->
+            create_or_update(
+                [P, ?APP, node, puts, Type, time], 
+                Microsecs,
+                histogram
+            ),
+            create_or_update([P, ?APP, node, puts, Type], 1, spiral)
+    end,
     ok = do_stages([P, ?APP, node, puts, Type, time], Stages),
     do_put_bucket(PerBucket, {Bucket, Microsecs, Stages, Type});
 do_update({index_fsm_time, Microsecs, ResultCount}) ->
@@ -359,10 +383,14 @@ do_update({controller_queue, QueueTime}) ->
     ok = create_or_update([?PFX, ?APP, tictacaae_controller_queue], QueueTime, histogram);
 do_update(write_once_merge) ->
     exometer:update([?PFX, ?APP, write_once_merge], 1);
-do_update({fsm_spawned, Type}) when Type =:= gets; Type =:= puts ->
-    exometer:update([?PFX, ?APP, node, Type, fsm, active], 1);
-do_update({fsm_exit, Type}) when Type =:= gets; Type =:= puts  ->
-    exometer:update([?PFX, ?APP, node, Type, fsm, active], -1);
+do_update({fsm_spawned, gets}) ->
+    riak_kv_flo_nightingale:update_rate(node_get_fsm_active, starting);
+do_update({fsm_spawned, puts}) ->
+    riak_kv_flo_nightingale:update_rate(node_put_fsm_active, starting);
+do_update({fsm_exit, gets}) ->
+    riak_kv_flo_nightingale:update_rate(node_get_fsm_active, stopping);
+do_update({fsm_exit, puts}) ->
+    riak_kv_flo_nightingale:update_rate(node_put_fsm_active, stopping);
 do_update({fsm_error, Type}) when Type =:= gets; Type =:= puts ->
     ok = do_update({fsm_exit, Type}),
     exometer:update([?PFX, ?APP, node, Type, fsm, errors], 1);
@@ -399,6 +427,11 @@ do_update(list_create_error) ->
     exometer:update([?PFX, ?APP, list, fsm, create, error], 1);
 do_update({fsm_destroy, Type}) ->
     exometer:update([?PFX, ?APP, Type, fsm, active], -1);
+do_update({counter, actor_count, Count}) ->
+    riak_kv_flo_nightingale:update_lossyhistogram(
+        counter_actor_counts,
+        Count
+    );
 do_update({Type, actor_count, Count}) ->
     exometer:update([?PFX, ?APP, Type, actor_count], Count);
 do_update({Type, bytes, Bytes}) ->
@@ -457,13 +490,6 @@ monitor_loop(Type) ->
             do_update({fsm_destroy, Type})
     end,
     monitor_loop(Type).
-
-%% Per index stats (by op)
-do_per_index(Op, Idx, USecs) ->
-    IdxAtom = list_to_atom(integer_to_list(Idx)),
-    P = riak_core_stat:prefix(),
-    create_or_update([P, ?APP, vnode, Op, IdxAtom], 1, spiral),
-    create_or_update([P, ?APP, vnode, Op, time, IdxAtom], USecs, histogram).
 
 unregister_per_index(Op, Idx) ->
     IdxAtom = list_to_atom(integer_to_list(Idx)),
@@ -585,13 +611,6 @@ stats() ->
                                            {95    , vnode_head_fsm_time_95},
                                            {99    , vnode_head_fsm_time_99},
                                            {max   , vnode_head_fsm_time_100}]},
-     {[vnode, puts], spiral, [], [{one  , vnode_puts},
-                                  {count, vnode_puts_total}]},
-     {[vnode, puts, time], histogram, [], [{mean  , vnode_put_fsm_time_mean},
-                                           {median, vnode_put_fsm_time_median},
-                                           {95    , vnode_put_fsm_time_95},
-                                           {99    , vnode_put_fsm_time_99},
-                                           {max   , vnode_put_fsm_time_100}]},
      {[vnode, index, refreshes], spiral, [], [{one  ,vnode_index_refreshes},
                                               {count, vnode_index_refreshes_total}]},
      {[vnode, index, reads], spiral, [], [{one  , vnode_index_reads},
@@ -604,13 +623,7 @@ stats() ->
                                             {count, vnode_index_deletes_total}]},
      {[vnode, index, deletes, postings], spiral, [], [{one  , vnode_index_deletes_postings},
                                                       {count, vnode_index_deletes_postings_total}]},
-     {[vnode, counter, update], spiral, [], [{one  , vnode_counter_update},
-                                             {count, vnode_counter_update_total}]},
-     {[vnode, counter, update, time], histogram, [], [{mean  , vnode_counter_update_time_mean},
-                                                      {median, vnode_counter_update_time_median},
-                                                      {95    , vnode_counter_update_time_95},
-                                                      {99    , vnode_counter_update_time_99},
-                                                      {max   , vnode_counter_update_time_100}]},
+
      {[vnode, set, update], spiral, [], [{one  , vnode_set_update},
                                          {count, vnode_set_update_total}]},
      {[vnode, set, update, time], histogram, [], [{mean  , vnode_set_update_time_mean},
@@ -779,13 +792,6 @@ stats() ->
                                           {95    , node_put_fsm_time_95},
                                           {99    , node_put_fsm_time_99},
                                           {max   , node_put_fsm_time_100}]},
-     {[node, puts, counter], spiral, [], [{one  , node_puts_counter},
-                                          {count, node_puts_counter_total}]},
-     {[node, puts, counter, time], histogram, [], [{mean  , node_put_fsm_counter_time_mean},
-                                                   {median, node_put_fsm_counter_time_median},
-                                                   {95    , node_put_fsm_counter_time_95},
-                                                   {99    , node_put_fsm_counter_time_99},
-                                                   {max   , node_put_fsm_counter_time_100}]},
      {[node, puts, set], spiral, [], [{one  , node_puts_set},
                                       {count, node_puts_set_total}]},
      {[node, puts, set, time], histogram, [], [{mean  , node_put_fsm_set_time_mean},
@@ -914,11 +920,6 @@ stats() ->
      {[ttaaefs_manager, snk_ahead], spiral, [], [{count, ttaaefs_snk_ahead_total}]},
 
      %% datatype stats
-     {[counter, actor_count], histogram, [], [{mean  , counter_actor_counts_mean},
-                                              {median, counter_actor_counts_median},
-                                              {95    , counter_actor_counts_95},
-                                              {99    , counter_actor_counts_99},
-                                              {max   , counter_actor_counts_100}]},
      {[set, actor_count], histogram, [], [{mean  , set_actor_counts_mean},
                                           {median, set_actor_counts_median},
                                           {95    , set_actor_counts_95},
@@ -943,13 +944,6 @@ stats() ->
                                              {95    , object_merge_time_95},
                                              {99    , object_merge_time_99},
                                              {max   , object_merge_time_100}]},
-     {[object, counter, merge], spiral, [], [{one, object_counter_merge},
-                                             {count, object_counter_merge_total}]},
-     {[object, counter, merge, time], histogram, [], [{mean  , object_counter_merge_time_mean},
-                                                      {median, object_counter_merge_time_median},
-                                                      {95    , object_counter_merge_time_95},
-                                                      {99    , object_counter_merge_time_99},
-                                                      {max   , object_counter_merge_time_100}]},
      {[object, set, merge], spiral, [], [{one  , object_set_merge},
                                          {count, object_set_merge_total}]},
      {[object, set, merge, time], histogram, [], [{mean  , object_set_merge_time_mean},
@@ -1064,6 +1058,48 @@ bc_stats(Pfx) ->
                           {sys_threads_enabled, erlang, system_info, [threads]},
                           {sys_thread_pool_size, erlang, system_info, [thread_pool_size]},
                           {sys_wordsize, erlang, system_info, [wordsize]}]].
+
+-spec flo_stats() -> list(riak_kv_flo_nightingale:stat_set()).
+flo_stats() ->
+    [
+        {
+            lossy_histogram,
+            [
+                counter_actor_counts,
+                node_put_fsm_counter_time,
+                vnode_put_fsm_time,
+                object_counter_merge_time
+            ]
+        },
+        {
+            lossy_histogram,
+            [
+                vnode_counter_update_time
+            ]
+        },
+        {
+            rate,
+            [
+                node_put_fsm_active,
+                node_get_fsm_active
+            ]
+        },
+        {
+            count,
+            [
+                node_puts_counter,
+                object_counter_merge,
+                vnode_puts
+            ]
+        },
+        {
+            count,
+            [
+                vnode_counter_update
+
+            ]
+        }
+    ].
 
 %% Wrapper for exometer function stats.
 value(V) ->
@@ -1194,6 +1230,7 @@ leveldb_rbe_test_() ->
 
 start_exometer_test_env() ->
     ok = exometer:start(),
+    riak_kv_flo_nightingale:start_link(),
     ok = meck:new(riak_core_ring_manager),
     ok = meck:new(riak_core_ring),
     ok = meck:new(riak_kv_vnode),
@@ -1202,6 +1239,7 @@ start_exometer_test_env() ->
 
 stop_exometer_test_env() ->
     ok = exometer:stop(),
+    ok = riak_kv_flo_nightingale:stop(),
     ok = meck:unload(riak_kv_vnode),
     ok = meck:unload(riak_core_ring),
     meck:unload(riak_core_ring_manager).
@@ -1209,12 +1247,12 @@ stop_exometer_test_env() ->
 create_or_update_histogram_test() ->
     ok = start_exometer_test_env(),
     try
-        Metric = [riak_kv,put_fsm,counter,time],
+        Metric = [riak_kv,get_fsm,counter,time],
         ok = repeat_create_or_update(Metric, 1, histogram, 100),
         ?assertNotEqual(exometer:get_value(Metric), 0),
         Stats = riak_kv_status:get_stats(web),
         ?LOG_INFO("stats prop list ~s", [Stats]),
-        ?assertNotEqual(proplists:get_value({node_put_fsm_counter_time_mean}, Stats), 0)
+        ?assertNotEqual(proplists:get_value({node_get_fsm_counter_time_mean}, Stats), 0)
     after
         ok = stop_exometer_test_env()
     end.

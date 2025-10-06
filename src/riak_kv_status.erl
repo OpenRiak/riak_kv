@@ -83,13 +83,23 @@ are_indexes_fixed(riak_kv_multi_backend, {_Idx, [{backend_status,_,Status}]}) ->
     fixed_index_status(riak_kv_eleveldb_backend, Statuses).
 
 get_stats(web) ->
-    aliases()
-        ++ expand_disk_stats(riak_kv_stat_bc:disk_stats())
-        ++ riak_kv_stat_bc:app_stats();
+    lists:flatten(
+        [
+            aliases(),
+            riak_kv_flo_nightingale:get_stats(),
+            expand_disk_stats(riak_kv_stat_bc:disk_stats()),
+            riak_kv_stat_bc:app_stats()
+        ]
+    );
 get_stats(console) ->
-    aliases()
-        ++ riak_kv_stat_bc:disk_stats()
-        ++ riak_kv_stat_bc:app_stats().
+    lists:flatten(
+        [
+            aliases(),
+            riak_kv_flo_nightingale:get_stats(),
+            riak_kv_stat_bc:disk_stats(),
+            riak_kv_stat_bc:app_stats()
+        ]
+    ).
 
 
 aliases() ->
