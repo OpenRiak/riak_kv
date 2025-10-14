@@ -18,7 +18,7 @@ For later OTP versions, an alternative `openriak-<release>` branch will be requi
 
 You must have [Erlang/OTP 24](http://erlang.org/download.html) to compile and run this version Riak KV. The easiest way to utilise Riak KV is by installing the full Riak application available on [Github](https://github.com/OpenRiak/riak).
 
-## Discussions
+## Discussions
 
 For discussions on Riak development see https://github.com/orgs/OpenRiak/discussions.  For direct contact with the OpenRiak development community please use the `open-riak` channel on the [Slack channel for the Erlang Ecosystem Foundation](https://erlef.org/slack-invite/erlef). 
 
