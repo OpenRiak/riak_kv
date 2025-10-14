@@ -14,7 +14,6 @@ Riak is built on top of the [Erlang/OTP platform](https://github.com/erlang/otp)
 
 For later OTP versions, an alternative `openriak-<release>` branch will be required e.g. []`openriak-3.4` for OTP 26](https://github.com/OpenRiak/riak_kv/tree/openriak-3.4).  See [the roadmap discussion](https://github.com/orgs/OpenRiak/discussions/19) for further details.
 
-
 ## Quick Start
 
 You must have [Erlang/OTP 24](http://erlang.org/download.html) to compile and run this version Riak KV. The easiest way to utilise Riak KV is by installing the full Riak application available on [Github](https://github.com/OpenRiak/riak).
