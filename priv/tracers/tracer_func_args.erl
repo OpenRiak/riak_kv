@@ -78,10 +78,18 @@ stop() ->
     TotalCalls = lists:sum([Count || {_Arg, Count} <- Res]),
     io:format("Total calls: ~p\n", [TotalCalls]),
     io:format("Call stats:\n~p\n", [catch lists:sort(Sort, Res)]),
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     timer:sleep(100),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace, _Pid, call, {_, _, Args}}, {Tab, ArgMangler} = Acc) ->
     Args2 = ArgMangler(Args),

@@ -42,7 +42,13 @@ timeit(Mod, Fun, Arity, Type) ->
     dbg:p(all, call),
     dbg:tpl(Mod, Fun, Arity, [{'_', [], [{return_trace}]}]).
 
-stop() -> dbg:stop_clear().
+-if(?OTP_RELEASE >= 25).
+stop() ->
+    dbg:stop().
+-else.
+stop() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace, Pid, call, {Mod, Fun, _}}, {D, {all, {Count, Max}}}) ->
     D2 = orddict:store({Pid, Mod, Fun}, os:timestamp(), D),

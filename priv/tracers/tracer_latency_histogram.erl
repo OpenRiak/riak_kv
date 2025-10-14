@@ -95,11 +95,19 @@ start(Mod, Func, Arity, RunSeconds) ->
 
 stop() ->
     io:format("Histogram stats:\n~p\n", [catch folsom_metrics:get_histogram_statistics(foo)]),
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     timer:sleep(100),
     catch folsom_metrics:delete_metric(foo),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace_ts, Pid, call, {_, _, _}, TS}, {Dict, LMS}) ->
     {dict:store(Pid, TS, Dict), LMS};

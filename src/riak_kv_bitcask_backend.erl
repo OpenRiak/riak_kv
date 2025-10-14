@@ -230,7 +230,7 @@ get(Bucket, Key, #state{ref=Ref, key_vsn=KVers}=State) ->
 %% NOTE: The bitcask backend does not currently support
 %% secondary indexing and the_IndexSpecs parameter
 %% is ignored.
--type index_spec() :: {add, Index, SecondaryKey} | {remove, Index, SecondaryKey}.
+-type index_spec() :: {add, Index::any(), SecondaryKey::any()} | {remove, Index::any(), SecondaryKey::any()}.
 -spec put(riak_object:bucket(), riak_object:key(), [index_spec()], binary(), state()) ->
                  {ok, state()} |
                  {error, term(), state()}.

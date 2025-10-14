@@ -43,9 +43,17 @@ start(Interval) ->
     {started, TPid}.
 
 stop() ->
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace, _Pid, call, {bitcask, merge_single_entry,
                            [K, V, _TS, _FId, {File,_,_,_}, _State]}},

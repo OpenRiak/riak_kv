@@ -236,8 +236,8 @@ head(Bucket, Key, #state{bookie=Bookie}=State) ->
     end.
 
 %% @doc Insert an object into the leveled backend.
--type index_spec() :: {add, Index, SecondaryKey} |
-                        {remove, Index, SecondaryKey}.
+-type index_spec() :: {add, Index::any(), SecondaryKey::any()} |
+                        {remove, Index::any(), SecondaryKey::any()}.
 
 -spec flush_put(riak_object:bucket(),
                     riak_object:key(),

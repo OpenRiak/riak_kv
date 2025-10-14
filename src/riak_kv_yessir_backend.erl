@@ -272,7 +272,7 @@ make_get_return_val(RObj, false = _WantsBinary, #state{op_get = Gets} = S) ->
     {ok, RObj, S#state{op_get = Gets + 1}}.
 
 %% @doc Store an object, yes, sir!
--type index_spec() :: {add, Index, SecondaryKey} | {remove, Index, SecondaryKey}.
+-type index_spec() :: {add, Index::any(), SecondaryKey::any()} | {remove, Index::any(), SecondaryKey::any()}.
 -spec put(riak_object:bucket(), riak_object:key(), [index_spec()], binary(), state()) ->
                  {ok, state()}.
 put(_Bucket, _PKey, _IndexSpecs, _Val, #state{op_put = Puts} = S) ->

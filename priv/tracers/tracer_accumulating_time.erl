@@ -35,9 +35,17 @@ start(Pid_list, MFA_list, IntervalMS) ->
     {started, TPid}.
 
 stop() ->
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace_ts, Pid, call, {Mod, Func, Arity}, TS}, {Dict}) ->
     MFA = {Mod, Func, Arity},

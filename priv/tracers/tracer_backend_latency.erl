@@ -129,9 +129,17 @@ stop() ->
     %% io:format("Histogram stats:\n~p\n", [catch folsom_metrics:get_histogram_statistics(foo)]),
     %% catch folsom_metrics:delete_metric(foo),
 
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace_ts, Pid, call, {riak_kv_put_fsm, init, _}, TS}, {Dict, LMS}) ->
     {dict:store({put, Pid}, TS, Dict), LMS};

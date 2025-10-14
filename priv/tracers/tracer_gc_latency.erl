@@ -35,11 +35,19 @@ start(LatencyMS) ->
     {started, TPid}.
 
 stop() ->
-    dbg:stop_clear(),
+    stop_clear(),
     catch exit(element(2,dbg:get_tracer()), kill),
     timer:sleep(100),
     catch folsom_metrics:delete_metric(foo),
     stopped.
+
+-if(?OTP_RELEASE >= 25).
+stop_clear() ->
+    dbg:stop().
+-else.
+stop_clear() ->
+    dbg:stop_clear().
+-endif.
 
 trace({trace_ts, Pid, gc_start, _Stats, TS}, {Dict, LMS}) ->
     {dict:store(Pid, TS, Dict), LMS};
