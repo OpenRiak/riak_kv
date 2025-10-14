@@ -12,7 +12,7 @@ Riak is built on top of the [Erlang/OTP platform](https://github.com/erlang/otp)
 
 ![OTP Recommended](https://img.shields.io/badge/OTP_Recommended_Version-_OTP_24_-blue)
 
-For later OTP versions, an alternative `openriak-<release>` branch will be required e.g. []`openriak-3.4` for OTP 26](https://github.com/OpenRiak/riak_kv/tree/openriak-3.4).  See [the roadmap discussion](https://github.com/orgs/OpenRiak/discussions/19) for further details.
+For later OTP versions, an alternative `openriak-<release>` branch will be required e.g. [`openriak-3.4` for OTP 26](https://github.com/OpenRiak/riak_kv/tree/openriak-3.4).  See [the roadmap discussion](https://github.com/orgs/OpenRiak/discussions/19) for further details.
 
 ## Quick Start
 
