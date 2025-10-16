@@ -70,6 +70,7 @@
          handle_corrupted_object/4]).
 
 -include_lib("kernel/include/logger.hrl").
+-include("riak_kv_capability.hrl").
 
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), non_neg_integer()}.
@@ -545,24 +546,22 @@ check_upgrade_env() ->
             false
     end.
 
--spec get_cap_hash_version() -> version().
+-spec get_cap_hash_version() -> 0.
 get_cap_hash_version() ->
-    riak_core_capability:get({riak_kv, object_hash_version}, legacy).
+    ?CAP_OBJECT_HASH_VERSION.
 
 -spec find_version(list(), index()) -> version().
 find_version(Root, Index) ->
     check_root_version(Root, Index, get_cap_hash_version()).
 
--spec check_root_version(list(), index(), version()) -> version().
+-spec check_root_version(list(), index(), 0) -> version().
 check_root_version(Root, Index, Version) when is_integer(Version) ->
     case filelib:is_dir(filename:join(filename:join(Root, "v" ++ integer_to_list(Version)),integer_to_list(Index))) of
         true ->
             Version;
         false ->
             legacy
-    end;
-check_root_version(_Root, _Index, Version) ->
-    Version.
+    end.
 
 %% @doc Init the trees.
 %%

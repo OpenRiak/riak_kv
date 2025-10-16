@@ -36,15 +36,20 @@
         code_change/3,
         format_status/2]).
 
--export([start_link/2,
-            start_job/3,
-            request/2,
-            bulk_request/2,
-            stats/1,
-            immediate_action/2,
-            override_redo/2,
-            clear_queue/1,
-            stop_job/1]).
+-export(
+    [
+        start_link/2,
+        start_job/3,
+        request/2,
+        redo_request/2,
+        bulk_request/2,
+        stats/1,
+        immediate_action/2,
+        override_redo/2,
+        clear_queue/1,
+        stop_job/1
+    ]
+).
 
 -define(REDO_PRIORITY, 1).
 -define(REQUEST_PRIORITY, 2).
@@ -121,6 +126,10 @@ start_job(JobID, Module, RootPath) ->
 -spec request(pid()|module(), term()) -> ok.
 request(Pid, Reference) ->
     gen_server:cast(Pid, {request, Reference, ?REQUEST_PRIORITY}).
+
+-spec redo_request(pid()|module(), term()) -> ok.
+redo_request(Pid, Reference) ->
+    gen_server:cast(Pid, {request, Reference, ?REDO_PRIORITY}).
 
 -spec bulk_request(pid()|module(), list()) -> ok.
 bulk_request(Pid, RefList) ->

@@ -26,7 +26,6 @@
 %% additional reap capacity be required, then reap jobs could start their own
 %% reapers.
 
-
 -module(riak_kv_reaper).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -38,12 +37,14 @@
 -define(QUEUE_LIMIT, 100000).
 -define(OVERFLOW_LIMIT, 10000000).
 -define(REDO_TIMEOUT, 2000).
--define(OVERLOAD_PAUSE_MS, 10000).
 -define(TOMB_PAUSE, 2).
     % Used as flow control in the reaper, shared configuration with the delete
     % process where the pause has a dual-purpose, for both flow control and for
-    % improving the probability that tombstone PUTs are propogated before a
+    % improving the probability that tombstone PUTs are propagated before a
     % reap attempt is prompted
+-define(BUSY_FACTOR, 5).
+    % Multiply the tombstone pause by this factor when there is a soft overload
+    % state.
 
 -export([start_link/0,
             start_job/1,
@@ -62,13 +63,26 @@
             get_limits/0,
             redo/0]).
 
--type reap_reference() ::
+-type index() :: chash:index_as_int().
+-type reap_reference() :: full_reap_request()|partial_reap_request().
+
+-type full_reap_request() ::
     {{riak_object:bucket(), riak_object:key()}, vclock:vclock(), boolean()}.
     %% the reap reference is {Bucket, Key, Clock (of tombstone), Forward}.  The
     %% Forward boolean() indicates if this reap should be replicated if
     %% riak_kv.repl_reap is true.  When a reap is received via replication
     %% Forward should be set to false, to prevent reaps from perpetually
     %% circulating
+-type partial_reap_request() ::
+    {{riak_object:bucket(), riak_object:key()}, non_neg_integer(), [index()]}.
+    %% A request to reap from a specific index, eventually, when this index is
+    %% up and available as a primary.
+    %% Unlike a full reap request a partial reap request cannot be forwarded
+    %% to another cluster.
+    %% The DeleteHash is used rather than the tombstone clock to allow
+    %% for the potential for downstream vnodes to prompt a partial reap request
+    %% (the downstream vnode will only see the DeleteHash, not the clock in the
+    %% reap request).
 -type job_id() :: pos_integer().
 
 -export_type([reap_reference/0, job_id/0]).
@@ -150,36 +164,98 @@ get_limits() ->
     {RedoTimeout, QueueLimit, OverflowLimit}.
 
 %% @doc
-%% If all primaries are up try and reap the tombstone.  The reap may fail, but
-%% we will not redo - redo is only to handle the failure related to unavailable
-%% primaries
+%% Try and reap from as many primaries as are available - and for those not
+%% available defer, and retry until they are available.
+%% The initial message to check all preflists must prompt the replication of
+%% the reap unless that message is to be redone.  If there is some partial reap
+%% then redo should not be used - instead a message with the outstanding
+%% indices is generated instead
 -spec action(reap_reference(), boolean()) -> boolean().
-action({{Bucket, Key}, TombClock, ToRepl}, Redo) ->
-    BucketProps = riak_core_bucket:get_bucket(Bucket),
-    DocIdx = riak_core_util:chash_key({Bucket, Key}, BucketProps),
-    {n_val, N} = lists:keyfind(n_val, 1, BucketProps),
-    PrefList = riak_core_apl:get_primary_apl(DocIdx, N, riak_kv),
-    TombPause = app_helper:get_env(riak_kv, tombstone_pause, ?TOMB_PAUSE),
-    case length(PrefList) of
-        N ->
-            PL0 = lists:map(fun({Target, primary}) -> Target end, PrefList),
-            case check_all_mailboxes(PL0) of
+action({{_Bucket, _Key}, DeleteHash, []}, _Redo) when is_integer(DeleteHash) ->
+    %% Nothing left to do
+    true;
+action({{Bucket, Key}, DeleteHash, Indices}, Redo)
+        when is_integer(DeleteHash), is_list(Indices) ->
+    {TombPause, AplAnn} = setup_reap(Bucket, Key),
+    case find_available(AplAnn, Indices) of
+        {[], Deferred} when Deferred == Indices ->
+            %% There are no indices available, so redo this message
+            %% But pause first - so that the process is not in a tight loop
+            %% re-checking
+            timer:sleep(TombPause),
+            respond_asfail_ifredo(Redo);
+        {Available, Deferred} when Available =/= [] ->
+            case check_all_mailboxes(Available) of
                 ok ->
                     riak_kv_vnode:reap(
-                        PL0,
+                        Available,
                         {Bucket, Key},
-                        riak_object:delete_hash(TombClock)),
-                    maybe_repl_reap(Bucket, Key, TombClock, ToRepl),
+                        DeleteHash
+                    ),
                     timer:sleep(TombPause),
+                    ok = 
+                        riak_kv_queue_manager:redo_request(
+                            ?MODULE,
+                            {{Bucket, Key}, DeleteHash, Deferred}
+                        ),
+                    %% Some indices were available and the cluster is not
+                    %% stressed - so some updates made, and the remaining are
+                    %% deferred
+                    %% As an updated request has been sent to redo - this
+                    %% request must be marked as success (i.e. return `true`),
+                    %% to end the cycle of redo for this partially completed
+                    %% request.
                     true;
                 soft_loaded ->
-                    timer:sleep(?OVERLOAD_PAUSE_MS),
-                    if Redo -> false; true -> true end
-            end;
+                     %% The cluster is busy - reaps need to slow down, so pause
+                    %% then requeue this message as-is.
+                    timer:sleep(TombPause * ?BUSY_FACTOR),
+                    respond_asfail_ifredo(Redo)
+                end;
+        {[], []} ->
+            %% This may occur during shutdown - as no preflist can be accessed
+            %% Just pass at this stage without pausing
+            respond_asfail_ifredo(Redo)
+    end;
+action({{Bucket, Key}, TombClock, ToRepl}, Redo)
+        when is_boolean(ToRepl) ->
+    {TombPause, AplAnn} = setup_reap(Bucket, Key),
+    DeleteHash = riak_object:delete_hash(TombClock),
+    case find_available(AplAnn, all) of
+        {Available, []} ->
+            case check_all_mailboxes(Available) of
+                ok ->
+                    riak_kv_vnode:reap(
+                        Available,
+                        {Bucket, Key},
+                        DeleteHash
+                    ),
+                    maybe_repl_reap(Bucket, Key, TombClock, ToRepl),
+                    timer:sleep(TombPause),
+                    %% All primaries were up, and the reap is replicated so
+                    %% indicate response as success (true)
+                    true;
+                soft_loaded ->
+                    timer:sleep(TombPause * ?BUSY_FACTOR),
+                    %% The cluster is busy - reaps need to slow down, so pause
+                    %% then requeue this message as-is.  Reap is not replicated
+                    %% yet as it has not been applied
+                    respond_asfail_ifredo(Redo)
+                end;
         _ ->
-            if Redo -> false; true -> true end
+            maybe_repl_reap(Bucket, Key, TombClock, ToRepl),
+            ok = 
+                riak_kv_queue_manager:request(
+                    ?MODULE,
+                    {{Bucket, Key}, DeleteHash, indices_in_preflist(AplAnn)}
+                ),
+            %% Not all primaries were available, so this reap request is
+            %% re-queued but with all indices indicated as being required.  The
+            %% reap will now be replicated (as partial reaps never are) - so
+            %% there may be a temporary discrepancy (hence why this is queued
+            %% as an individual reap, which has higher priority than bulk reaps) 
+            true
     end.
-
 
 -spec redo() -> boolean().
 redo() -> true.
@@ -189,6 +265,67 @@ redo() -> true.
 %%%============================================================================
 
 -type preflist_entry() :: {non_neg_integer(), node()}.
+
+-spec setup_reap(
+    riak_object:bucket(), riak_object:key()) ->
+        {non_neg_integer(), riak_core_apl:preflist_ann()}.
+setup_reap(Bucket, Key) ->
+    TombPause = app_helper:get_env(riak_kv, tombstone_pause, ?TOMB_PAUSE),
+    BucketProps = riak_core_bucket:get_bucket(Bucket),
+    DocIdx = riak_core_util:chash_key({Bucket, Key}, BucketProps),
+    {n_val, N} = lists:keyfind(n_val, 1, BucketProps),
+    {
+        TombPause,
+        riak_core_apl:get_apl_ann(
+            DocIdx,
+            N,
+            riak_core_node_watcher:nodes(riak_kv)
+        )
+    }.
+
+%% @doc
+%% Redo by indicating the original request was not successful (false), but only
+%% if the request is marked as valid for redo (i.e. the Redo passed to the
+%% request is true).  If the redo passed is false (redo not supported) - make a
+%% false claim of success (true), so as not to trigger Redo.
+-spec respond_asfail_ifredo(boolean()) -> boolean().
+respond_asfail_ifredo(Redo) ->
+    not Redo.
+
+%% @doc
+%% Find the available primaries (i.e. primaries on Up nodes) out of a sublist
+%% of required primaries.  The `all` keyword is used instead of a sublist
+%% should the availability of all primaries in a preflist be the concern.
+%% Function returns a list of {Idx, Node} tuples for online primaries, and a
+%% list of Index integers for primaries not currently available.
+-spec find_available(
+    riak_core_apl:preflist_ann(), all|list(index())) ->
+        {list({index(), node()}), list(index())}.
+find_available(AplAnn, all) ->
+    find_available(AplAnn, indices_in_preflist(AplAnn), [], []);
+find_available(AplAnn, Indices) ->
+    find_available(AplAnn, Indices, [], []).
+
+find_available([], _Reqd, Available, Deferred) ->
+    {lists:reverse(Available), lists:reverse(Deferred)};
+find_available([{{Idx, Node}, primary}|Rest], Reqd, Available, Deferred) ->
+    case lists:member(Idx, Reqd) of
+        true ->
+            find_available(Rest, Reqd, [{Idx, Node}|Available], Deferred);
+        false ->
+            find_available(Rest, Reqd, Available, Deferred)
+    end;
+find_available([{{Idx, _Node}, fallback}|Rest], Reqd, Available, Deferred) ->
+    case lists:member(Idx, Reqd) of
+        true ->
+            find_available(Rest, Reqd, Available, [Idx|Deferred]);
+        false ->
+            find_available(Rest, Reqd, Available, Deferred)
+    end.
+
+-spec indices_in_preflist(riak_core_apl:preflist_ann()) -> list(index()).
+indices_in_preflist(ApplAnn) ->
+    lists:map(fun({{Idx, _N}, _T}) -> Idx end, ApplAnn).
 
 -spec maybe_repl_reap(
     riak_object:bucket(), riak_object:key(), vclock:vclock(), boolean()) -> ok.
@@ -200,7 +337,6 @@ maybe_repl_reap(Bucket, Key, TombClock, ToReap) ->
         false ->
             ok
     end.
-
 
 %% Protect against overloading the system when not reaping should any
 %% mailbox be in soft overload state
@@ -228,7 +364,6 @@ check_mailbox({Idx, Node}) ->
 
 -ifdef(TEST).
 
-
 test_1inNreapfun(N) ->
     fun(ReapRef, _Bool) ->
         case erlang:phash2({ReapRef, os:timestamp()}) rem N of
@@ -240,6 +375,31 @@ test_1inNreapfun(N) ->
 test_100reap(_ReapRef, _Bool) ->
     true.
 
+find_available_test() ->
+    N1 = 'node1@127.0.0.1',
+    N2 = 'node2@127.0.0.1',
+    N3 = 'node3@127.0.0.1',
+    I1 = 0,
+    I2 = 1 bsl 156,
+    I3 = 2 bsl 156,
+    AplAnn1 = [{{I1, N1}, primary}, {{I2, N2}, primary}, {{I3, N3}, primary}],
+    ?assertMatch(
+        {[{I1, N1}, {I2, N2}, {I3, N3}], []},
+        find_available(AplAnn1, all)
+    ),
+    ?assertMatch(
+        {[{I1, N1}, {I3, N3}], []},
+        find_available(AplAnn1, [I1, I3])
+    ),
+    AplAnn2 = [{{I1, N1}, primary}, {{I2, N2}, primary}, {{I3, N3}, fallback}],
+    ?assertMatch(
+        {[{I1, N1}, {I2, N2}], [I3]},
+        find_available(AplAnn2, all)
+    ),
+    ?assertMatch(
+        {[{I1, N1}], [I3]},
+        find_available(AplAnn2, [I1, I3])
+    ).
 
 standard_reaper_test_() ->
     {timeout, 30, fun standard_reaper_tester/0}.

@@ -38,6 +38,7 @@
 -behaviour(riak_core_coverage_fsm).
 
 -include_lib("riak_kv_vnode.hrl").
+-include("riak_kv_capability.hrl").
 
 -export([init/2,
          process_results/2,
@@ -59,7 +60,7 @@
 %% environment.
 -spec use_ack_backpressure() -> boolean().
 use_ack_backpressure() ->
-    riak_core_capability:get({riak_kv, listkeys_backpressure}, false) == true.
+    ?CAP_KEYS_BACKPRESSURE == true.
 
 %% @doc Construct the correct listkeys command record.
 -spec req(binary(), term()) -> term().

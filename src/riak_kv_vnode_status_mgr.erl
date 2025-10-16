@@ -3,7 +3,8 @@
 %% riak_kv_vnode_status_mgr: Manages persistence of vnode status data
 %% like vnodeid, vnode op counter etc
 %%
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%% Copyright (c) 2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -48,9 +49,11 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-compile({inline, [vnode_epoch_instant/0]}).
+-on_load(init_persistent/0).
+
 -include_lib("kernel/include/logger.hrl").
 
--define(SERVER, ?MODULE).
 %% only 32 bits per counter, when you hit that, get a new vnode id
 -define(MAX_CNTR, 4294967295).
 %% version 2 includes epoch counter, version 1 does not
@@ -72,9 +75,6 @@
                       LeaseSize :: non_neg_integer(),
                       UseEpochCounter :: boolean(),
                       Path :: string()|undefined}.
--type blocking_req() :: clear | {vnodeid, LeaseSize :: non_neg_integer()}.
-
-
 
 %% longer than the call default of 5 seconds, shorter than infinity.
 %% 20 seconds
@@ -193,11 +193,6 @@ version(_UseEpochCounter=false) ->
 %%--------------------------------------------------------------------
 %% @private handle calls
 %%--------------------------------------------------------------------
--spec handle_call(blocking_req(), {pid(), term()}, #state{}) ->
-                         {reply, {ok, {VnodeId :: binary(),
-                                       Counter :: non_neg_integer(),
-                                       LeaseTo :: non_neg_integer()}},
-                          #state{}}.
 handle_call({vnodeid, LeaseSize}, _From, State) ->
     #state{status_file=File, version=Version} = State,
     {ok, Status} = read_vnode_status(File),
@@ -211,14 +206,13 @@ handle_call({vnodeid, LeaseSize}, _From, State) ->
     ok = write_vnode_status(Status2, File, Version),
     Res = {ok, {VnodeId, Counter, LeaseTo}},
     {reply, Res, State};
-handle_call(clear, _From, State) ->
-    #state{status_file=File, version=Version} = State,
+handle_call(clear, _From, #state{status_file=File, version=Version} = State)
+        when File =/= undefined ->
     {ok, Status} = read_vnode_status(File),
     Status2 = orddict:erase(counter, orddict:erase(vnodeid, Status)),
     ok = write_vnode_status(Status2, File, Version),
     {reply, {ok, cleared}, State};
-handle_call(status, _From, State) ->
-    #state{status_file=File} = State,
+handle_call(status, _From, #state{status_file=File} = State) when File =/= undefined ->
     {ok, Status} = read_vnode_status(File),
     {reply, {ok, Status}, State};
 handle_call(stop, _From, State) ->
@@ -230,8 +224,8 @@ handle_call(stop, _From, State) ->
 
 -spec handle_cast({lease, non_neg_integer()}, #state{}) ->
                          {noreply, #state{}}.
-handle_cast({lease, LeaseSize}, State) ->
-    #state{status_file=File, vnode_pid=Pid} = State,
+handle_cast({lease, LeaseSize}, #state{status_file=File, vnode_pid=Pid} = State)
+        when File =/= undefined ->
     {ok, Status} = read_vnode_status(File),
     {_Counter, LeaseTo, VnodeId, UpdStatus} = get_counter_lease(LeaseSize, Status, ?VNODE_STATUS_VERSION),
     ok = write_vnode_status(UpdStatus, File, ?VNODE_STATUS_VERSION),
@@ -261,11 +255,9 @@ code_change(_OldVsn, State, _Extra) ->
 get_counter_lease(_LeaseSize, Status, 1) ->
     case get_status_item(vnodeid, Status, undefined) of
         undefined ->
-            {VnodeId, Status2} = assign_vnodeid(os:timestamp(),
-                                                riak_core_nodeid:get(),
-                                                Status),
-            {0, 0, VnodeId, Status2};
-        ID ->
+            VnodeId = assign_vnodeid(riak_core_nodeid:get()),
+            {0, 0, VnodeId, orddict:store(vnodeid, VnodeId, Status)};
+        ID when is_binary(ID)->
             {0, 0, ID, Status}
     end;
 get_counter_lease(LeaseSize0, Status, ?VNODE_STATUS_VERSION) ->
@@ -280,7 +272,7 @@ get_counter_lease(LeaseSize0, Status, ?VNODE_STATUS_VERSION) ->
     case {Version, PrevLease, VnodeId0} of
         {_, _, undefined} ->
             new_id_and_counter(Status, LeaseSize);
-        {1, undefined, ID} ->
+        {1, undefined, ID} when is_binary(ID) ->
             %% Upgrade, no counter existed, don't force a new vnodeid
             %% Is there still some edge here, with UP->DOWN->UP grade?
             %% We think not. Downgrade would keep the same vnode file,
@@ -297,7 +289,7 @@ get_counter_lease(LeaseSize0, Status, ?VNODE_STATUS_VERSION) ->
             %% where last lease size was ?MAX_CNTR and new lease size
             %% is 0.
             new_id_and_counter(Status, LeaseSize);
-        {_AnyVersion, Leased, ID} ->
+        {_AnyVersion, Leased, ID} when is_integer(Leased), is_binary(ID) ->
             NewLease = Leased + LeaseSize,
             {PrevLease, NewLease, ID, orddict:store(counter, NewLease, Status)}
     end.
@@ -307,10 +299,17 @@ get_counter_lease(LeaseSize0, Status, ?VNODE_STATUS_VERSION) ->
 -spec new_id_and_counter(status(), non_neg_integer()) ->
                                 {non_neg_integer(), non_neg_integer(), binary(), status()}.
 new_id_and_counter(Status, LeaseSize) ->
-    {VnodeId, Status2} = assign_vnodeid(os:timestamp(),
-                                        riak_core_nodeid:get(),
-                                        Status),
-    {0, LeaseSize, VnodeId, orddict:store(counter, LeaseSize, Status2)}.
+    VnodeId = assign_vnodeid(riak_core_nodeid:get()),
+    {
+        0,
+        LeaseSize,
+        VnodeId,
+        orddict:store(
+            vnodeid,
+            VnodeId,
+            orddict:store(counter, LeaseSize, Status)
+        )
+    }.
 
 
 %% @private Provide a `proplists:get_value/3' like function for status
@@ -335,25 +334,43 @@ vnode_status_filename(Index, Path) ->
             Path ->
                 Path
         end,
-    VnodeStatusDir = app_helper:get_env(riak_kv, vnode_status,
-                                        filename:join(P_DataDir, "kv_vnode")),
+    VnodeStatusDir =
+        app_helper:get_env(
+            riak_kv,
+            vnode_status,
+            filename:join(P_DataDir, "kv_vnode")
+        ),
     Filename = filename:join(VnodeStatusDir, integer_to_list(Index)),
     ok = filelib:ensure_dir(Filename),
     Filename.
 
 %% @private Assign a unique vnodeid, making sure the timestamp is
 %% unique by incrementing into the future if necessary.
--spec assign_vnodeid(erlang:timestamp(), binary(), status()) ->
-                            {binary(), status()}.
-assign_vnodeid(Now, NodeId, Status) ->
-    {_Mega, Sec, Micro} = Now,
-    NowEpoch = 1000000*Sec + Micro,
-    LastVnodeEpoch = get_status_item(last_epoch, Status, 0),
-    VnodeEpoch = erlang:max(NowEpoch, LastVnodeEpoch+1),
-    VnodeId = <<NodeId/binary, VnodeEpoch:32/integer>>,
-    UpdStatus = orddict:store(vnodeid, VnodeId,
-                              orddict:store(last_epoch, VnodeEpoch, Status)),
-    {VnodeId, UpdStatus}.
+-spec assign_vnodeid(binary()) -> binary().
+assign_vnodeid(NodeId) ->
+    EpochAtomic = persistent_term:get({?MODULE, last_vnode_epoch}),
+    VnodeEpoch = next_vnode_epoch(EpochAtomic, atomics:get(EpochAtomic, 1)),
+    <<NodeId/binary, VnodeEpoch:32/integer>>.
+
+%% @hidden
+%% Handles contention between parallel calls to ensure the sequence and
+%% uniqueness invariants hold.
+-spec next_vnode_epoch(
+    Atomic :: atomics:atomics_ref(), Last :: vnode_epoch()) -> vnode_epoch().
+next_vnode_epoch(Atomic, Last) ->
+    Now = vnode_epoch_instant(),
+    Next = if
+        Last >= Now ->
+            (Last + 1);
+        true ->
+            Now
+    end,
+    case atomics:compare_exchange(Atomic, 1, Last, Next) of
+        ok ->
+            Next;
+        NewLast ->
+            next_vnode_epoch(Atomic, NewLast)
+    end.
 
 %% @private read the vnode status from `File'. Returns `{ok,
 %% status()}' or `{error, Reason}'. If the file does not exist, an
@@ -417,6 +434,26 @@ consult_stream(Fd, Line, Acc) ->
 	    {ok,lists:reverse(Acc)}
     end.
 
+-type vnode_epoch() :: 0..16#ffffffff.
+
+%% Seconds between 1970-01-01 and 2000-01-01.
+-define(EPOCH_OFFSET_Secs,  946684800).
+
+-spec vnode_epoch_instant() -> vnode_epoch().
+%% @hidden
+%% At time of writing the returned value is less than 30 bits.
+%% This function will be inlined away, it's here only for code clarity.
+vnode_epoch_instant() ->
+    (erlang:system_time(second) - ?EPOCH_OFFSET_Secs).
+
+-spec init_persistent() -> ok.
+%% @hidden
+%% Run at module load, initialization gets too difficult otherwise.
+init_persistent() ->
+    EpochAtomic = atomics:new(1, [{signed, false}]),
+    ok = atomics:put(EpochAtomic, 1, vnode_epoch_instant()),
+    ok = persistent_term:put({?MODULE, last_vnode_epoch}, EpochAtomic).
+
 -ifdef(TEST).
 %% @private don't make testers suffer through the fsync time
 -spec write_vnode_status(status(), file:filename(), Version :: 1 | 2) -> ok.
@@ -442,44 +479,12 @@ v2_v1_v2_test() ->
 
 %% Check assigning a vnodeid twice in the same second
 assign_vnodeid_restart_same_ts_test() ->
-    Now1 = {1314,224520,343446}, %% TS=(224520 * 100000) + 343446
-    Now2 = {1314,224520,343446}, %% as unsigned net-order int <<70,116,143,150>>
     NodeId = <<1, 2, 3, 4>>,
-    {Vid1, Status1} = assign_vnodeid(Now1, NodeId, []),
-    ?assertEqual(<<1, 2, 3, 4, 70, 116, 143, 150>>, Vid1),
-    %% Simulate clear
-    Status2 = orddict:erase(vnodeid, Status1),
-    %% Reassign
-    {Vid2, _Status3} = assign_vnodeid(Now2, NodeId, Status2),
-    ?assertEqual(<<1, 2, 3, 4, 70, 116, 143, 151>>, Vid2).
-
-%% Check assigning a vnodeid with a later date, but less than 11.57
-%% days later!
-assign_vnodeid_restart_later_ts_test() ->
-    Now1 = {1000,224520,343446}, %% <<70,116,143,150>>
-    Now2 = {1000,224520,343546}, %% <<70,116,143,250>>
-    NodeId = <<1, 2, 3, 4>>,
-    {Vid1, Status1} = assign_vnodeid(Now1, NodeId, []),
-    ?assertEqual(<<1, 2, 3, 4, 70,116,143,150>>, Vid1),
-    %% Simulate clear
-    Status2 = orddict:erase(vnodeid, Status1),
-    %% Reassign
-    {Vid2, _Status3} = assign_vnodeid(Now2, NodeId, Status2),
-    ?assertEqual(<<1, 2, 3, 4, 70,116,143,250>>, Vid2).
-
-%% Check assigning a vnodeid with a earlier date - just in case of clock skew
-assign_vnodeid_restart_earlier_ts_test() ->
-    Now1 = {1000,224520,343546}, %% <<70,116,143,250>>
-    Now2 = {1000,224520,343446}, %% <<70,116,143,150>>
-    NodeId = <<1, 2, 3, 4>>,
-    {Vid1, Status1} = assign_vnodeid(Now1, NodeId, []),
-    ?assertEqual(<<1, 2, 3, 4, 70,116,143,250>>, Vid1),
-    %% Simulate clear
-    Status2 = orddict:erase(vnodeid, Status1),
-    %% Reassign
-    %% Should be greater than last offered - which is the 2mil timestamp
-    {Vid2, _Status3} = assign_vnodeid(Now2, NodeId, Status2),
-    ?assertEqual(<<1, 2, 3, 4, 70,116,143,251>>, Vid2).
+    Vid1 = assign_vnodeid(NodeId),
+    Vid2 = assign_vnodeid(NodeId),
+    Vid3 = assign_vnodeid(NodeId),
+    ?assertNotEqual(Vid1, Vid2),
+    ?assertNotEqual(Vid2, Vid3).
 
 -ifndef(GITHUBEXCLUDE).
 

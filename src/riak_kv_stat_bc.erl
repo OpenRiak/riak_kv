@@ -195,18 +195,6 @@ system_version() ->
 system_architecture() ->
     list_to_binary(erlang:system_info(system_architecture)).
 
-%% Count up all monitors, unfortunately has to obtain process_info
-%% from all processes to work it out.
-sys_monitor_count() ->
-    lists:foldl(fun(Pid, Count) ->
-                        case erlang:process_info(Pid, monitors) of
-                            {monitors, Mons} ->
-                                Count + length(Mons);
-                            _ ->
-                                Count
-                        end
-                end, 0, processes()).
-
 app_stats() ->
     [{list_to_atom(atom_to_list(A) ++ "_version"), list_to_binary(V)}
      || {A,_,V} <- application:which_applications()].
