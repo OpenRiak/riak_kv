@@ -1537,7 +1537,26 @@ extract_metadata(<<?MAGIC:8/integer,
             SibsBin/binary>>) ->
     MetaData = extract_metadata1(SibsBin, <<>>),
     binary:copy(<<?MAGIC:8/integer, ?V1_VERS:8/integer,
-        VclockLen:32/integer, VclockBin/binary, SibCount:32/integer, MetaData/binary>>).
+        VclockLen:32/integer, VclockBin/binary, SibCount:32/integer, MetaData/binary>>);
+%% This pulls metadata from v0 Riak Object and returns it as if it were v1.
+extract_metadata(<<131, _/binary>> = V0_Bin) ->
+    RObj = binary_to_term(V0_Bin),
+    #r_object{vclock = VClock, contents = Contents} = RObj,
+    VClockBin = term_to_binary(VClock),
+    VClockLen = byte_size(VClockBin),
+    SibCount = length(Contents),
+    MetaData = lists:foldl(
+        fun(#r_content{metadata = Meta}, Acc) ->
+            MetaBin = meta_bin(Meta),
+            MetaLen = byte_size(MetaBin),
+            <<Acc/binary, 0:32/integer, MetaLen:32/integer, MetaBin/binary>>
+        end,
+        <<>>,
+        Contents
+    ),
+    <<?MAGIC:8/integer, ?V1_VERS:8/integer,
+      VClockLen:32/integer, VClockBin/binary,
+      SibCount:32/integer, MetaData/binary>>.
 
 extract_metadata1(<<>>, Acc) -> Acc;
 extract_metadata1(SibsBin, Acc) ->
@@ -2541,5 +2560,100 @@ multiple_siblings_meta_bin_extraction_test() ->
     ?assert(MetaFound1),
     ?assert(MetaFound2),
     meck:unload(riak_core_bucket).
+
+v0_format_roundtrip_test() ->
+    B = <<"test_bucket">>,
+    K = <<"test_key">>,
+    V = <<"test_value">>,
+
+    Obj = riak_object:new(B, K, V),
+    V0Bin = riak_object:to_binary(v0, Obj),
+    <<131, _/binary>> = V0Bin,
+    Obj2 = riak_object:from_binary(B, K, V0Bin),
+
+    ?assert(riak_object:equal(Obj, Obj2)),
+
+    V0Bin2 = riak_object:to_binary(v0, Obj2),
+
+    ?assertEqual(V0Bin, V0Bin2).
+
+v0_format_with_metadata_test() ->
+    B = <<"bucket_with_meta">>,
+    K = <<"key_with_meta">>,
+    V = {complex, value, [1, 2, 3]},
+
+    MD = dict:from_list([
+        {?MD_CTYPE, "application/erlang"},
+        {<<"X-Custom-Header">>, "custom_value"},
+        {?MD_CHARSET, "utf-8"}
+    ]),
+
+    Obj = riak_object:new(B, K, V, MD),
+    V0Bin = riak_object:to_binary(v0, Obj),
+    Obj2 = riak_object:from_binary(B, K, V0Bin),
+    MD2 = riak_object:get_metadata(Obj2),
+
+    ?assertEqual("application/erlang", dict:fetch(?MD_CTYPE, MD2)),
+    ?assertEqual("custom_value", dict:fetch(<<"X-Custom-Header">>, MD2)),
+    ?assertEqual("utf-8", dict:fetch(?MD_CHARSET, MD2)),
+    ?assertEqual(V, riak_object:get_value(Obj2)).
+
+v0_binary_version_detection_test() ->
+    B = <<"version_bucket">>,
+    K = <<"version_key">>,
+    V = <<"version_value">>,
+
+    Obj = riak_object:new(B, K, V),
+    V0Bin = riak_object:to_binary(v0, Obj),
+
+    ?assertEqual(v0, riak_object:binary_version(V0Bin)),
+
+    V1Bin = riak_object:to_binary(v1, Obj),
+
+    ?assertEqual(v1, riak_object:binary_version(V1Bin)).
+
+v0_to_v1_conversion_test() ->
+    B = <<"conversion_bucket">>,
+    K = <<"conversion_key">>,
+    V = <<"conversion_value">>,
+
+    Obj = riak_object:new(B, K, V),
+    V0Bin = riak_object:to_binary(v0, Obj),
+    V1Bin = riak_object:to_binary_version(v1, B, K, V0Bin),
+
+    ?assertEqual(v1, riak_object:binary_version(V1Bin)),
+
+    V0Bin2 = riak_object:to_binary_version(v0, B, K, V1Bin),
+
+    ?assertEqual(v0, riak_object:binary_version(V0Bin2)),
+
+    Obj1 = riak_object:from_binary(B, K, V1Bin),
+    Obj0 = riak_object:from_binary(B, K, V0Bin2),
+
+    ?assert(riak_object:equal(Obj1, Obj0)).
+
+v0_extract_metadata_test() ->
+    B = <<"extract_bucket">>,
+    K = <<"extract_key">>,
+    V = <<"extract_value">>,
+    MD = dict:from_list([
+        {?MD_CTYPE, "text/plain"},
+        {<<"X-Meta-1">>, "value1"},
+        {<<"X-Meta-2">>, "value2"}
+    ]),
+    Obj = riak_object:new(B, K, V, MD),
+    Obj2 = riak_object:update_last_modified(Obj),
+    V0Bin = riak_object:to_binary(v0, Obj2),
+    MetaBin = riak_object:extract_metadata(V0Bin),
+    <<?MAGIC:8/integer, ?V1_VERS:8/integer, _Bin/binary>> = MetaBin,
+    MetaObj = riak_object:from_binary(B, K, MetaBin),
+
+    ?assertEqual(head_only, riak_object:get_value(MetaObj)),
+
+    ExtractedMD = riak_object:get_metadata(MetaObj),
+
+    ?assertEqual("text/plain", dict:fetch(?MD_CTYPE, ExtractedMD)),
+    ?assertEqual("value1", dict:fetch(<<"X-Meta-1">>, ExtractedMD)),
+    ?assertEqual("value2", dict:fetch(<<"X-Meta-2">>, ExtractedMD)).
 
 -endif.
