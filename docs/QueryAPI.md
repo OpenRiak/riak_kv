@@ -168,7 +168,7 @@ There are three possible alternatives should a more complex match be required on
 - Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceeding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
 - Use a regular expression filter rather than an evaluation and filter expression.  Regular expression filters are PCRE-style regular expressions which will return a result which matches on the regular expression.  These are generally more performant than applying filter and evaluation expressions.
 
-### Example (1) - Wildcards within terms
+### Example (1) - Wildcards within terms
 
 Wildcard style queries against individual string attributes are only supported directly using the regular expression filter type.  When using evaluation and filter expressions, then filter expression functions `begins_with`, `ends_with` and `between` are to be used to support internal wildcards within terms.  For example to match on family names of `SM*KOWSKI` where `*` represents one or more characters a filter expression of `begins_with($fn, "SM") AND ends_with($fn, "KOWSKI") NOT ($fn = "SMKOWSKI)` can apply this filter. 
 
@@ -479,7 +479,7 @@ add ( X math_operand , Y math_operand , OUT_ID identifier )
 
 The final map of projected attributes will be passed as the input to the Filter Expression.
 
-### Filter Expression - Definition
+### Filter Expression - Definition
 
 The Filter expression takes the projected attributes as an input, and the output is either `true` (the term is a match) or `false`.
 
