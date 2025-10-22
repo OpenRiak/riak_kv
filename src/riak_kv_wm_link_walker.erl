@@ -181,7 +181,7 @@ mapreduce_linkfun(Object, _, {Bucket, Tag}) ->
 links(Object) ->
     MDs = riak_object:get_metadatas(Object),
     lists:umerge(
-      [ case dict:find(?MD_LINKS, MD) of
+      [ case riak_object:metadata_find(?MD_LINKS, MD) of
             {ok, L} ->
                 [ [B,K,T] || {{B,K},T} <- lists:sort(L) ];
             error -> []
@@ -465,18 +465,19 @@ multipart_encode_body(RiakObject, Ctx) ->
              ]
      end,
 
-     if Rest /= [] ->
-             ["?",?Q_VTAG,"=",dict:fetch(?MD_VTAG, MD)];
+     if 
+        Rest /= [] ->
+            ["?",?Q_VTAG,"=", riak_object:metadata_fetch(?MD_VTAG, MD)];
         true ->
-             []
+            []
      end,
      "\r\n",
 
      if Rest /= [] ->
              [{HRest_MD, _}|TRest] = Rest,
              ["X-Riak-Sibling-VTags: ",
-              dict:fetch(?MD_VTAG, HRest_MD),
-              [[",", dict:fetch(?MD_VTAG, SMD)]
+              riak_object:metadata_fetch(?MD_VTAG, HRest_MD),
+              [[",", riak_object:metadata_fetch(?MD_VTAG, SMD)]
                || {SMD,_} <- TRest],
               "\r\n"];
         true ->

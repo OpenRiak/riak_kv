@@ -578,7 +578,11 @@ make_binarykey(Bucket, Key) when is_binary(Bucket), is_binary(Key) ->
 %% Update riak_object with the pbcontent provided
 update_rpbcontent(O0, RpbContent) ->
     {MetaData, Value} = riak_pb_kv_codec:decode_content(RpbContent),
-    O1 = riak_object:update_metadata(O0, MetaData),
+    O1 =
+        riak_object:update_metadata(
+            O0,
+            riak_object:metadata_fromlist(MetaData)
+        ),
     riak_object:update_value(O1, Value).
 
 %% Update riak_object with vector clock
