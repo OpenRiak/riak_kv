@@ -35,6 +35,7 @@
         normalize_rw_value/2,
         make_request/2,
         get_index_n/1,
+        get_index_n/2,
         preflist_siblings/1,
         fix_incorrect_index_entries/1,
         fix_incorrect_index_entries/0,
@@ -54,13 +55,15 @@
         shuffle_list/1,
         kv_ready/0,
         ngr_initial_timeout/0,
-        sys_monitor_count/0
+        sys_monitor_count/0,
+        get_bucket_props/1
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 -export([reset_aae_key_filter/0]).
 
 -export([
     profile_riak/1,
+    profile_riak/2,
     top_n_binary_total_memory/1,
     summarise_binary_memory_by_initial_call/1,
     top_n_process_total_memory/1,
@@ -156,11 +159,19 @@ make_request(Request, Index) ->
                                         {fsm, undefined, self()},
                                         Index).
 
-get_bucket_option(Type, BucketProps) ->
-    case lists:keyfind(Type, 1, BucketProps) of
-        {Type, Val} -> Val;
+get_bucket_option(Name, BucketProps) when is_map(BucketProps) ->
+    case maps:get(Name, BucketProps, undefined) of
+        undefined ->
+            get_default_bucket_option(Name);
+        Val ->
+            Val
+    end;
+get_bucket_option(Name, BucketProps) ->
+    case lists:keyfind(Name, 1, BucketProps) of
+        {Name, Val} ->
+            Val;
         _ ->
-            get_default_bucket_option(Type)
+            get_default_bucket_option(Name)
     end.
 
 get_default_bucket_option(Type) ->
@@ -285,6 +296,19 @@ kv_ready() ->
 ngr_initial_timeout() ->
     application:get_env(riak_kv, ngr_initial_timeout, 60000).
 
+-spec get_bucket_props(riak_object:bucket()) -> list().
+get_bucket_props(Bucket) ->
+    BucketProps = riak_core_bucket:get_bucket(Bucket),
+    %% typed buckets never fall back to defaults
+    case is_tuple(Bucket) of
+        false ->
+            {ok, DefaultProps} =
+                application:get_env(riak_core, default_bucket_props),
+            riak_core_bucket_props:merge(BucketProps, DefaultProps);
+        true ->
+            BucketProps
+    end.
+
 %% ===================================================================
 %% Hashtree token management functions
 %% ===================================================================
@@ -358,8 +382,12 @@ reset_aae_key_filter() ->
 -spec get_index_n({binary(), binary()}) -> index_n().
 get_index_n({Bucket, Key}) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
+    get_index_n({Bucket, Key}, BucketProps).
+
+-spec get_index_n({binary(), binary()}, proplists:proplist()) -> index_n().
+get_index_n({Bucket, Key}, BucketProps) ->
     N = proplists:get_value(n_val, BucketProps),
-    ChashKey = riak_core_util:chash_key({Bucket, Key}),
+    ChashKey = riak_core_util:chash_key({Bucket, Key}, BucketProps),
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     Index = chashbin:responsible_index(ChashKey, CHBin),
     {Index, N}.
@@ -754,6 +782,9 @@ summarise_process_memory_by_initial_call(TopN) when is_list(TopN) ->
 %% best to restrict ProfileTime to 100ms.  May fail on systems under heavy load
 -spec profile_riak(pos_integer()) -> analyzed|failed.
 profile_riak(ProfileTime) ->
+    profile_riak(ProfileTime, 8).
+
+profile_riak(ProfileTime, ProfileRatio) ->
     eprof:start(),
     case eprof:start_profiling(erlang:processes()) of
         profiling ->
@@ -761,7 +792,12 @@ profile_riak(ProfileTime) ->
             case eprof:stop_profiling() of
                 profiling_stopped ->
                     eprof:analyze(
-                        total, [{filter, [{time, float(10 * ProfileTime)}]}]
+                        total, [
+                            {
+                                filter,
+                                [{time, float(ProfileRatio * ProfileTime)}]
+                            }
+                        ]
                     ),
                     stopped = eprof:stop(),
                     analyzed;

@@ -27,6 +27,8 @@ As any change made to `buckets.default.*` configuration in `riak.conf` is not in
 
 In general, setting bespoke bucket properties should be done using typed buckets due to the relative efficiency of the implementation with types, but changes to defaults should be considered very carefully.  Bespoke properties allow for bespoke behaviours, but bespoke behaviours add to the cognitive load of future operators.
 
+Note that the properties of a bucket within a type can be overridden by setting properties directly on the bucket itself.  When fetching bucket properties in Riak, there are three levels of inheritance: fixed defaults for types buckets; properties of the type; properties of the specific bucket.  
+
 Default changes made via riak.conf need to be set consistently across a cluster.  No bucket properties are gossipped between clusters, so properties are cluster-specific.  In general any cluster setting related to vector clocks MUST be configured consistently across replicating clusters e.g. `dvv_enabled`, `old_vclock`, `young_vclock`, `big_vclock` and `small_vclock`.  Other properties can be different between clusters. 
 
 Some changes can be applied using GET/PUT specific parameters, which will override the default bucket property i.e. a bucket could be configured to use `{sync_on_write, one}` but a specific PUT can override this by setting `{sync_on_write, all}`.  Although the use of GET/PUT specific parameters is supported, it is is not recommended.  Operation-specific parameters that override defaults are not logged, and can considerably increase the operator challenges when troubleshooting intermittent problems.
@@ -137,3 +139,7 @@ As a consequence though, in the case where there are at least three node failure
 ## General read/write parameters
 
 There are a number of configurable read/write parameters - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  It is strongly recommended to stick to default quorum settings.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+
+## vnode_object_cache
+
+If a vnode_object_cache has been configured, then setting the bucket property `{vonde_object_cache, true}` will allow the vnode to cache the object to accelerate PUTs.  Each PUT will require a fetch of the object at the coordinating vnode, and PUTs may be accelerated if the fetch instead can be taken from an in-memory per-vnode cache.  The cache is specifically designed for small objects that may receive very frequent updates (e.g. counters).  See the riak.conf file for more information on the configuration of the cache.

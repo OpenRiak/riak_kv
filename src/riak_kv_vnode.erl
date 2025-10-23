@@ -100,7 +100,7 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("riak_core/include/riak_core_bg_manager.hrl").
--export([put_merge/6]). %% For fsm_eqc_vnode
+-export([put_merge/8]). %% For fsm_eqc_vnode
 -endif.
 
 -record(mrjob, {cachekey :: term(),
@@ -145,8 +145,8 @@
                 forward :: node() | [{integer(), node()}],
                 hashtrees :: pid() | undefined,
                 upgrade_hashtree = false :: boolean(),
-                md_cache :: ets:tab(),
-                md_cache_size :: pos_integer(),
+                vnode_object_cache = none :: ets:tid()|none,
+                vnode_object_cache_size = 0 :: non_neg_integer(),
                 counter :: #counter_state{},
                 status_mgr_pid :: pid(), %% a process that manages vnode status persistence
                 tictac_aae = false :: boolean(),
@@ -193,7 +193,6 @@
 -type hook_old_object() :: riak_object:riak_object()|no_old_object.
     % Type for old objects to be passed into hooks
 
--define(MD_CACHE_BASE, "riak_kv_vnode_md_cache").
 -define(DEFAULT_HASHTREE_TOKENS, 90).
 
 %% default value for `counter_lease' in `#counter_state{}'
@@ -853,17 +852,25 @@ init([Index]) ->
     {ok, {VId, CounterState}} = get_vnodeid_and_counter(StatusMgr, CounterLeaseSize, UseEpochCounter),
     DeleteMode = app_helper:get_env(riak_kv, delete_mode, 3000),
     AsyncFolding = app_helper:get_env(riak_kv, async_folds, true) == true,
-    MDCacheSize = app_helper:get_env(riak_kv, vnode_md_cache_size),
-    MDCache =
-        case MDCacheSize of
-            N when is_integer(N),
-                   N > 0 ->
-                ?LOG_DEBUG("Initializing metadata cache with size limit: ~p bytes",
-                           [MDCacheSize]),
-                new_md_cache(VId);
-            _ ->
-                ?LOG_DEBUG("No metadata cache size defined, not starting"),
-                undefined
+    VnodeCacheSize = app_helper:get_env(riak_kv, vnode_object_cache_size, 0),
+    VnodeCache =
+        case VnodeCacheSize of
+            N when is_integer(N), N > 0 ->
+                ets:new(
+                    vnode_object_cache, 
+                    [
+                        set,
+                        {write_concurrency, false},
+                        {read_concurrency, false}]
+                );
+            0 ->
+                none;
+            InvalidN ->
+                ?LOG_WARNING(
+                    "Attempt to set vnode cache with invalid size ~w",
+                    [InvalidN]
+                ),
+                none
         end,
     EnableTictacAAE = 
         app_helper:get_env(riak_kv, tictacaae_active, passive),
@@ -887,27 +894,30 @@ init([Index]) ->
                 _ ->
                     false
             end,
-            State = #state{idx=Index,
-                           async_folding=AsyncFolding,
-                           mod=Mod,
-                           async_put = DoAsyncPut,
-                           modstate=ModState,
-                           vnodeid=VId,
-                           counter=CounterState,
-                           status_mgr_pid=StatusMgr,
-                           delete_mode=DeleteMode,
-                           bucket_buf_size=BucketBufSize,
-                           index_buf_size=IndexBufSize,
-                           key_buf_size=KeyBufSize,
-                           mrjobs=dict:new(),
-                           md_cache=MDCache,
-                           md_cache_size=MDCacheSize,
-                           worker_pool_strategy=WorkerPoolStrategy,
-                           update_hook=update_hook(),
-                           max_aae_queue_time=MaxAAEQueueTime,
-                           aae_tokenbucket=TokenBucket,
-                           enable_nextgenreplsrc = EnableNextGenReplSrc,
-                           sizelimit_nextgenreplsrc = SizeLimitNextGenReplSrc},
+            State =
+                #state{
+                    idx=Index,
+                    async_folding=AsyncFolding,
+                    mod=Mod,
+                    async_put = DoAsyncPut,
+                    modstate=ModState,
+                    vnodeid=VId,
+                    counter=CounterState,
+                    status_mgr_pid=StatusMgr,
+                    delete_mode=DeleteMode,
+                    bucket_buf_size=BucketBufSize,
+                    index_buf_size=IndexBufSize,
+                    key_buf_size=KeyBufSize,
+                    mrjobs=dict:new(),
+                    vnode_object_cache = VnodeCache,
+                    vnode_object_cache_size = VnodeCacheSize,
+                    worker_pool_strategy=WorkerPoolStrategy,
+                    update_hook=update_hook(),
+                    max_aae_queue_time=MaxAAEQueueTime,
+                    aae_tokenbucket=TokenBucket,
+                    enable_nextgenreplsrc = EnableNextGenReplSrc,
+                    sizelimit_nextgenreplsrc = SizeLimitNextGenReplSrc
+                },
             try_set_vnode_lock_limit(Index),
             case AsyncFolding of
                 true ->
@@ -1099,7 +1109,15 @@ handle_command({hashtree_pid, Node}, _, State=#state{hashtrees=HT}) ->
 handle_command({rehash, Bucket, Key}, _, State=#state{mod=Mod, modstate=ModState}) ->
     case do_get_binary(Bucket, Key, Mod, ModState) of
         {ok, Bin, _UpdModState} ->
-            aae_update(Bucket, Key, use_binary, unknown_no_old_object, Bin, State);
+            aae_update(
+                Bucket,
+                Key,
+                use_binary,
+                unknown_no_old_object,
+                Bin,
+                undefined,
+                State
+            );
         _ ->
             %% Make sure hashtree isn't tracking deleted data
             aae_delete(Bucket, Key, confirmed_no_old_object, State)
@@ -1122,20 +1140,32 @@ handle_command({refresh_index_data, BKey, OldIdxData}, Sender,
                         {false, undefined, [], UpModState}
                 end,
             IndexSpecs = riak_object:diff_index_data(OldIdxData, IdxData),
-
+            _UpdVnodeCache =
+                maybe_cache_evict(
+                    BKey,
+                    State#state.vnode_object_cache,
+                    State#state.vnode_object_cache_size,
+                    not_fetched
+                ),
             {Reply, ModState3} =
-            case Mod:put(Bucket, Key, IndexSpecs, undefined, ModState2) of
-                {ok, UpModState2} ->
-                    ok = riak_kv_stat:update(vnode_index_refresh),
-                    {ok, UpModState2};
-                {error, Reason, UpModState2} ->
-                    {{error, Reason}, UpModState2}
-            end,
+                case Mod:put(Bucket, Key, IndexSpecs, undefined, ModState2) of
+                    {ok, UpModState2} ->
+                        ok = riak_kv_stat:update(vnode_index_refresh),
+                        {ok, UpModState2};
+                    {error, Reason, UpModState2} ->
+                        {{error, Reason}, UpModState2}
+                end,
             case Exists of
                 true ->
-                    aae_update(Bucket, Key, 
-                                RObj, unknown_no_old_object, use_object, 
-                                State);
+                    aae_update(
+                        Bucket,
+                        Key, 
+                        RObj,
+                        unknown_no_old_object,
+                        use_object,
+                        undefined, 
+                        State
+                    );
                 false ->
                     aae_delete(Bucket, Key, confirmed_no_old_object, State)
             end,
@@ -1636,7 +1666,15 @@ handle_request(kv_w1c_put_request, Req, _Sender, State=#state{async_put=false, u
     StartTS = os:timestamp(),
     case Mod:put(Bucket, Key, [], EncodedVal, ModState) of
         {ok, UpModState} ->
-            aae_update(Bucket, Key, use_binary, assumed_no_old_object, EncodedVal, State),
+            aae_update(
+                Bucket,
+                Key,
+                use_binary,
+                assumed_no_old_object,
+                EncodedVal,
+                undefined,
+                State
+            ),
                 % Write once path - and so should be a new object.  If not this
                 % is an application fault
             maybe_update_binary(UpdateHook, Bucket, Key, EncodedVal, put, Idx),
@@ -2617,7 +2655,15 @@ terminate(_Reason, #state{idx=Idx,
 
 handle_info({{w1c_async_put, From, Type, Bucket, Key, EncodedVal, StartTS} = _Context, Reply},
             State=#state{idx=Idx, update_hook=UpdateHook}) ->
-    aae_update(Bucket, Key, use_binary, assumed_no_old_object, EncodedVal, State),
+    aae_update(
+        Bucket,
+        Key,
+        use_binary,
+        assumed_no_old_object,
+        EncodedVal,
+        undefined,
+        State
+    ),
         % Write once path - and so should be a new object.  If not this
         % is an application fault
     maybe_update_binary(UpdateHook, Bucket, Key, EncodedVal, put, Idx),
@@ -2835,26 +2881,25 @@ do_put(Sender, Request, State) ->
 %% @private
 %% upon receipt of a client-initiated put
 do_put(Sender, {Bucket, _Key}=BKey, RObj, ReqID, StartTime, Options, State) ->
-    BProps =  case proplists:get_value(bucket_props, Options) of
-                  undefined ->
-                      riak_core_bucket:get_bucket(Bucket);
-                  Props ->
-                      Props
-              end,
-    ReadRepair = proplists:get_value(rr, Options, false),
-    PruneTime = case ReadRepair of
-                    true ->
-                        undefined;
-                    false ->
-                        StartTime
-                end,
-    Coord = proplists:get_value(coord, Options, false),
-    SyncOnWrite = proplists:get_value(sync_on_write, Options, undefined),
-    CRDTOp = proplists:get_value(counter_op, Options, proplists:get_value(crdt_op, Options, undefined)),
+   {ReadRepair, Coord, SyncOnWrite, ReturnBody, CRDTOp, BucketProps} =
+        get_put_options(Options),
+    PruneTime =
+        case ReadRepair of
+            true ->
+                undefined;
+            false ->
+                StartTime
+        end,
+    BProps = 
+        case BucketProps of
+            undefined ->
+                riak_kv_util:get_bucket_props(Bucket);
+            OptionProps ->
+                OptionProps
+        end,
     PutArgs = 
         #putargs{
-            returnbody =
-                proplists:get_value(returnbody,Options,false) orelse Coord,
+            returnbody = ReturnBody orelse Coord,
             coord=Coord,
             lww=proplists:get_value(last_write_wins, BProps, false),
             bkey=BKey,
@@ -2866,13 +2911,43 @@ do_put(Sender, {Bucket, _Key}=BKey, RObj, ReqID, StartTime, Options, State) ->
             prunetime=PruneTime,
             crdt_op = CRDTOp,
             sync_on_write = SyncOnWrite,
-            reason = put},
+            reason = put
+        },
     {PrepPutRes, UpdPutArgs, State2} = prepare_put(State, PutArgs),
     {Reply, UpdState} = perform_put(PrepPutRes, State2, UpdPutArgs),
     riak_core_vnode:reply(Sender, Reply),
 
     update_index_write_stats(UpdPutArgs#putargs.is_index, UpdPutArgs#putargs.index_specs),
     {Reply, UpdState}.
+
+
+get_put_options(Options) ->
+    get_put_options(
+        Options,
+        false,
+        false,
+        undefined,
+        false,
+        proplists:get_value(crdt_op, Options, undefined),
+        undefined
+    ).
+
+get_put_options([], RR, CD, SW, RB, CO, BP) ->
+    {RR, CD, SW, RB, CO, BP};
+get_put_options([rr|Opts], _RR, CD, SW, RB, CO, BP) ->
+    get_put_options(Opts, true, CD, SW, RB, CO, BP);
+get_put_options([coord|Opts], RR, _CD, SW, RB, CO, BP) ->
+    get_put_options(Opts, RR, true, SW, RB, CO, BP);
+get_put_options([{sync_on_write, SW}|Opts], RR, CD, _SW, RB, CO, BP) ->
+    get_put_options(Opts, RR, CD, SW, RB, CO, BP);
+get_put_options([{returnbody, RB}|Opts], RR, CD, SW, _RB, CO, BP) ->
+    get_put_options(Opts, RR, CD, SW, RB, CO, BP);
+get_put_options([{counter_op, CO}|Opts], RR, CD, SW, RB, _CO, BP) ->
+    get_put_options(Opts, RR, CD, SW, RB, CO, BP);
+get_put_options([{bucket_props, BP}|Opts], RR, CD, SW, RB, CO, _BP) ->
+    get_put_options(Opts, RR, CD, SW, RB, CO, BP);
+get_put_options([_Opts|Opts], RR, CD, SW, RB, CO, BP) ->
+    get_put_options(Opts, RR, CD, SW, RB, CO, BP).
 
 
 %% @doc Remove a tombstone, assuming the state of the object currently in the
@@ -2913,16 +2988,25 @@ do_backend_delete(BKey, RObj, State = #state{idx = Idx,
 
     %% Do the delete...
     {Bucket, Key} = BKey,
-    case Mod:delete(Bucket, Key, IndexSpecs, ModState) of
-        {ok, UpdModState} ->
-            maybe_update(UpdateHook, {RObj, no_old_object}, delete, Idx),
-            aae_delete(Bucket, Key, RObj, State),
-            maybe_cache_evict(BKey, State),
-            update_index_delete_stats(IndexSpecs),
-            State#state{modstate = UpdModState};
-        {error, _Reason, UpdModState} ->
-            State#state{modstate = UpdModState}
-    end.
+    %% Update the cache first - in case error did mutate state
+    _UpdatedVnodeCache =
+        maybe_cache_evict(
+            BKey,
+            State#state.vnode_object_cache,
+            State#state.vnode_object_cache_size,
+            not_fetched  
+        ),
+    UpdModState =
+        case Mod:delete(Bucket, Key, IndexSpecs, ModState) of
+            {ok, NewModState} ->
+                maybe_update(UpdateHook, {RObj, no_old_object}, delete, Idx),
+                aae_delete(Bucket, Key, RObj, State),
+                update_index_delete_stats(IndexSpecs),
+                NewModState;
+            {error, _Reason, NewModState} ->
+                NewModState
+        end,
+    State#state{modstate = UpdModState}.
 
 %% @doc
 %% Prepare PUT needs to prepare the correct transition from old object to new
@@ -2978,63 +3062,154 @@ prepare_blind_put(Coord, RObj, VId, StartTime, PutArgs, State) ->
         PutArgs#putargs{is_index = false}, State}.
 
 prepare_read_before_write_put(
-        #state{mod = Mod, modstate = ModState, md_cache = MDCache}=State,
-        #putargs{bkey={Bucket, Key}=BKey, robj=RObj, coord=Coord}=PutArgs,
+        #state{
+            mod = Mod,
+            modstate = ModState,
+            vnode_object_cache = Cache,
+            vnode_object_cache_size = CacheSize
+        }=State,
+        #putargs{
+            bkey = {Bucket, Key}=BKey,
+            robj = RObj,
+            coord = Coord,
+            bprops = BProps}=PutArgs,
         IndexBackend,
-        IsSearchable) ->
-    {CacheClock, CacheData} =
+        IsSearchable
+) ->
+    {DVV, WriteOnce, AllowMult, VnodeCache} = get_put_properties(BProps),
+    MaybeFetched =
         maybefetch_clock_and_indexdata(
-            MDCache, BKey, Mod, ModState, Coord, IsSearchable),
-    {GetReply, RequiresGet} =
-        case CacheClock of
-            not_found ->
-                {not_found, false};
-            _ ->
+            Cache,
+            CacheSize,
+            BKey,
+            Mod,
+            ModState,
+            Coord,
+            IsSearchable,
+            VnodeCache
+        ),
+
+    {OldObj, CachedIdxSpecs, RequiresGet} =
+        case MaybeFetched of
+            {not_found, undefined} ->
+                {not_found, undefined, false};
+            {cached, CachedObj} ->
+                {CachedObj, undefined, false};
+            {head, CachedClock, CachedIndexes} ->
                 ReqGet =
-                    determine_requires_get(CacheClock, RObj, IsSearchable),
-                {get_old_object_or_fake(
-                        ReqGet, Bucket, Key, Mod, ModState, CacheClock),
-                    ReqGet}
+                    not vclock:dominates(riak_object:vclock(RObj), CachedClock)
+                        orelse IsSearchable,
+                {
+                    get_old_object_or_fake(
+                        ReqGet, Bucket, Key, Mod, ModState, CachedClock
+                    ),
+                    CachedIndexes,
+                    ReqGet
+                };
+            not_determined ->
+                {
+                    get_old_object_or_fake(
+                        true, Bucket, Key, Mod, ModState, undefined
+                    ),
+                    undefined,
+                    true
+                }
         end,
-    case GetReply of
+    case OldObj of
         not_found ->
             prepare_put_new_object(State, PutArgs, IndexBackend);
-        {ok, OldObj} ->
+        OldObj ->
             prepare_put_existing_object(
-                State, PutArgs, OldObj, IndexBackend, CacheData, RequiresGet)
+                State,
+                PutArgs,
+                OldObj,
+                IndexBackend,
+                CachedIdxSpecs,
+                RequiresGet,
+                DVV,
+                WriteOnce,
+                AllowMult
+            )
     end.
 
-prepare_put_existing_object(#state{idx =Idx} = State,
-                    #putargs{coord=Coord,
-                             robj = RObj,
-                             lww=LWW,
-                             starttime = StartTime,
-                             bprops = BProps,
-                             prunetime=PruneTime,
-                             crdt_op = CRDTOp}=PutArgs,
-                            OldObj, IndexBackend, CacheData, RequiresGet) ->
+
+prepare_put_existing_object(
+    #state{idx =Idx} = State,
+    #putargs{
+        coord=Coord,
+        robj = RObj,
+        lww=LWW,
+        starttime = StartTime,
+        bprops = BProps,
+        prunetime=PruneTime,
+        crdt_op = CRDTOp}=PutArgs,
+    OldObj,
+    IndexBackend,
+    CachedIdxSpecs,
+    RequiresGet,
+    DVV,
+    WriteOnce,
+    AllowMult
+) ->
     {IsNewEpoch, ActorId, State2} = maybe_new_key_epoch(Coord, State, OldObj, RObj),
-    case put_merge(Coord, LWW, OldObj, RObj, {IsNewEpoch, ActorId}, StartTime) of
+    MergeResult =
+        put_merge(
+            Coord,
+            LWW,
+            OldObj,
+            RObj,
+            {IsNewEpoch, ActorId},
+            StartTime,
+            WriteOnce,
+            DVV
+        ),
+    case MergeResult of
         {oldobj, OldObj} ->
             {{false, {OldObj, unchanged_no_old_object}}, PutArgs, State2};
         {newobj, NewObj} ->
-            case enforce_allow_mult(NewObj, OldObj, BProps) of
+            case enforce_allow_mult(NewObj, OldObj, AllowMult) of
                 {ok, AMObj} ->
                     IndexSpecs =
-                        get_index_specs(IndexBackend, CacheData, RequiresGet,
-                                        AMObj, OldObj),
+                        get_index_specs(
+                            IndexBackend,
+                            CachedIdxSpecs,
+                            RequiresGet,
+                            AMObj,
+                            OldObj
+                        ),
                     ObjToStore0 =
                         maybe_prune_vclock(PruneTime, AMObj, BProps),
                     ObjectToStore =
-                        maybe_do_crdt_update(Coord, CRDTOp, ActorId,
-                                                ObjToStore0),
-                    determine_put_result(ObjectToStore, OldObj, Idx,
-                                            PutArgs, State2,
-                                            IndexSpecs, IndexBackend);
+                        maybe_do_crdt_update(
+                            Coord, CRDTOp, ActorId, ObjToStore0),
+                    determine_put_result(
+                        ObjectToStore,
+                        OldObj,
+                        Idx,
+                        PutArgs,
+                        State2,
+                        IndexSpecs, IndexBackend
+                    );
                 {error, Reason} ->
                     ?LOG_ERROR("Error on allow_mult ~w", [Reason]),
                     {{fail, Idx, Reason}, PutArgs, State2}
             end
+    end.
+
+get_put_properties(BProps) ->
+    {
+        keyfind(dvv_enabled, BProps, true),
+        keyfind(write_once, BProps, false),
+        keyfind(allow_mult, BProps, undefined),
+        keyfind(vnode_object_cache, BProps, false)
+    }.
+
+keyfind(Key, BProps, Default) when is_atom(Key) ->
+    case lists:keyfind(Key, 1, BProps) of
+        {Key, Value} ->
+            Value;
+        _ ->
+            Default
     end.
 
 determine_put_result({error, E}, _, Idx, PutArgs, State, _IndexSpecs, _IndexBackend) ->
@@ -3049,35 +3224,34 @@ maybe_prune_vclock(_PruneTime=undefined, RObj, _BProps) ->
 maybe_prune_vclock(PruneTime, RObj, BProps) ->
     riak_object:prune_vclock(RObj, PruneTime, BProps).
 
-get_index_specs(_IndexedBackend=true, CacheData, RequiresGet, NewObj, OldObj) ->
-    case CacheData /= undefined andalso
-         RequiresGet == false of
-        true ->
-            NewData = riak_object:index_data(NewObj),
-            % Note diff_index_data and diff_index_specs take inputs in reverse!
-            riak_object:diff_index_data(CacheData,
-                                        NewData);
-        false ->
-            riak_object:diff_index_specs(NewObj,
-                                         OldObj)
-    end;
+get_index_specs(false, _CacheData, _RequiresGet, _NewObj, _OldObj) ->
+    [];
+get_index_specs(true, OldSpcs, false, NewObj, _OldObj) when is_list(OldSpcs) ->
+    riak_object:diff_index_data(
+        OldSpcs,
+        riak_object:index_data(NewObj)
+    );
+get_index_specs(_IdxBackend, _OldSpcs, _RGet, NewObj, OldObj) ->
+    riak_object:diff_index_specs(NewObj, OldObj).
 
-get_index_specs(_IndexedBackend=false, _CacheData, _RequiresGet, _NewObj, _OldObj) ->
-    [].
-
-prepare_put_new_object(#state{idx =Idx} = State,
-               #putargs{robj = RObj,
-                        coord=Coord,
-                        starttime=StartTime,
-                        crdt_op=CRDTOp} = PutArgs,
-                       IndexBackend) ->
-    IndexSpecs = case IndexBackend of
-                     true ->
-                         riak_object:index_specs(RObj);
-                     false ->
-                         []
-                 end,
-    {EpochId, State2, RObj2} = maybe_update_vclock(Coord, RObj, State, StartTime),
+prepare_put_new_object(
+        #state{idx =Idx} = State,
+        #putargs{
+            robj = RObj,
+            coord=Coord,
+            starttime=StartTime,
+            bprops=BProps,
+            crdt_op=CRDTOp} = PutArgs,
+        IndexBackend) ->
+    IndexSpecs =
+        case IndexBackend of
+            true ->
+                riak_object:index_specs(RObj);
+            false ->
+                []
+        end,
+    DVV = proplists:get_value(dvv_enabled, BProps, true),
+    {EpochId, State2, RObj2} = maybe_update_vclock(Coord, RObj, State, StartTime, DVV),
     RObj3 = maybe_do_crdt_update(Coord, CRDTOp, EpochId, RObj2),
     determine_put_result(RObj3, confirmed_no_old_object, Idx, PutArgs, State2, IndexSpecs, IndexBackend).
 
@@ -3086,42 +3260,34 @@ get_old_object_or_fake(true, Bucket, Key, Mod, ModState, _CacheClock) ->
         {error, not_found, _UpdModState} ->
             not_found;
         {ok, TheOldObj, _UpdModState} ->
-            {ok, TheOldObj}
+            TheOldObj
     end;
 get_old_object_or_fake(false, Bucket, Key, _Mod, _ModState, CacheClock) ->
     FakeObj0 = riak_object:new(Bucket, Key, <<>>),
     FakeObj = riak_object:set_vclock(FakeObj0, CacheClock),
-    {ok, FakeObj}.
-
-determine_requires_get(CacheClock, RObj, IsSearchable) ->
-    RequiresGet =
-    case CacheClock of
-        undefined ->
-            true;
-        Clock ->
-            %% We need to perform a local get, to merge contents,
-            %% if the local object has events unseen by the
-            %% incoming object. If the incoming object dominates
-            %% the cache (i.e. has seen all its events) no need to
-            %% do a local get and merge, just overwrite.
-            not vclock:dominates(riak_object:vclock(RObj), Clock)
-                orelse IsSearchable
-    end,
-    RequiresGet.
+    FakeObj.
 
 %% @Doc in the case that this a co-ordinating put, prepare the object.
 %% NOTE: this is called _only_ when the local object is `notfound'
--spec maybe_update_vclock(Coord::boolean(),
-                          IncomingObject:: riak_object:riak_object(),
-                          #state{},
-                          StartTime::term()) ->
-                                 {EpochId :: binary(),
-                                  #state{},
-                                  Object::riak_object:riak_object()}.
-maybe_update_vclock(Coord=true, RObj, State, StartTime) ->
+-spec maybe_update_vclock(
+    Coord::boolean(),
+    IncomingObject:: riak_object:riak_object(),
+    #state{},
+    StartTime::term(),
+    DVV :: boolean()) ->
+        {
+            EpochId :: binary(),
+            #state{},
+            Object::riak_object:riak_object()
+        }.
+maybe_update_vclock(Coord=true, RObj, State, StartTime, DVV) ->
     {_IsNewEpoch, EpochId, State2} = maybe_new_key_epoch(Coord, State, undefined, RObj),
-    {EpochId, State2, riak_object:increment_vclock(RObj, EpochId, StartTime)};
-maybe_update_vclock(_Coord=false, RObj, State, _StartTime) ->
+    {
+        EpochId,
+        State2,
+        riak_object:increment_vclock(RObj, EpochId, StartTime, DVV)
+    };
+maybe_update_vclock(_Coord=false, RObj, State, _StartTime, _DVV) ->
     %% @see maybe_new_actor_epoch/2 for details as to why the vclock
     %% may be updated on a non-coordinating put
     maybe_new_actor_epoch(RObj, State).
@@ -3156,14 +3322,18 @@ perform_put({false, {_Obj, _OldObj}},
     {{dw, Idx, ReqId}, State};
 perform_put({true, {_Obj, _OldObj}=Objects},
             State,
-            #putargs{returnbody=RB,
-                     bkey=BKey,
-                     reqid=ReqID,
-                     coord=Coord,
-                     index_specs=IndexSpecs,
-                     readrepair=ReadRepair,
-                     sync_on_write=SyncOnWrite,
-                     reason=HookReason}) ->
+            #putargs{
+                returnbody=RB,
+                bkey=BKey,
+                reqid=ReqID,
+                coord=Coord,
+                index_specs=IndexSpecs,
+                readrepair=ReadRepair,
+                sync_on_write=SyncOnWrite,
+                reason=HookReason,
+                bprops = BucketProps
+            }
+        ) ->
     case ReadRepair of
       true ->
         MaxCheckFlag = no_max_check;
@@ -3187,46 +3357,72 @@ perform_put({true, {_Obj, _OldObj}=Objects},
     {Reply, State2} =
         actual_put(
             BKey, Objects, IndexSpecs, RB, ReqID, MaxCheckFlag,
-            {Coord, Sync}, HookReason, State),
+            {Coord, Sync}, HookReason, BucketProps, State),
     {Reply, State2}.
 
 actual_put(BKey, {Obj, OldObj}, IndexSpecs, RB, ReqID, State) ->
     actual_put(
         BKey, {Obj, OldObj}, IndexSpecs, RB, ReqID, do_max_check,
-        {false, false}, put, State).
+        {false, false}, put, undefined, State).
 
-actual_put(BKey={Bucket, Key},
-            {Obj, OldObj},
-            IndexSpecs,
-            RB, ReqID,
-            MaxCheckFlag,
-            {Coord, Sync},
-            HookReason,
-            State=#state{idx=Idx,
-                            mod=Mod,
-                            modstate=ModState,
-                            update_hook=UpdateHook}) ->
-    case encode_and_put(Obj, Mod, Bucket, Key, IndexSpecs, ModState,
-                       MaxCheckFlag, Sync) of
-        {{ok, UpdModState}, EncodedVal} ->
-            aae_update(Bucket, Key, Obj, OldObj, EncodedVal, State),
-            nextgenrepl(Bucket, Key, Obj, size(EncodedVal),
-                        Coord,
-                        State#state.enable_nextgenreplsrc,
-                        State#state.sizelimit_nextgenreplsrc),
-            maybe_cache_object(BKey, Obj, State),
-            maybe_update(
-                UpdateHook, {Obj, maybe_old_object(OldObj)}, HookReason, Idx),
-            Reply = case RB of
-                true ->
-                    {dw, Idx, Obj, ReqID};
-                false ->
-                    {dw, Idx, ReqID}
-            end;
-        {{error, Reason, UpdModState}, _EncodedVal} ->
-            Reply = {fail, Idx, Reason}
-    end,
-    {Reply, State#state{modstate=UpdModState}}.
+actual_put(
+    BKey={Bucket, Key},
+    {Obj, OldObj},
+    IndexSpecs,
+    RB, ReqID,
+    MaxCheckFlag,
+    {Coord, Sync},
+    HookReason,
+    BucketProps,
+    State = 
+        #state{
+            idx=Idx,
+            mod=Mod,
+            modstate=ModState,
+            update_hook=UpdateHook
+        }
+) ->
+    {Reply, UpdModState, _UpdVnodeCache} =
+        case encode_and_put(
+            Obj, Mod, Bucket, Key, IndexSpecs, ModState, MaxCheckFlag, Coord, Sync
+        ) of
+            {{ok, NewModState}, EncodedVal} ->
+                aae_update(
+                    Bucket, Key, Obj, OldObj, EncodedVal, BucketProps, State
+                ),
+                nextgenrepl(
+                    Bucket,
+                    Key,
+                    Obj,
+                    size(EncodedVal),
+                    Coord,
+                    State#state.enable_nextgenreplsrc,
+                    State#state.sizelimit_nextgenreplsrc
+                ),
+                maybe_update(
+                    UpdateHook,
+                    {Obj, maybe_old_object(OldObj)},
+                    HookReason,
+                    Idx
+                ),
+                NewVnodeCache =
+                    maybe_cache_object(
+                        BKey,
+                        Obj,
+                        State#state.vnode_object_cache,
+                        State#state.vnode_object_cache_size,
+                        BucketProps
+                    ),
+                case RB of
+                    true ->
+                        {{dw, Idx, Obj, ReqID}, NewModState, NewVnodeCache};
+                    false ->
+                        {{dw, Idx, ReqID}, NewModState, NewVnodeCache}
+                end;
+            {{error, Reason, NewModState}, _EncodedVal} ->
+                {{fail, Idx, Reason}, NewModState, not_changed}
+        end,
+    {Reply, State#state{modstate = UpdModState}}.
 
 actual_put_tracked(BKey, {_NewObj, _OldObj} = Objs, IndexSpecs, RB, ReqId, State) ->
     StartTS = os:timestamp(),
@@ -3270,11 +3466,9 @@ do_reformat({Bucket, Key}=BKey, State=#state{mod=Mod, modstate=ModState}) ->
 %% an object with multiple contents if allow_mult=false for that bucket
 %% Also provides a double check that the object is safe to store - its contents
 %% must not be empty, it should not be an object head.
-enforce_allow_mult(Obj, OldObj, BProps) ->
+enforce_allow_mult(Obj, OldObj, AllowMult) ->
     MergedContents = riak_object:get_contents(Obj),
-    case {proplists:get_value(allow_mult, BProps),
-            MergedContents,
-            riak_object:is_head(Obj)} of
+    case {AllowMult, MergedContents, riak_object:is_head(Obj)} of
         {_, [], _} ->
             % This is a known issue - 
             % https://github.com/basho/riak_kv/issues/1707
@@ -3324,13 +3518,13 @@ select_newest_content(Mult) ->
          Mult)).
 
 %% @private
-put_merge(false, true, _CurObj, UpdObj, _VId, _StartTime) -> % coord=false, LWW=true
+put_merge(false, true, _CurObj, UpdObj, _VId, _StartTime, _WO, _DVV) -> % coord=false, LWW=true
     {newobj, UpdObj};
-put_merge(false, false, CurObj, UpdObj, {NewEpoch, VId}, _StartTime) -> % coord=false, LWW=false
+put_merge(false, false, CurObj, UpdObj, {NewEpoch, VId}, _StartTime, WO, DVV) -> % coord=false, LWW=false
     %% a downstream merge, or replication of a coordinated PUT
     %% Merge the value received with local replica value
     %% and store the value IFF it is different to what we already have
-    ResObj = riak_object:syntactic_merge(CurObj, UpdObj),
+    ResObj = riak_object:syntactic_merge(CurObj, UpdObj, {WO, DVV}),
     case NewEpoch of
         true ->
             {newobj, riak_object:new_actor_epoch(ResObj, VId)};
@@ -3342,8 +3536,8 @@ put_merge(false, false, CurObj, UpdObj, {NewEpoch, VId}, _StartTime) -> % coord=
                     {newobj, ResObj}
             end
     end;
-put_merge(true, LWW, CurObj, UpdObj, {_NewEpoch, VId}, StartTime) ->
-    {newobj, riak_object:update(LWW, CurObj, UpdObj, VId, StartTime)}.
+put_merge(true, LWW, CurObj, UpdObj, {_NewEpoch, VId}, StartTime, WO, DVV) ->
+    {newobj, riak_object:update(LWW, CurObj, UpdObj, VId, StartTime, WO, DVV)}.
 
 %% @private
 do_get(_Sender, BKey, ReqID,
@@ -3351,9 +3545,8 @@ do_get(_Sender, BKey, ReqID,
     StartTS = os:timestamp(),
     {Retval, ModState1} = do_get_term(BKey, Mod, ModState),
     State1 = State#state{modstate=ModState1},
-    {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
     update_vnode_stats(vnode_get, Idx, StartTS),
-    {reply, {r, Retval1, Idx, ReqID}, State3}.
+    {reply, {r, Retval, Idx, ReqID}, State1}.
 
 %% @private
 do_head(_Sender, BKey, ReqID,
@@ -3361,24 +3554,9 @@ do_head(_Sender, BKey, ReqID,
     StartTS = os:timestamp(),
     {Retval, ModState1} = do_head_term(BKey, Mod, ModState),
     State1 = State#state{modstate=ModState1},
-    {Retval1, State3} = handle_returned_value(BKey, Retval, State1),
     update_vnode_stats(vnode_head, Idx, StartTS),
-    {reply, {r, Retval1, Idx, ReqID}, State3}.
+    {reply, {r, Retval, Idx, ReqID}, State1}.
 
-%% @private
-%% Function shared between GET and HEAD requests, so should not assume
-%% presence of conetent value
-%% This was originally separated to help with consistent handling of
-%% expired object (but this is not present now this branch is from 2.1.7 and
-%% not the develop branch which had expiry support)
-handle_returned_value(BKey, Retval, State) ->
-    case Retval of
-        {ok, Obj} ->
-            maybe_cache_object(BKey, Obj, State);
-        _ ->
-            ok
-    end,
-    {Retval, State}.
 
 %% @private
 -spec do_get_term({binary(), binary()}, atom(), tuple()) ->
@@ -3641,13 +3819,23 @@ do_delete(BKey, State) ->
                             {reply, {fail, Idx, del_mode_keep},
                              State#state{modstate=UpdModState}};
                         immediate ->
-                            UpdState = do_backend_delete(BKey, RObj,
-                                                         State#state{modstate=UpdModState}),
+                            UpdState =
+                                do_backend_delete(
+                                    BKey,
+                                    RObj,
+                                    State#state{modstate=UpdModState}
+                                ),
                             {reply, {del, Idx, del_mode_immediate}, UpdState};
                         Delay when is_integer(Delay) ->
-                            erlang:send_after(Delay, self(),
-                                              {final_delete, BKey,
-                                               riak_object:delete_hash(RObj)}),
+                            erlang:send_after(
+                                Delay,
+                                self(),
+                                {
+                                    final_delete,
+                                    BKey,
+                                    riak_object:delete_hash(RObj)
+                                }
+                            ),
                             %% Nothing checks these messages - will just reply
                             %% del for now until we can refactor.
                             {reply, {del, Idx, del_mode_delayed},
@@ -3767,7 +3955,7 @@ do_get_vclock({Bucket, Key}, Mod, ModState) ->
             riak_object:riak_object(),
             state()) -> {error, term(), state()}|{ok, state()}.
 do_handoff_put({Bucket, _Key}=BKey, HandoffObj, State) ->
-    BProps = riak_core_bucket:get_bucket(Bucket),
+    BProps = riak_kv_util:get_bucket_props(Bucket),
     PutArgs = 
         #putargs{
             returnbody = false,
@@ -3831,20 +4019,23 @@ nextgenrepl(_B, _K, _Obj, _Size, _Coord, _Enabled, _Limit) ->
     ok.
 
 
--spec aae_update(binary(), binary(),
-                    riak_object:riak_object()|none|undefined|use_binary,
-                    old_object(),
-                    binary()|use_object, 
-                        % cannot be use_object if object is use_binary
-                    state()) -> ok.
+-spec aae_update(
+    binary(), binary(),
+    riak_object:riak_object()|none|undefined|use_binary,
+    old_object(),
+    binary()|use_object, 
+        % cannot be use_object if object is use_binary
+    proplists:proplist() | undefined,
+    state())
+        -> ok.
 %% @doc
 %% Update both the AAE controller (tictac aae) and old school hashtree aae
 %% if either or both are enabled.
-aae_update(_Bucket, _Key, _UpdObj, _PrevObj, _UpdObjBin,
+aae_update(_Bucket, _Key, _UpdObj, _PrevObj, _UpdObjBin, _BucketProps,
             #state{hashtrees = HTs, tictac_aae = TAAE} = _State) 
             when HTs == undefined, TAAE == false ->
     ok;
-aae_update(Bucket, Key, UpdObj, PrevObj, UpdObjBin,
+aae_update(Bucket, Key, UpdObj, PrevObj, UpdObjBin, BucketProps,
             #state{hashtrees = HTs, tictac_aae = TAAE} = State) ->
     Async = async_aae(State#state.aae_tokenbucket),
     case HTs of 
@@ -3876,7 +4067,13 @@ aae_update(Bucket, Key, UpdObj, PrevObj, UpdObjBin,
                         get_clock(UpdObj)
                 end,
             PrevClock = get_clock(PrevObj),
-            IndexN = riak_kv_util:get_index_n({Bucket, Key}),
+            IndexN =
+                case BucketProps of
+                    undefined ->
+                        riak_kv_util:get_index_n({Bucket, Key});
+                    BucketProps when is_list(BucketProps) ->
+                        riak_kv_util:get_index_n({Bucket, Key}, BucketProps)
+                end,
             ObjBin = 
                 case UpdObjBin of 
                     use_object ->
@@ -4130,69 +4327,130 @@ return_encoded_binary_object(Method, EncodedObject) ->
     term_to_binary({ Method, EncodedObject }).
 
 -spec encode_and_put(
-        Obj::riak_object:riak_object(), Mod::term(), Bucket::riak_object:bucket(),
-        Key::riak_object:key(), IndexSpecs::list(), ModState::term(),
-        MaxCheckFlag::no_max_check | do_max_check, Sync::boolean()) ->
+        Obj::riak_object:riak_object(),
+        Mod::term(),
+        Bucket::riak_object:bucket(),
+        Key::riak_object:key(),
+        IndexSpecs::list(),
+        ModState::term(),
+        MaxCheckFlag::no_max_check | do_max_check,
+        Coord::boolean(),
+        Sync::boolean()) ->
            {{ok, UpdModState::term()}, EncodedObj::binary()} |
            {{error, Reason::term(), UpdModState::term()}, EncodedObj::binary()}.
 
-encode_and_put(Obj, Mod, Bucket, Key, IndexSpecs, ModState, MaxCheckFlag, Sync) ->
+encode_and_put(
+    Obj, Mod, Bucket, Key, IndexSpecs, ModState, MaxCheckFlag, Coord, Sync
+) ->
     DoMaxCheck = MaxCheckFlag == do_max_check,
-    NumSiblings = riak_object:value_count(Obj),
-    case DoMaxCheck andalso
-         NumSiblings > app_helper:get_env(riak_kv, max_siblings) of
-        true ->
-            ?LOG_ERROR("Put failure: too many siblings for object ~p/~p (~p)",
-                        [Bucket, Key, NumSiblings]),
-            {{error, {too_many_siblings, NumSiblings}, ModState},
-             undefined};
-        false ->
-            case NumSiblings > app_helper:get_env(riak_kv, warn_siblings) of
-                true ->
-                    ?LOG_WARNING("Too many siblings for object ~p/~p (~p)",
-                                  [Bucket, Key, NumSiblings]);
-                false ->
+    case sibling_check(DoMaxCheck, Coord, Obj) of
+        {too_many_siblings, NumSiblings} ->
+            ?LOG_ERROR(
+                "Put failure: too many siblings for object ~p/~p (~p)",
+                [Bucket, Key, NumSiblings]
+            ),
+            {{error, {too_many_siblings, NumSiblings}, ModState}, undefined};
+        NotTooMany ->
+            case NotTooMany of
+                {sibling_warning, NumSiblings} ->
+                    ?LOG_WARNING(
+                        "Too many siblings for object ~p/~p (~p)",
+                        [Bucket, Key, NumSiblings]
+                    );
+                _ ->
                     ok
             end,
-            encode_and_put_no_sib_check(Obj, Mod, Bucket, Key, IndexSpecs,
-                                        ModState, MaxCheckFlag, Sync)
-    end.
-
-encode_and_put_no_sib_check(Obj, Mod, Bucket, Key, IndexSpecs, ModState,
-                            MaxCheckFlag, Sync) ->
-    DoMaxCheck = MaxCheckFlag == do_max_check,
-    case uses_r_object(Mod, ModState, Bucket) of
-        true ->
-            %% Non binary returning backends will have to handle size warnings
-            %% and errors themselves.
-            Mod:put_object(Bucket, Key, IndexSpecs, Obj, ModState);
-        false ->
-            ObjFmt = object_format(Mod, ModState),
-            EncodedVal = riak_object:to_binary(ObjFmt, Obj),
-            BinSize = size(EncodedVal),
-            %% Report or fail on large objects
-            case DoMaxCheck andalso
-                 BinSize > app_helper:get_env(riak_kv, max_object_size) of
+            case uses_r_object(Mod, ModState, Bucket) of
                 true ->
-                    ?LOG_ERROR("Put failure: object too large to write ~p/~p ~p bytes",
-                                [Bucket, Key, BinSize]),
-                    {{error, {too_large, BinSize}, ModState},
-                     EncodedVal};
+                    %% Non binary returning backends will have to handle size warnings
+                    %% and errors themselves.
+                    Mod:put_object(Bucket, Key, IndexSpecs, Obj, ModState);
                 false ->
-                    WarnSize = app_helper:get_env(riak_kv, warn_object_size),
-                    case BinSize > WarnSize of
-                       true ->
-                            ?LOG_WARNING("Writing very large object " ++
-                                          "(~p bytes) to ~p/~p",
-                                          [BinSize, Bucket, Key]);
-                        false ->
-                            ok
-                    end,
-                    PutFun = select_put_fun(Mod, ModState, Sync),
-                    PutRet = PutFun(Bucket, Key, IndexSpecs, EncodedVal, ModState),
-                    {PutRet, EncodedVal}
+                    ObjFmt = ?CAP_OBJECT_FORMAT,
+                    EncodedVal = riak_object:to_binary(ObjFmt, Obj),
+                    case size_check(DoMaxCheck, Coord, EncodedVal) of
+                        {too_large, BinSize} ->
+                             ?LOG_ERROR(
+                                "Put failure: "
+                                "object too large to write ~p/~p ~p bytes",
+                                [Bucket, Key, BinSize]
+                            ),
+                            {
+                                {error, {too_large, BinSize}, ModState},
+                                EncodedVal
+                            };
+                        NoTooBig ->
+                            case NoTooBig of
+                                {size_warning, BinSize} ->
+                                    ?LOG_WARNING(
+                                        "Writing very large object "
+                                        "(~p bytes) to ~p/~p",
+                                        [BinSize, Bucket, Key]
+                                    );
+                                _ ->
+                                    ok
+                            end,
+                            PutFun = select_put_fun(Mod, ModState, Sync),
+                            PutRet =
+                                PutFun(
+                                    Bucket,
+                                    Key,
+                                    IndexSpecs,
+                                    EncodedVal,
+                                    ModState
+                                ),
+                            {PutRet, EncodedVal}
+                    end
             end
     end.
+
+size_check(true, false, _EncodedVal) ->
+    % No need to do the check - the coordinator will check
+    ok;
+size_check(true, true, EncodedVal) ->
+    BinSize = size(EncodedVal),
+    MaxSize = app_helper:get_env(riak_kv, max_object_size),
+    case BinSize >  MaxSize of
+        true ->
+            {too_large, BinSize};
+        false ->
+            size_check(false, true, BinSize)
+    end;
+size_check(false, _Coord, BinSize) when is_integer(BinSize) ->
+    WarnSize = app_helper:get_env(riak_kv, warn_object_size),
+    case BinSize > WarnSize of
+        true ->
+            {size_warning, BinSize};
+        false ->
+            ok
+    end;
+size_check(false, Coord, EncodedVal) ->
+    BinSize = size(EncodedVal),
+    size_check(false, Coord, BinSize).
+
+sibling_check(true, false, _Obj) ->
+    % No need to do the check - the coordinator will check
+    ok;
+sibling_check(true, true, Obj) ->
+    NumSiblings = riak_object:value_count(Obj),
+    MaxSiblings = app_helper:get_env(riak_kv, max_siblings),
+    case NumSiblings > MaxSiblings of
+        true ->
+            {too_many_siblings, NumSiblings};
+        false ->
+            sibling_check(false, true, NumSiblings)
+    end;
+sibling_check(false, _Coord, NumSiblings) when is_integer(NumSiblings) ->
+    WarnSiblings = app_helper:get_env(riak_kv, warn_siblings),
+    case NumSiblings > WarnSiblings of
+        true ->
+            {sibling_warning, NumSiblings};
+        false ->
+            ok
+    end;
+sibling_check(false, Coord, Obj) ->
+    NumSiblings = riak_object:value_count(Obj),
+    sibling_check(false, Coord, NumSiblings).
 
 -spec select_put_fun(Mod::term(), ModState::term(), Sync::boolean()) -> fun().
 select_put_fun(Mod, ModState, Sync) ->
@@ -4212,15 +4470,6 @@ select_put_fun(Mod, ModState, Sync) ->
 uses_r_object(Mod, ModState, Bucket) ->
     {ok, Capabilities} = Mod:capabilities(Bucket, ModState),
     lists:member(uses_r_object, Capabilities).
-
-object_format(Mod, ModState) ->
-    {ok, Capabilities} = Mod:capabilities(ModState),
-    case lists:member(always_v1obj, Capabilities) of
-        true ->
-            v1;
-        false ->
-            ?CAP_OBJECT_FORMAT
-    end.
 
 sanitize_bkey({{<<"default">>, B}, K}) ->
     {B, K};
@@ -4279,18 +4528,93 @@ try_set_concurrency_limit(Lock, Limit, true) ->
             ok
     end.
 
-maybe_check_md_cache(Table, BKey) ->
-    case Table of
-        undefined ->
-            {undefined, undefined};
+-spec maybe_check_object_cache(
+    none|ets:tid(),
+    non_neg_integer(),
+    {riak_object:bucket(), riak_object:key()},
+    boolean() | list({atom(), any()})) ->
+        not_cached | riak_object:riak_object().
+maybe_check_object_cache(Cache, _CacheSize, _BKey, BProps)
+        when Cache == none; BProps == false ->
+    not_cached;
+maybe_check_object_cache(Cache, CacheSize, BKey, true) when CacheSize > 0 ->
+    Hash = erlang:phash2(element(2, BKey), CacheSize),
+    case ets:lookup(Cache, Hash) of
+        [{Hash, {BKey, CachedRObj}}] ->
+            CachedRObj;
         _ ->
-            case ets:lookup(Table, BKey) of
-                [{_TS, BKey, MD}] ->
-                    MD;
-                [] ->
-                    {undefined, undefined}
-            end
-    end.
+            not_cached
+    end;
+maybe_check_object_cache(Cache, CacheSize, BKey, BProps) ->
+    maybe_check_object_cache(
+        Cache,
+        CacheSize,
+        BKey,
+        keyfind(vnode_object_cache, BProps, false)
+    ).
+
+-spec maybe_cache_object(
+    {riak_object:bucket(), riak_object:key()},
+    riak_object:riak_object(),
+    ets:tid()|none,
+    non_neg_integer(),
+    boolean() | list({atom(), any()}) | not_fetched) ->
+        not_changed.
+maybe_cache_object(_BKey, _RObj, Cache, _CacheSize, BProps)
+        when Cache == none; BProps == false ->
+    not_changed;
+maybe_cache_object(BKey, Obj, Cache, CacheSize, true) ->
+    Hash = erlang:phash2(element(2, BKey), CacheSize),
+    ets:insert(Cache, {Hash, {BKey, Obj}}),
+    not_changed;
+maybe_cache_object(BKey, RObj, Cache, CacheSize, not_fetched) ->
+    maybe_cache_object(
+        BKey, 
+        RObj,
+        Cache,
+        CacheSize,
+        riak_kv_util:get_bucket_props(element(1, BKey))
+    );
+maybe_cache_object(BKey, RObj, Cache, CacheSize, BProps) ->
+    maybe_cache_object(
+        BKey, 
+        RObj,
+        Cache,
+        CacheSize,
+        keyfind(vnode_object_cache, BProps, false)
+    ).
+
+-spec maybe_cache_evict(
+    {riak_object:bucket(), riak_object:key()},
+    ets:tid()|none,
+    non_neg_integer(),
+    boolean() | list({atom(), any()}) | not_fetched) ->
+        not_changed.
+maybe_cache_evict(_BKey, Cache, _CacheSize, BProps)
+        when Cache == none; BProps == false ->
+    not_changed;
+maybe_cache_evict(BKey, Cache, CacheSize, true) ->
+    Hash = erlang:phash2(element(2, BKey), CacheSize),
+    case ets:lookup(Cache, Hash) of
+        [{Hash, {BKey, _CachedObj}}] ->
+            ets:insert(Cache, {Hash, not_cached});
+        _ ->
+            not_changed
+    end;
+maybe_cache_evict(BKey, Cache, CacheSize, not_fetched) ->
+    maybe_cache_evict(
+        BKey,
+        Cache,
+        CacheSize,
+        riak_kv_util:get_bucket_props(element(1, BKey))
+    );
+maybe_cache_evict(BKey, Cache, CacheSize, BProps) ->
+    maybe_cache_evict(
+        BKey,
+        Cache,
+        CacheSize,
+        keyfind(vnode_object_cache, BProps, false)
+    ).
 
 %% Function to return the clock of the object to be updated as well as the
 %% index data.  If the clock is dominated by that of the new object then a
@@ -4300,18 +4624,38 @@ maybe_check_md_cache(Table, BKey) ->
 %% default disabled), or from a head request if the Module has the head
 %% capability.
 %%
-%% Should return {undefined, undefined} if there is no cache to be used or
-%% {not_found, undefined} if the lack of object has been confirmed, or
-%% {VClock, IndexData} if the result is found
-maybefetch_clock_and_indexdata(Table, {BT, _K} = BKey,
-                                Mod, ModState, Coord, IsSearchable) ->
-    CacheResult = maybe_check_md_cache(Table, BKey),
+%% May return
+%% - {not_found, undefined} - object is not in backend
+%% - {cached, riak_object:riak_object()} - the object was cached
+%% - {head, vclock:vclock(), [{binary(), index_value()}]} - the head of the
+%% object has been fetched and the clock and index_data extracted
+%% - not_determined - no help from either cache or head capability
+-spec maybefetch_clock_and_indexdata(
+    ets:tid()|none,
+    non_neg_integer(),
+    {riak_object:bucket(), riak_object:key()},
+    module(),
+    term(),
+    boolean(),
+    boolean(),
+    boolean()
+) ->
+    {not_found, undefined} |
+    {cached, riak_object:riak_object()} |
+    {head, vclock:vclock(), [{binary(), riak_object:index_value()}]} |
+    not_determined.
+maybefetch_clock_and_indexdata(
+    VnodeCache, CacheSize, BKey, Mod, ModState, Coord, IsSearchable, UseCache
+) ->
+    CacheResult =
+        maybe_check_object_cache(VnodeCache, CacheSize, BKey, UseCache),
     case CacheResult of
-        {undefined, undefined} ->
-            {ok, Capabilities} = Mod:capabilities(BT, ModState),
-            CanGetHead = maybe_support_head_requests(Capabilities)
-                            andalso (not IsSearchable)
-                            andalso (not Coord),
+        not_cached ->
+            {ok, Capabilities} = Mod:capabilities(element(1, BKey), ModState),
+            CanGetHead =
+                maybe_support_head_requests(Capabilities)
+                    andalso (not IsSearchable)
+                    andalso (not Coord),
                 % If the bucket is searchable won't use the cache bits anyway
             case CanGetHead of
                 true ->
@@ -4320,74 +4664,19 @@ maybefetch_clock_and_indexdata(Table, {BT, _K} = BKey,
                         {error, not_found, _UpdModState} ->
                             {not_found, undefined};
                         {ok, OldObjBin, _UpdModState} ->
-                            TheOldObj = riak_object:from_binary(Bucket,
-                                                                Key,
-                                                                OldObjBin),
+                            TheOldObj =
+                                riak_object:from_binary(
+                                    Bucket,  Key, OldObjBin),
                             VClock = riak_object:vclock(TheOldObj),
                             IndexData = riak_object:index_data(TheOldObj),
-                            {VClock, IndexData}
+                            {head, VClock, IndexData}
                     end;
                 _ ->
-                    CacheResult
+                    not_determined
             end;
-        _ ->
-            CacheResult
+        OldObj ->
+            {cached, OldObj}
     end.
-
-
-maybe_cache_object(BKey, Obj, #state{md_cache = MDCache,
-                                     md_cache_size = MDCacheSize}) ->
-    case MDCache of
-        undefined ->
-            ok;
-        _ ->
-            VClock = riak_object:vclock(Obj),
-            IndexData = riak_object:index_data(Obj),
-            insert_md_cache(MDCache, MDCacheSize, BKey, {VClock, IndexData})
-    end.
-
-maybe_cache_evict(BKey, #state{md_cache = MDCache}) ->
-    case MDCache of
-        undefined ->
-            ok;
-        _ ->
-            ets:delete(MDCache, BKey)
-    end.
-
-insert_md_cache(Table, MaxSize, BKey, MD) ->
-    TS = os:timestamp(),
-    case ets:insert(Table, {TS, BKey, MD}) of
-        true ->
-            Size = ets:info(Table, memory),
-            case Size > MaxSize of
-                true ->
-                    trim_md_cache(Table, MaxSize);
-                false ->
-                    ok
-            end
-    end.
-
-trim_md_cache(Table, MaxSize) ->
-    Oldest = ets:first(Table),
-    case Oldest of
-        '$end_of_table' ->
-            ok;
-        BKey ->
-            ets:delete(Table, BKey),
-            Size = ets:info(Table, memory),
-            case Size > MaxSize of
-                true ->
-                    trim_md_cache(Table, MaxSize);
-                false ->
-                    ok
-            end
-    end.
-
-new_md_cache(VId) ->
-    MDCacheName = list_to_atom(?MD_CACHE_BASE ++ integer_to_list(binary:decode_unsigned(VId))),
-    %% ordered set to make sure that the first key is the oldest
-    %% term format is {TimeStamp, Key, ValueTuple}
-    ets:new(MDCacheName, [ordered_set, {keypos,2}]).
 
 
 %% @private increment the per vnode coordinating put counter,
@@ -4812,9 +5101,196 @@ rollover_test_() ->
              ]}
     }.
 
-always_v1_test() ->
-    % Confirm that the leveled backend will always be a v1 object
-    ObjFmt = object_format(riak_kv_leveled_backend, undefined),
-    ?assertEqual(v1, ObjFmt).
+roll_put_properties(BProps) ->
+    roll_put_properties(BProps, true, false, undefined, false, false).
+
+roll_put_properties([], DVV, WriteOnce, AM, AP, VC) ->
+    {DVV, WriteOnce, AM, AP, VC};
+roll_put_properties([{dvv_enabled, DVV}|Props], _DVV, WriteOnce, AM, AP, VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC);
+roll_put_properties([{write_once, WriteOnce}|Props], DVV, _WriteOnce, AM, AP, VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC);
+roll_put_properties([{allow_mult, AM}|Props], DVV, WriteOnce, _AM, AP, VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC);
+roll_put_properties([{async_put, AP}|Props], DVV, WriteOnce, AM, _AP, VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC);
+roll_put_properties([{vnode_object_cache, VC}|Props], DVV, WriteOnce, AM, AP, _VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC);
+roll_put_properties([_Prop|Props], DVV, WriteOnce, AM, AP, VC) ->
+    roll_put_properties(Props, DVV, WriteOnce, AM, AP, VC).
+
+keyfind_fetcher(DProps) ->
+    {
+        keyfind(dvv_enabled, DProps, true),
+        keyfind(write_once, DProps, false),
+        keyfind(allow_mult, DProps, undefined),
+        keyfind(async_put, DProps, false),
+        keyfind(vnode_object_cache, DProps, false)
+    }.
+
+proplist_fetcher(DProps) ->
+    {
+        proplists:get_value(dvv_enabled, DProps, true),
+        proplists:get_value(write_once, DProps, false),
+        proplists:get_value(allow_mult, DProps, undefined),
+        proplists:get_value(async_put, DProps, false),
+        proplists:get_value(vnode_object_cache, DProps, false)
+    }.
+
+map_fetcher(DProps) ->
+    M = maps:from_list(DProps),
+    {
+        maps:get(dvv_enabled, M, true),
+        maps:get(write_once, M, false),
+        maps:get(allow_mult, M, undefined),
+        maps:get(async_put, M, false),
+        maps:get(vnode_object_cache, M, false)
+    }.
+
+property_speed_test() ->
+    %% What is the fastest way of getting three bucket properties?
+    %% On my machine - Speed compare 9239 10455 26193
+    DefaultProps =
+        [
+            {node_confirms,0},
+            {dvv_enabled,false},
+            {allow_mult,false},
+            {linkfun,{modfun,riak_kv_wm_link_walker,mapreduce_linkfun}},
+            {old_vclock,86400},
+            {young_vclock,20},
+            {big_vclock,50},
+            {small_vclock,50},
+            {async_put, true},
+            {vnode_object_cache, false},
+            {pr,0},
+            {r,quorum},
+            {w,quorum},
+            {pw,0},
+            {dw,quorum},
+            {rw,quorum},
+            {sync_on_write,backend},
+            {basic_quorum,false},
+            {notfound_ok,true},
+            {n_val,3},
+            {last_write_wins,false},
+            {precommit,[]},
+            {postcommit,[]},
+            {chash_keyfun,{riak_core_util,chash_std_keyfun}}
+        ],
+    
+    {TC0, R0} =
+        timer:tc(
+            fun() ->
+                lists:map(
+                    fun(_I) -> roll_put_properties(DefaultProps) end,
+                    lists:seq(1, 100000)
+                )
+            end
+        ),
+    {TC1, R1} =
+        timer:tc(
+            fun() ->
+                lists:map(
+                    fun(_I) -> proplist_fetcher(DefaultProps) end,
+                    lists:seq(1, 100000)
+                )
+            end
+        ),
+    {TC2, R2} =
+        timer:tc(
+            fun() ->
+                lists:map(
+                    fun(_I) -> map_fetcher(DefaultProps) end,
+                    lists:seq(1, 100000)
+                )
+            end
+        ),
+    {TC3, R3} =
+        timer:tc(
+            fun() ->
+                lists:map(
+                    fun(_I) -> keyfind_fetcher(DefaultProps) end,
+                    lists:seq(1, 100000)
+                )
+            end
+        ),
+    ?assertMatch(R0, R1),
+    ?assertMatch(R0, R2),
+    ?assertMatch(R0, R3),
+    io:format(
+        user,
+        "Speed compare roll ~w pl ~w map ~w lkf ~w~n",
+        [TC0, TC1, TC2, TC3]
+    ).
+
+hash1({Bucket, Key}) ->
+    erlang:phash2({Bucket, Key}, 1024).
+
+hash2({_Bucket, Key}) ->
+    erlang:phash2(Key, 1024).
+
+hash3({_Bucket, Key}) ->
+    erlang:phash2(Key, 1000).
+
+hash4({_Bucket, Key}) ->
+    <<I:32/integer, _Rest/binary>> = crypto:hash(md5, Key),
+    I band 1023.
+
+hash5({_Bucket, Key}) ->
+    <<_R:16/integer, I:32/integer, _Rest/binary>> = crypto:hash(sha, Key),
+    I band 1023.
+
+hash_speed_test() ->
+    KeyList1000 =
+        lists:map(
+            fun(I) ->
+                {
+                    {<<"BucketType">>, <<"BucketName">>},
+                    list_to_binary(io_lib:format("K~8..0B", [I]))
+                }
+            end,
+            lists:seq(1, 1000)
+        ),
+    KeyList2000 =
+        lists:map(
+            fun(I) ->
+                {
+                    {<<"BucketType">>, <<"BucketName">>},
+                    list_to_binary(io_lib:format("K~8..0B", [I]))
+                }
+            end,
+            lists:seq(1000, 3000)
+        ),
+    io:format(
+        user,
+        "Keys 1K BK+PH2 ~w K+PH2 ~w K+PH2(1000) ~w K+MD5 ~w K+SHA1 ~w~n",
+        [
+            hash_speed_tester(fun hash1/1, KeyList1000),
+            hash_speed_tester(fun hash2/1, KeyList1000),
+            hash_speed_tester(fun hash3/1, KeyList1000),
+            hash_speed_tester(fun hash4/1, KeyList1000),
+            hash_speed_tester(fun hash5/1, KeyList1000)
+        ]
+    ),
+    io:format(
+        user,
+        "Keys 2K BK+PH2 ~w K+PH2 ~w K+PH2(1000) ~w K+MD5 ~w K+SHA1 ~w~n",
+        [
+            hash_speed_tester(fun hash1/1, KeyList2000),
+            hash_speed_tester(fun hash2/1, KeyList2000),
+            hash_speed_tester(fun hash3/1, KeyList2000),
+            hash_speed_tester(fun hash4/1, KeyList2000),
+            hash_speed_tester(fun hash5/1, KeyList2000)
+        ]
+    ).
+
+hash_speed_tester(HashFun, KeyList) ->
+    {TC, HashList} = timer:tc(lists, map, [HashFun, KeyList]),
+    {TC, length(lists:usort(HashList))}.
+    
+
+
+
+
 
 -endif.

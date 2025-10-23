@@ -57,7 +57,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_kv.fsm_limit", 50000),
     cuttlefish_unit:assert_config(Config, "riak_kv.retry_put_coordinator_failure", true),
     cuttlefish_unit:assert_config(Config, "riak_kv.object_format", v1),
-    cuttlefish_unit:assert_config(Config, "riak_kv.vnode_md_cache_size", 0),
+    cuttlefish_unit:assert_config(Config, "riak_kv.vnode_object_cache_size", 0),
     cuttlefish_unit:assert_not_configured(Config, "riak_kv.memory_backend.max_memory"),
     cuttlefish_unit:assert_not_configured(Config, "riak_kv.memory_backend.ttl"),
     cuttlefish_unit:assert_config(Config, "riak_kv.handoff_rejected_max", 6),
@@ -116,7 +116,6 @@ override_non_multi_backend_schema_test() ->
         {["max_concurrent_requests"], 100000},
         {["retry_put_coordinator_failure"], off},
         {["object", "format"], 0},
-        {["metadata_cache_size"], "512KB"},
         {["memory_backend", "max_memory_per_vnode"], "8GB"},
         {["memory_backend", "ttl"], "1d"},
         {["secure_referer_check"], off},
@@ -236,7 +235,7 @@ multi_backend_test() ->
     cuttlefish_unit:assert_config(Config, "riak_kv.fsm_limit", 50000),
     cuttlefish_unit:assert_config(Config, "riak_kv.retry_put_coordinator_failure", true),
     cuttlefish_unit:assert_config(Config, "riak_kv.object_format", v1),
-    cuttlefish_unit:assert_config(Config, "riak_kv.vnode_md_cache_size", 0),
+    cuttlefish_unit:assert_config(Config, "riak_kv.vnode_object_cache_size", 0),
     cuttlefish_unit:assert_not_configured(Config, "riak_kv.memory_backend.max_memory"),
     cuttlefish_unit:assert_not_configured(Config, "riak_kv.memory_backend.ttl"),
 
@@ -308,6 +307,50 @@ datatype_compression_validator_test() ->
                ["priv/riak_kv.schema", "priv/multi_backend.schema"], Conf, context(), predefined_schema()),
     ?assertMatch({error, validation, {errorlist, _}}, Config),
     ok.
+
+vnode_object_cache_size_validator_test() ->
+    Conf0 = [{["vnode_object_cache_size"], 0}],
+    Config0 = 
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema", "priv/multi_backend.schema"],
+            Conf0,
+            context(),
+            predefined_schema()
+        ),
+    cuttlefish_unit:assert_config(
+        Config0,
+        "riak_kv.vnode_object_cache_size",
+        0
+    ),
+
+    Conf512 = [{["vnode_object_cache_size"], 512}],
+    Config512 = 
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema", "priv/multi_backend.schema"],
+            Conf512,
+            context(),
+            predefined_schema()
+        ),
+    cuttlefish_unit:assert_config(
+        Config512,
+        "riak_kv.vnode_object_cache_size",
+        512
+    ),
+
+    Conf500 = [{["vnode_object_cache_size"], 500}],
+    Config500 = 
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema", "priv/multi_backend.schema"],
+            Conf500,
+            context(),
+            predefined_schema()
+        ),
+        % cache size no longer required to be a factor of 2
+    cuttlefish_unit:assert_config(
+        Config500,
+        "riak_kv.vnode_object_cache_size",
+        500
+    ).
 
 correct_error_handling_by_multibackend_test() ->
     Conf = [

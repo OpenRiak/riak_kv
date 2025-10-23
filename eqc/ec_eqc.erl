@@ -928,7 +928,7 @@ syntactic_put_merge(CurObj, UpdObj) ->
 coord_put_merge(undefined, UpdObj, NodeId, Timestamp) ->
     riak_object:increment_vclock(UpdObj, NodeId, Timestamp);
 coord_put_merge(LocalObj, PutObj, NodeId, Timestamp) ->
-    riak_object:update(false, LocalObj, PutObj, NodeId, Timestamp).
+    riak_object:update(false, LocalObj, PutObj, NodeId, Timestamp, false, true).
 
 get_counter(Id, VC) ->            
     case lists:keyfind(Id, 1, VC) of
