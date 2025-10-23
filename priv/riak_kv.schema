@@ -799,7 +799,7 @@
 %% * 1: Riak 1.4, default buckets, and earlier default - may duplicate siblings
 %%      from interleaved writes (sibling explosion.)
 {mapping, "buckets.default.merge_strategy", "riak_core.default_bucket_props.dvv_enabled", [
-  {default, '2'},
+  {default, '1'},
   {datatype, {flag, '2', '1'}},
   hidden
 ]}.
