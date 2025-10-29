@@ -5,6 +5,7 @@
 ### Proactive Replace
 
 It is possible to proactively replace a node in a Riak cluster, if:
+
 - a cloud provider intends to withdraw an instance;
 - a hardware upgrade is required;
 - to change the storage_backend of a cluster node-by-node;
@@ -59,6 +60,7 @@ Repair key ranges is especially powerful for repairing keys across a cluster fol
 The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.
 
 There exists the (very rare) potential for a ledger to be corrupted.  There are also circumstances where following an update the ledger is not fully efficient until it is rebuilt.  In these circumstances a rebuild or repair of the ledger can be forced by:
+
 - Stopping the node;
 - Deleting the ledgers in the impacted partitions (under each vnode's leveled store there should be a ledger folder);
 - Restarting the node.
@@ -132,6 +134,7 @@ All configuration in `riak.conf` is converted into erlang environment variables,
 To change the configuration of riak at run-time, the variables can be changed via `remote_console` using the [application:set_env/3 function](https://www.erlang.org/doc/apps/kernel/application.html#set_env/3).
 
 Note though, that:
+
 - Some environment variables will be read by long-lived processes at startup, and so making runtime changes will have no effect.
 - Configuration parameters will be translated into environment variables values by the cuttlefish schema - the configured value may not be a valid value for the environment variable e.g. `enabled`/`disabled` flags will commonly be translated into `true`/`false` boolean environment variables.  Changing an environment variable to the untranslated value may lead to node crashes.
 
@@ -140,6 +143,7 @@ In general, never change an environment variable at run-time via `remote_console
 ### riak_client remote_console commands
 
 There are a number of administration commands, that are made available [via the riak_client module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_client.erl).  These include:
+
 - `participate_in_coverage/1`, `remove_node_from_coverage/0`, `reset_node_for_coverage/0` - used to change the `participate_in_coverage` status of the node.  When a node is known to have a potential data issue (i.e. it is being recovered from a failure), it can be removed from coverage, and reset back into coverage once the data has been proven to be fully populated.
 - `replrtq_reset_all_peers/1` force all up nodes in the cluster to reset their peer discovery (used in real-time repl), to be used after adding a new node to a remote cluster.
 - `replrtq_reset_all_workercounts/2` force all up nodes to change their worker counts and per-peer limits, to be used when a sink cluster cannot keep up fetching the remote replication traffic and so requires more sink workers (or sink workers per peer).
@@ -189,6 +193,7 @@ These functions can be run only against a single specific bucket at a time.  The
 The change_method should be used to either `count` - and the fold will simply count, rather than queue for action.  To actually queue for action `local` should be used, which will queue each reap or erase on the node in which it was discovered.
 
 When queueing large volumes of changes, note that:
+
 - The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and the dequeued in batches by within the same preflist.
 - The pace of which items are de-queued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
 - In multi-data centre configurations reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
@@ -205,6 +210,7 @@ The bitcask backend operates at PUT time as an append-only database.  As bitcask
 If objects change; they are updated, deleted or they expire due to TTL - then bitcask must perform infrequent `merge` operations to update files so that replaced objects no longer consume space on disk.  Bitcask does not orchestrate merge operations so that they do not coincide, and the merge operations may have a significant impact on cluster performance when they are initiated.
 
 If storing mutable objects in Bitcask, then it is important to configure merge windows, windows in which merges are permitted to take place such that either:
+
 - merges take place at different times on different nodes (or locations) so that only a single replica for each partition is impacted by a concurrent merge;
 - merges take place outside of peak hours of database usage.
 
@@ -215,6 +221,7 @@ For information on configuring bitcask merge see the `bitbask.merge` sections [w
 ### leveled compaction high/low hour
 
 The leveled backend is split into two parts:
+
 - the Journal which like bitcask is generally an append-only file-based log of writes in the order they were received;
 - the Ledger which stores only the keys index entries and object metadata; and is a log-structured merge tree, where immutable files are periodically merged and re-written to preserve an on-disk ordering of the keys by level.
 
@@ -225,6 +232,7 @@ The journal is generally immutable, but periodically compaction runs will be mad
 The leveled backend makes use of randomness to reduce the probability of overlapping compaction activity.  It is possible to configure a compaction window, however, all volume testing of Riak with a leveled backend is performed with continuous compaction activity.  The Journal compaction is relatively efficient and low-impact in comparison to bitcask merge - it is generally considered a safe practice to run compaction continuously throughout the day.
 
 Although not necessary, the compaction high/low hour can be used to provide a window for compaction to take place, if required, such that either:
+
 - journal compaction will take place at different times on different nodes (or locations) so that only a single replica for each partition is impacted by a concurrent journal compaction;
 - journal compaction will take place outside of peak hours of database usage.
 
@@ -309,16 +317,19 @@ Backup clusters are not a prerequisite for taking backups, but they can be a fle
 If a cluster uses only the leveled backend, a hot backup may be taken across the cluster using the `riak_client:hotbackup/4` function from `bin/riak remote_console` on any node within the cluster.
 
 There are four inputs to the function required:
+
 - A backup path; all nodes will be required to support the same path, the path cannot be to the current folder in which leveled is running, but the path must be on the same volume as the current data path (e.g. you could use `<PLATFORM_DATA_DIR>/backup` as a backup to `<PLATFORM_DATA_DIR>/leveled`).
 - The `n_val` of the cluster.
 - The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is easier to understand and reason about the result of the backup if: the cluster uses the same `n_val` for all buckets; and the coverage plan `n_val` is set to that `n_val`.
 - A client; e.g. a `C` where `{ok, C} = riak:local_client()`.
 
 The backup at each vnode backend will first:
+
 - roll the active journal file, and start a new empty active journal file, so that the Journal of the leveled store is now an entirely immutable set of files;
 - take a snapshot of the store, and return it to the controlling process (so that the vnode is free to continue its work).  This snapshot process is an extremely fast in-memory process that spawns a new snapshot "Inker" (the managing process for the Journal), which has the same knowledge of the current Inker of the file structure of the Journal.
 
 The actual backup is then called on the snapshot:
+
 - It will write the Journal manifest (the data structure that defines the list of file references that represents the Journal) to the backup path;
 - It will then for each file within that Journal manifest hard-link to a new file in the backup path;
 - The snapshot will then close (and any pending changes held in the active Journal because of the snapshot will be released).
@@ -362,6 +373,7 @@ Note that Riak 3.4 uses an OTP version that will free memory from shared carrier
 [Future Riak versions will switch to enforcing `MADV_DONTNEED`](https://github.com/OpenRiak/riak/issues/20).
 
 The [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_kv_util.erl) also supports some functions helpful for memory analysis, and these functions may be called via `remote_console`:
+
 - top_n_binary_total_memory/1,
 - summarise_binary_memory_by_initial_call/1,
 - top_n_process_total_memory/1,
@@ -380,6 +392,7 @@ To alter the configuration on the Erlang VM to adjust the operation of scheduler
 Within the Riak development process testing with eprof profiling is enabled to discover on which functions CPU is used.  For more information [on eprof see the erlang dpocumentation](https://www.erlang.org/doc/apps/tools/eprof.html).  There exists a helper function in the [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_kv_util.erl) `profile_riak/1` which takes an argument N ms, and will profile riak for N ms.
 
 Note with eprof:
+
 - Riak, especially with leveled backend, uses a huge amount of processes both temporary and permanent.  Profiling over all processes may fail, especially when profiling for longer periods.
 - There may be measurement effects when profiling functions which respond per call in `< 0.1 microseconds` (i.e. the impact of the function call may be proportionally inflated by the cost of measurement).
 - Profiling may record the time spent waiting in receive loops as processing time (e.g. `gen_server:loop/7` may appear to have a processing overhead which is in factmainly wait time).

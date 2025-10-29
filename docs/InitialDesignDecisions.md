@@ -1,6 +1,9 @@
+# Initial Design Decisions
+
 When starting with Riak a number of initial design decisions need to be made at the outset of the project.  This is a summary of those decisions, and the factors relevant to making each choice.
 
 The initial design decisions are split into the following categories:
+
 - [Database backend](#database-backend)
 - [Ring size](#ring-size)
 - [Intra-cluster data resilience](#intra-cluster-data-resilience)
@@ -10,13 +13,14 @@ The initial design decisions are split into the following categories:
 
 In addition to making a choice, it is also necessary to consider how to transition when a sub-optimal choice has been made.
 
-# Database backend
+## Database backend
 
-## Database backend - making a choice
+### Database backend - making a choice
 
 A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and proving access to the data.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
 
 The following choices exist:
+
 - leveled (default from Riak 3.4)
 - bitcask (default prior to Riak 3.4)
 - eleveldb (deprecated as of Riak 3.4)
@@ -24,6 +28,7 @@ The following choices exist:
 - multi-backend (supported only in limited use cases)
 
 In general, the best choice is to use the leveled backend.  The bitcask backend may be used, especially if
+
 - there is no potential future need for querying of data, and;
 - objects are largely immutable, and;
 - read-repair is sufficient to meet the application anti-entropy requirements.
@@ -32,9 +37,10 @@ Even in those situations, the leveled backend may be more efficient.  The levele
 
 Use of multi-backend should generally be avoided.  It may specifically be used to manage multiple expiry schedules across multiple bitcask backends, but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
 
-### Leveled
+#### Leveled
 
 The leveled backend has the following characteristics and features:
+
 - Pure erlang log-structured-merge (LSM) tree backend, designed and developed specifically for use within Riak.
   - Implementation in Erlang simplifies resource management as CPU scheduling of all Riak activity is under the control of the Erlang virtual machine.  
 - Differs from most other LSM implementations in that values are set-aside in a sequence-ordered journal, and only keys and metadata are placed in the key-ordered LSM-based ledger.  This provides for lower cost and more efficient reads when only keys and metadata is required (internally within Riak this is usually the case, even when the external user requires the value).  It also reduces the overhead of write amplification, supporting larger object sizes with greater efficiency.
@@ -46,9 +52,10 @@ The leveled backend has the following characteristics and features:
 - Guarding against out-of-memory errors is an operator responsibility.  The cluster should be expanded if the memory limit is close, the per-vnode memory overhead will not be proactively reduced.
   - Makes use of any spare memory of the system through proactive hints to the file-system page cache.
 
-### Bitcask
+#### Bitcask
 
 The bitcask backend has the following characteristics and features:
+
 - A simple low-code, journal based key-value store, originally design and developed by the Riak team; that has been used as a general implementation model for other such stores.
 - Written primarily in Erlang, but including around 3K lines of C code to provide the in-memory database of keys.  Access to C-code is generally for short-lived functions, which limits the impact on the scheduling requirements of the BEAM.  The C-code is also extremely stable, and is low-risk in terms of overheads associated with platform evolution.
 - Supports for pure objects only, no support for index entries and any part of the Riak Query API.
@@ -59,9 +66,10 @@ The bitcask backend has the following characteristics and features:
 - No current support for optimised HEAD requests, which can have significant impact on overall efficiency within Riak.
   - Implementations of bitcask have been produced with this optimisation, and may be open-sourced in the future. 
 
-### Eleveldb
+#### Eleveldb
 
 The eleveldb backend has the following characteristics and features:
+
 - A heavily-adapted version of the google leveldb store - a LSM tree backend written in C++.  The adapted version is now deprecated, and the original version is subject to only limited maintenance activity.
   - has specific optimisations when compared with google leveldb to: reduce stalling; share and schedule resources where multiple instances operate on the same server; recover disk space following deletion; support automated object expiry.
 - Supports secondary index entries, but will not support the full Riak Query API.
@@ -70,46 +78,50 @@ The eleveldb backend has the following characteristics and features:
   - This provides some additional capabilities, in particular the ability to fix the percentage of memory used used across all vnodes on a node.
   - This has some long-term maintenance overheads, which the OpenRiak community will not continue to support after the release of Riak 3.4.
 
-### In-memory
+#### In-memory
 
 The in-memory backend has the following characteristics and features:
+
 - Not persisted, all data will be lost on restart (though not that Riak is resilient to the loss of data on an individual node).
 - Based on the erlang ETS tables.
 - Has crude and imperfect handling of out-of-memory issues to help limit the size of each individual vnode store.
 - Supports secondary index entries, but will not support the full Riak Query API.
 
-### Multi-backend
+#### Multi-backend
 
 The multi-backend has the following characteristics and features:
-- Allows different data buckets to be mapped to different backends, so that different buckets can utilise the different capabilities of those backends.
-- Generally not recommended for production use, unless there are specific issues that cannot otherwise be handled.
-  - Behaviour of individual backends is better understood, and subject to greater testing - especially when requiring anti-entropy and inter-cluster reconciliation. 
 
-## Database backend - changing the choice
+- Allows different data buckets to be mapped to different backends, so that different buckets can utilise the different capabilities of those backends.
+- Generally not recommended for production use, other than when running multiple bitcask backends (e.g. with different TTL, or storage paths):
+  - Behaviour of individual backends is better understood, and subject to greater testing - especially when requiring anti-entropy and inter-cluster reconciliation.
+
+### Database backend - changing the choice
 
 The database backend configuration is local to a node.  Some cluster-wide behaviour is dependent on the backend configuration being consistent across nodes (i.e. if some nodes use bitcask, but others use leveled - 2i queries will not work within the cluster as the bitcask-based nodes will not support the queries).  However, accounting for this, it is possible to change backend through a "rolling replace" within a cluster - by replacing one or more nodes at a time to a node with a previous backend configuration, to one with a new (where the new configuration has more capabilities then the old).
 
 For example, a multi-backend configuration with bitcask and in-memory backends and parallel-mode tictac aae, can be upgraded to a single leveled backend with native tictac aae by migrating one node at a time using `riak admin cluster replace` (assuming the TTL capability requirement is not being utilised).
 
-# Ring size
+## Ring size
 
-## Ring size - making a choice
+### Ring size - making a choice
 
 A riak cluster distributes data across a number of individual databases (known as vnodes), and those databases are then distributed across the physical nodes and locations of the cluster.  The number of vnodes in the databases is required to be a factor of 2, and bigger than the total number of nodes in the database cluster.  This number is known as the "Ring Size".
 
 Starting with a large ring size is helpful as:
+
 - It provides greater potential for future scalability of the service, as for efficient use of hardware there should always be at least one vnode per CPU core within the cluster.
 - It provides for more even distribution of load, as if `RingSize div NodeCount = K` each node will have either `K` or `K + 1` vnodes - and the relative delta between the size of `K` and `K + 1` decreases as the RingSize increases (e.g. with a node count of 6, there is a 10% difference between the resource required for a busy vs quiet node with a Ring Size of 64, but just a 2.3% difference with a Ring Size of 256).
 - Background database activity is split by vnode, so increasing the number of vnodes has smoothing impact on that load making it more predictable.
 
 Starting with a smaller ring size is helpful as:
+
 - Index queries, where a small number of results (i.e. < 10K) are returned are more efficient with a smaller ring size.  If 1% of the overall database throughput is such queries, then a shift up in ring size can reduce efficiency by up to 10% - but with less load of such queries, the impact is less.
 - There is a lower per-node memory footprint (with the leveled backend) if the vnode count per node is lower - although that footprint can be addressed through other means (e.g. reducing the `penciller_cache_size`).
 - Background database activity is split by vnode, so decreasing the number of vnodes reduces the overall volume of such activity.
 
 Unless it is expected that index queries will exceed more than 1% of total throughput, it is generally expected that `512` is a reasonable starting ring-size for production clusters.
 
-## Ring size - changing the choice
+### Ring size - changing the choice
 
 Once a Ring Size is set, there is no way of updating a cluster in-place.  Accordingly, getting the ring size "correct" at initialisation of the cluster is important.  
 
@@ -117,13 +129,14 @@ If a change of ring-size is necessary, it can be managed by initiating a new clu
 
 Completing such a transition on a large cluster may take several days.
 
-# Intra-cluster data resilience
+## Intra-cluster data resilience
 
-## Intra-cluster data resilience - making a choice
+### Intra-cluster data resilience - making a choice
 
 A Riak cluster is a set of nodes (e.g. physical servers or virtual cloud instances), and the nodes within a cluster can be divided into separate locations (e.g. to represent physical racks, cloud placement groups, cloud availability zones or operator-defined maintenance groups).  Guarantees about the safety of data within a cluster can be set for both the nodes and the locations.
 
 There are three configurable elements that control the resilience of the data distribution with a cluster:
+
 - `n_val`; the replication value for the data items within the cluster, i.e how many copies of the data should exist within the cluster.  The n_val should preferably be consistent across all buckets.  This is normally set to 3, but in some circumstances this may be changed to 1 (e.g. backup clusters, or development environments) or 5 (e.g. for larger clusters looking to guarantee quorum reads in the presence of triple failures) - although in theory any positive integer value may be supported.
 - `target_n_val`; the target for the distribution guarantee.  The `target_n_val` should always be consistently defined across nodes.  This is normally set to 4 (for a `n_val` of 3).  If the target is equal to the n_val, then all copies of the data stored within Riak in a healthy cluster will be guaranteed to be on separate nodes. If the target is greater n_val, then the integer difference represents how many failures can be tolerated before the guarantee fails. 
 - `target_location_n_val`; the target for the distribution guarantee from the perspective of locations not nodes.  The `target_location_n_val` should always be consistently defined across nodes. This is normally set to 3.  When a `target_location_n_val` and `target_n_val` are both configured then the cluster change process will attempt to uphold both guarantees.  The use of locations is optional within Riak.
@@ -136,7 +149,7 @@ As well as the cluster n_val settings, there is a configurable option to allow f
 
 Enabling `tictacaae_active` has additional benefits: it is a pre-requisite for inter-cluster reconciliation; and it also allows for the use of aae folds which provide important information ot operators about the data within the cluster (e.g. list buckets, find average object size, find objects in sibling state, find very large objects etc).  The overheads of running `tictacaae_active` differ based on backend choice, with the lowest relative impact being with the leveled backend.
 
-## Intra-cluster data resilience - changing the choice
+### Intra-cluster data resilience - changing the choice
 
 The `n_val` is in theory configurable by bucket, which allows for multiple n_vals to be used within the cluster.  However, each unique n_val will increase significantly the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.
 
@@ -146,11 +159,12 @@ The `target_n_val` and `target_location_n_val` configuration is used each time a
 
 Both anti-entropy mechanisms can be deployed in parallel to help with transition.  Enabling anti-entropy takes time to take effect (as caches are built).  Disabling it is immediate, although garbage collecting any legacy on-disk overhead is a manual operator task.
 
-# Interconnecting multiple clusters
+## Interconnecting multiple clusters
 
-## Interconnecting multiple clusters - making a choice
+### Interconnecting multiple clusters - making a choice
 
 Riak clusters can be configured to replicate to other clusters, and further it is possible to continuously reconcile that the replication is correct (and prompt activity to resolve any deltas caused by replication failures).  Multiple clusters are generally used to:
+
 - replicate into different physical locations to provide for disaster protection (e.g. between cloud regions, cloud providers, cloud availability zones, physical data centres, on and off-premises).
 - provide clusters that support off-line usage of the data (e.g. reporting or backup), potentially with lower replication values (e.g. `n_val` of 1).
 - replicate to additional clusters to provide for scale, or more efficient read activity in alternative locations.
@@ -160,6 +174,7 @@ The process of replication and reconciliation between the clusters is identical 
 It is possible to control the possibility of consistency issues using conditional PUT logic (with token-based consensus) that will block all but one of a concurrent update when the cluster is in a non-exceptional state.  However this control is only possible within a single cluster, there are no controls possible to block the creation of multi-value siblings when concurrent updates are allowed by the application into different clusters.
 
 It is necessary to make design choices between using locations for resilience and using clusters.  For instance, in a cloud environment one could choose:
+
 - to deploy two clusters (`n_val` 3), one each in two separate availability zones, and a backup (`n_val` 1) cluster in a third availability zone - with locations aligned to placement groups for the nodes in the data-resilient clusters.  This provides that ability to switch the application between availability zones on failure without loss of resilience, and provides a total of 7 copies of the data all guaranteed to be in separate physical zones.
 - to deploy a single cluster (`n_val` 5) spread across three availability zones (with locations aligned with availability zones).  This means that one cluster can be used to manage consistency (e.g. using conditional PUTs with token-based consensus), whilst guaranteeing there will always be at least two copies of the data available even if an entire Availability Zone is lost.  It would also be likely in this scenario that object GETs would generally not require the object value to traverse across availability zones (when using the leveled backend).
 - to add to the above an additional cluster in alternative cloud provider or cloud region.
@@ -168,13 +183,13 @@ Topologies of clusters are possible.  Topologies With nextgenrepl are constraine
 
 When splitting a cluster across physical locations, it should be noted that the network latency between nodes will delay client response to both read and write requests.  The latency impact should not though impact cluster throughput.  If there are network bandwith costs between those physical locations, these costs will be minimised by running separate clusters in each location.  Using location definitions (for cluster claim) within a cluster will not be as optimal as separate clusters, but will reduce bandwidth costs for reads relative to configuring a multi-cluster without locations - as generally the local fetch will be preferred.
 
-## Interconnecting multiple clusters - changing the choice
+### Interconnecting multiple clusters - changing the choice
 
 Adding new clusters is a simple process assuming that tictacaae is enabled, but may be time-consuming based on the volume of data.  A new cluster can have real-time replication enabled to being to receive all new changes, then be seeded by using the `range_repl` aae_fold.  The seeding process needs to be throttled by controlling the number of sink workers on the new cluster to prevent the source cluster from being overloaded.  Once the `range_repl` process has completed, covering all the buckets, the reconciliation (aka full-sync) process can be enabled to detect any remaining deltas.  Not that the reconciliation process should NOT be used for bulk migration of data, as it is not designed ot efficiently handle large deltas.
 
-# Deleting data
+## Deleting data
 
-## Deleting data - making a choice
+### Deleting data - making a choice
 
 Safe deletion of data within eventually consistent databases is surprisingly complicated.  There are two aspects of deletion to be considered, dynamic deletion of individual objects, and the scheduled deletion of expired objects.
 
@@ -196,13 +211,13 @@ It is also possible to manage deletion through the use of a Time To Live.  Howev
 
 As well as support via aae_fold for reap jobs, there is likewise support for erase jobs.  Erase and reap jobs, can be limited by bucket (mandatory), key range (optional) and last-modified-date range (optional).  It is recommended that scheduled erase jobs be used to handle garbage collection of temporary objects (using the last-modified-date range) in preference to TTL configuration.
 
-## Deleting data - changing the choice
+### Deleting data - changing the choice
 
 The delete mode is a per-node configuration which needs to be applied consistently across all nodes in a cluster, and across all connected clusters.  Changing the delete mode is possible, with a restart, but needs to be a coordinated change across the whole environment - a small time delta is not an issue and can be handled by anti-entropy and reconciliation processes. 
 
-# Mapping data to objects
+## Mapping data to objects
 
-## Mapping data to objects - making a choice
+### Mapping data to objects - making a choice
 
 The most important design decision is how to map the data requirements in a project to objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions - but there is some general guidance that tends to be helpful in most cases:
 
@@ -216,11 +231,11 @@ The most important design decision is how to map the data requirements in a proj
 - Plan index entries for future query needs.  Conjunction queries are possible across indexes as of Riak 3.4 Query API, but best performance is generally met by pre-concatenating index terms and running range queries with filters on concatenated terms.
 - For very frequently demanded queries, and where false negatives are not tolerable but false positives are - the use of direct index objects managed by the application is preferred over the use of secondary indexes.
 
-## Mapping data to objects - changing the choice
+### Mapping data to objects - changing the choice
 
 Riak is designed to be agnostic to the format of the data, the schema belongs to the application and not the database.  It is therefore necessary to plan for schema migration within the application - detecting the schema version for an object, finding objects within a given schema version, updating a schema version in parallel to other application activity.  It is strongly recommended a lazy migration strategy is used whereby the application can roll forward each object to the latest version on GET, without necessarily updating the persisted version.  
 
-# Key Riak Concepts
+## Key Riak Concepts
 
 Before configuring and starting Riak, familiarity with some key concepts will be helpful.
 
@@ -233,6 +248,7 @@ As the object should be stored in multiple places, normally 3 (which is our `n_v
 When a cluster is formed, a claim algorithm will distribute vnodes `0` to `RingSize - 1` around the physical nodes, so that all of these preflists fall onto 3 separate nodes, but also ensures that for every such position `(Position + 3) mod RingSize` is also on a diverse physical node to the preflist for that position.
 
 To restore full data protection after failure, Riak must request the next node along in each preflist to start a fallback vnode.  For example, if a node holding vnode 10 fails, then this has an impact on the keys that have mapped to vnodes 8, 9 and 10 - they all now have a missing vnode.  three fallback vnodes will now be started:
+
 - A key which hashes to vnode 8 will be stored in vnodes 8, 9 and a fallback for 10 that runs on the node owning vnode 11.
 - A key which hashes to vnode 9 will be stored in vnodes 9, 11, and a fallback to vnode 10 started on the node which owns vnode 12.
 - A key which hashes to vnode 10 will be stored in vnodes 11, 12 and a fallback for vnode 10 started on the node which owns vnode 13.

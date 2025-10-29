@@ -20,12 +20,14 @@ Riak can be potentially built on most Unix-flavour systems (including OSX for de
 ### Install Erlang/OTP
 
 Installation guides for different OTP versions are available via erlang.org:
+
 - https://www.erlang.org/docs/24/installation_guide/install;
 - https://www.erlang.org/docs/26/installation_guide/install.
 
 For convenience kerl may be used to simplify the installation of Erlang/OTP - https://github.com/kerl/kerl.
 
 Some points to note when installing Erlang:
+
 - If using OTP 24 take note of [CVE-2022-37026](https://nvd.nist.gov/vuln/detail/CVE-2022-37026).
 - Of the optional dependencies for OTP, only OpenSSL is required for Riak.
 - The OpenSSL 3.0 integration in OTP 24 is not currently considered to be production-ready and stable.
@@ -47,6 +49,7 @@ Tagged releases contain a `rebar.lock` file which ensures all dependencies are f
 ### Make Riak
 
 There are three basic commands to use when building riak:
+
 - `make rel` which will build. a release of riak in the `rel/riak` folder within the repository clone.
 - `make devclean; make devrel` which will clean and rebuild a group of 8 riak instances in the `dev/dev<n>` folder within the repository clone.  This is the ideal way to get started with experimenting with a Riak cluster, as each of those instances can be started and act in an equivalent way to an instance on a separate physical node.
 - `make package` which will build a package for the current local platform, which can be deployed to another server of that type using the standard package management tool (e.g. `dpkg` on debian systems).
@@ -83,6 +86,7 @@ With each file being in the `priv` folder for that repository, e.g:
 https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema
 
 When starting a first cluster to experiment, the following configuration items are of particular importance:
+
 - ring_size - refer to the InitialDesignDecisions document, should be set smaller than the default for test/dev environments and larger than the default for production systems;
 - tictacaae_active - should be set to active if the active repair of deltas between vnodes is required, otherwise repair will be reactive (i.e. only once a delta has been detected on read);
 - storage_backend - refer to the InitialDesignDecisions document, but for full Riak functionality must be set to leveled;
@@ -102,28 +106,24 @@ Riak objects are placed into buckets.  The configuration of the handling of buck
 
 For help in enabling properties on typed buckets see:
 
-```
+```bash
 rel/riak/bin/riak admin bucket-type --help
 ```
 
 A number of "defaults" for bucket properties are configurable via `riak.conf` e.g.
 
-```
-buckets.default.n_val = 3
-buckets.default.merge_strategy = 2
-buckets.default.pw = 1
-buckets.default.allow_mult = true
-...
-```
+> buckets.default.n_val = 3
+> buckets.default.merge_strategy = 2
+> buckets.default.pw = 1
+> buckets.default.allow_mult = true
 
 Configuring these defaults will impact only non-typed buckets.  So any bucket name used where no type is specified will inherit these defaults, but any typed bucket created will NOT inherit these configured defaults - typed buckets instead have fixed, pre-defined defaults.
 
 Two pre-defined defaults changed with the introduction of typed buckets (the merge strategy aka `dvv_enabled`, and the `allow_mult` configuration), it is strongly recommended to configure your clusters to have the new default properties for non-typed buckets to avoid confusion with non-typed buckets having different defaults i.e. by adding to your `riak.conf`:
 
-```
-buckets.default.merge_strategy = 2
-buckets.default.allow_mult = true
-```
+> buckets.default.merge_strategy = 2
+> buckets.default.allow_mult = true
+
 
 As any change made to `buckets.default.*` configuration in `riak.conf` is not inherited for typed buckets, there is no way of changing the defaults for typed buckets, so the operator is required to ensure that all default properties are manually set on every type.  For example if you wish to change the default n_val to 5 - this needs to be changed in riak.conf `buckets.default.n_val = 5` but ALSO the property `{n_val, 5}` has to be added on every single bucket type created.
 
@@ -168,6 +168,7 @@ It is recommended that `{last_write_wins, true}` only be used when for once-only
 The `n_val` bucket property has a default value of `3`, and can be set to any positive integer: though general only values of `1`, `3` and `5` are in common use.
 
 Setting distinct `n_val`s on a per-bucket basis is not recommended, it is preferable to have a consistent `n_val` across a cluster.  This is because:
+
 - related configuration settings `target_n_val` and `target_location_n_val` are cluster-wide and not bucket-specific;
 - the scope of the anti-entropy system grows with every unique n_val;
 - nextgenrepl full-sync configuration is specific to each n_val, having multiple n_vals requires different nodes in the cluster to reconcile for different n_vals.
@@ -201,6 +202,7 @@ If replicating between clusters and `one` is used as the `sync_on_write` bucket 
 The `aae_tree_exclude` bucket property has a default value of `false` and allows for some flexibility when reconciling between clusters using nextgenrepl full-sync.  In general with Riak nextgenrepl it is assumed that clusters aim to contain the same data.  It is possible to replicate specific buckets between specific sources, and also possible to reconcile only individual buckets between clusters - but per-bucket reconciliation is not as efficient as full-cluster reconciliation.  The efficiency of full cluster reconciliation is based on the use of cached and mergeable aae (active anti-entropy merkle) trees that represent all the data in the store.
 
 The purpose of `aae_tree_exclude` is to not include the bucket in the cached tree, so that the bucket isn't considered in the reconciliation job.  For example, this may help when:
+
 - a subset of buckets are not replicated between clusters;
 - a bucket is using a backend TTL within one of the clusters (a cached tree cannot coordinate changes with backend stores which implement auto-expiry - so cached trees are prompt false AAE workloads when a backend TTL is used).
 
@@ -223,6 +225,7 @@ Other vclock settings - `old_vclock`, `young_vclock`, `big_vclock` - should not 
 The `notfound_ok` bucket property has a default value of `true`, and this means when calculating the 'r' value of a read a response from an individual vnode will count as a valid read, and so will count towards quorum being reached.
 
 There are two circumstances where setting `{notfound_ok, false}` may be used:
+
 - when the application never expects to read keys that are not present, and so not_found is a failure;
 - when specific performance to reduce `r` or `w` values to fast return to clients before operations have reach quorum, that may lead otherwise to near-parallel reads and writes falsely responding `not_found`.  Note that such performance hacks are generally not recommended.
 
