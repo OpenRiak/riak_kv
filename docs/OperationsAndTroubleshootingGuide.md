@@ -259,11 +259,11 @@ Before considering backups, it is worth noting that as a distributed database th
 
 The Riak is designed to operate as both resilient clusters and a broader system of resilience gained by clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.  Major changes to the database will often occur in the application not the database, as the application is in control of the data schema, and hence the migration of objects between schema versions.  Self-healing is used to handle repair scenarios - i.e. recovering data from peers within the cluster, and the system is designed to perform predictably during the healing process.
 
-Production users of Riak commonly have very lightweight backup and recovery strategies when compared to traditional database management systems.  However, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes, that don't require large point-in-time migration events.
+Production users of Riak commonly have very lightweight backup and recovery strategies when compared to traditional database management systems.  However, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
-If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient to use the `repair` process to recover a node, than using backup and restore.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
+If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use the `repair` process to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
 
-Note that in cloud environments, if an inefficient backup method is chosen (e.g. snapshots of block-service file-system volumes), then backup costs may consume a significant proportion of overall Riak operational costs.
+Note that in cloud environments, if an inefficient backup method is chosen (e.g. snapshots of block-service file-system volumes), then backup costs may consume a dominant proportion of overall Riak infrastructure costs.
 
 ### Backup - the preferred building block
 
@@ -297,7 +297,7 @@ The actual backup is then called on the snapshot:
 
 It is important to note that there will be minimal impact on the disk footprint within the volume from taking the backup.  The hard-link only requires the backup partition to grow when the files are mutated - but the journal files are not mutated, they are immutable.
 
-Because the active journal file was "rolled" at the start of the process, new writes to the database will go into a new active journal that is not linked to the backup directory.  It is only when journal compaction is run, that there may be a disk impact from the existence of the backup.  If journal compaction compacts a set of files it will re-write a new set of files (that are not linked to the backup), and then delete the old files.  If a backup still exists for those files, the space will now not be reclaimed due to the hard links.
+Because the active journal file was "rolled" at the start of the process, new writes to the database will go into a new active journal that is not linked to the backup directory.  It is only when journal compaction is run, that there may be a disk-space impact from the existence of the backup.  If journal compaction compacts a set of files it will re-write a new set of files (that are not linked to the backup), and then delete the old files.  If a backup link still exists for those files, the space will now not be reclaimed due to those hard links.
 
 The best practice for copying the hot backup to an alternative location, should that be required, is not defined by the OpenRiak community.  There are example solutions, such as [the S3 sync](https://github.com/OpenRiak/leveled-hotbackup-s3-sync) project which may provide a potential approach.  The S3 sync project is particularly interesting, as before copying the Journal files to S3 it creates "hints" files so that it is possible to read individual objects in the back using S3 commands - without requiring the backup to be restored.  Other standard solutions may be used (e.g. `rsync` to offline the backup).
 
@@ -329,36 +329,34 @@ For more advanced troubleshooting, the `riak remote_console` can be used to acce
 
 ### Recon
 
-Riak 3.4 includes the recon library, which is especially useful for troubleshooting memory utilisation.  For guidance on using the library see the [documentation](https://ferd.github.io/recon/overview.html) and the [related book](https://www.erlang-in-anger.com/).
+Riak 3.4 includes the recon library, which is primarily useful for troubleshooting memory issues within the Erlang VM.  For guidance on using the library see the [documentation](https://ferd.github.io/recon/overview.html) and the [related book](https://www.erlang-in-anger.com/).
 
-Note that Riak 3.4 uses an OTP version that will free memory from shared carriers using `MADV_FREE` not `MADV_DONTNEED`; and this may lead to false reporting of memory usage of the `beam` by the operating system - some kernel stats packages may not report `MADV_FREE` memory as having been returned until it is required to use it, creating the misleading impression of a memory leak.  Check kernel documentation to be clear on how to correctly monitor when systems use `MADV_FREE`.
-
-[Future Riak versions will switch to enforcing `MADV_DONTNEED`](https://github.com/OpenRiak/riak/issues/20).
+Note that Riak 3.4 uses an OTP version that will free memory from shared carriers using `MADV_FREE` not `MADV_DONTNEED`; and this may lead to false reporting of memory usage of the `beam` by the operating system - some kernel stats packages may not report `MADV_FREE` memory as having been returned until it is required to use it, creating the misleading impression of a memory leak.  Check kernel documentation to be clear on how to correctly monitor when systems use `MADV_FREE`.  [Future Riak versions will switch to enforcing `MADV_DONTNEED`](https://github.com/OpenRiak/riak/issues/20).
 
 The [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_kv_util.erl) also supports some functions helpful for memory analysis, and these functions may be called via `remote_console`:
 
-- top_n_binary_total_memory/1,
-- summarise_binary_memory_by_initial_call/1,
-- top_n_process_total_memory/1,
-- summarise_process_memory_by_initial_call/1,
+- `top_n_binary_total_memory/1`
+- `summarise_binary_memory_by_initial_call/1`
+- `top_n_process_total_memory/1`
+- `summarise_process_memory_by_initial_call/1`
 
-All these functions take a single argument N (the N in Top N), though the summarise functions can also be passed th eoutput of the related top_n function.
+All these functions take a single argument N (the N in Top N), though the `summarise` functions can also be passed the output of the related top_n function.
 
 ### Microstate accounting
 
 To examine the spread of CPU-related work by scheduler (there should be one scheduler type for each CPU core), microstate accounting may be used.  The [erlang documetntion](https://www.erlang.org/doc/apps/runtime_tools/msacc.html) gives basic information on analysing the output, but note that the functionality of microstate accounting may vary signifciantly between OTP releases.
 
-To alter the configuration on the Erlang VM to adjust the operation of schedulers, see the `erlang.schedulers` options within the [riak schema file](https://github.com/OpenRiak/riak/blob/openriak-3.4/priv/riak.schema).  It is recommended to seek expert advice, and run relaistic performance test exercises before adjusting any default settings.
+To alter the configuration on the Erlang VM to adjust the operation of schedulers, see the `erlang.schedulers` options within the [riak schema file](https://github.com/OpenRiak/riak/blob/openriak-3.4/priv/riak.schema).  It is recommended to seek expert advice, and run realistic performance test exercises before adjusting any default settings.
 
 ### Eprof
 
-Within the Riak development process testing with eprof profiling is enabled to discover on which functions CPU is used.  For more information [on eprof see the erlang dpocumentation](https://www.erlang.org/doc/apps/tools/eprof.html).  There exists a helper function in the [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_kv_util.erl) `profile_riak/1` which takes an argument N ms, and will profile riak for N ms.
+Within the Riak development process testing with eprof profiling is enabled to discover on which functions CPU is used.  For more information on [eprof see the erlang documentation](https://www.erlang.org/doc/apps/tools/eprof.html).  There exists a helper function in the [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_kv_util.erl) `profile_riak/1` which takes an argument N ms, and will profile riak for N ms.
 
 Note with eprof:
 
 - Riak, especially with leveled backend, uses a huge amount of processes both temporary and permanent.  Profiling over all processes may fail, especially when profiling for longer periods.
 - There may be measurement effects when profiling functions which respond per call in `< 0.1 microseconds` (i.e. the impact of the function call may be proportionally inflated by the cost of measurement).
-- Profiling may record the time spent waiting in receive loops as processing time (e.g. `gen_server:loop/7` may appear to have a processing overhead which is in factmainly wait time).
+- Profiling may record the time spent waiting in receive loops as processing time (e.g. `gen_server:loop/7` may appear to have a processing overhead which is in fact mainly wait time).
 
 ### Tracing with dbg
 
