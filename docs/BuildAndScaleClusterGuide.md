@@ -1,6 +1,6 @@
 # Riak KV - Building and Scaling a Cluster
 
-This guid is split into two parts:
+This guide is split into two parts:
 
 - [The considerations to make when choosing infrastructure for Riak](#choosing-infrastructure)
 - [The practical steps to actually make and expand a cluster](#forming-and-expanding-a-riak-cluster)
@@ -11,21 +11,24 @@ This guid is split into two parts:
 
 A Riak cluster is built up of multiple individual compute nodes.  Those nodes are expected to be distinct servers, or cloud instances.
 
-Riak is designed to scale-out system across _inexpensive_ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention in inconvenient hours.  It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
+> Riak is designed to scale-out system across _inexpensive_ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes > > down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention required at inconvenient hours.
+
+It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
 
 When making server or instance choices, the following guidance should be considered with regards to component choices:
 
 - There are production use cases of Riak with rigid zero-data-loss requirements that use ephemeral storage components due to the reliability and repair capability within a Riak cluster, and between replicating clusters in diverse locations.
   - It is best to cost-optimise for speed and capacity with node storage, rather than for resilience.
 - All the memory of the system will be used to improve performance, any memory not be taken by Riak should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
-- The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised ot make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.  Pre-release performance testing of Riak is generally performed on ARM-based CPUs, but other CPU architectures are supported.
-- The Riak system is tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwith or disk contention.  Running Riak close to these limits for extended periods should not lead to volatile outcomes.
+- The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised to make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.
+  - There are production deployments of Riak on both ARM and Intel-based CPUs.  Riak depends on the Erlang VM which has JIT optimisations for both architectures.
+- The Riak system is tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwidth or disk contention.  Running Riak close to these limits for extended periods should not lead to volatile outcomes.
 - The Riak system will fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits.  There is no management of activity to prevent breaches when close to these limits.  It is is critical to monitor against these limits and have additional nodes available to scale out the cluster should breaching space limits become a threat.
   - Riak will open a large volume of file descriptors, to it is important to ensure that the Riak process has a sufficiently large ulimit set.  Generally this will need to be at least 256K, but a ulimit of over 1M may be required on large-scale nodes.
 
 There are also broader considerations to be made with regards to node choices, and the overall organisation of nodes across a cluster, and when planning to operate a cluster:
 
-- The Riak system will spread load evenly through the cluster, data is sharded across individual vnodes by consistent hashing, and vnodes are allocated to nodes so that each node will have either X or X + 1 nodes.  All nodes should therefore have, wherever possible, equal capacity.
+- The Riak system will spread load evenly through the cluster, data is sharded across individual vnodes by consistent hashing, and vnodes are allocated to nodes so that each node will have either X or X + 1 vnodes.  All nodes should therefore have, wherever possible, equal capacity.
   - Riak has internal mitigation to the problem of individual nodes that are temporarily running slower than other nodes in the cluster; the job of fetching data blocks are balanced so that the work is generally performed on the fastest nodes (i.e those with available resource).  Also client responses are returned at the speed of a quorum of nodes, without waiting for the slowest response.  However, PUT and Query workloads will eventually be slowed to the pace of the slowest node.
   - Where individual nodes are undergoing long-running system tasks that may cause local slowness (e.g. RAID rebuild activity), it may be better for the nodes to be stopped (and therefore out of the active cluster), rather than acting as a slow node within the cluster.
 - The design of Riak handles failure of individual nodes, however if the design of the underlying infrastructure can cause multiple nodes to fail concurrently (e.g. in a cloud environment where multiple nodes may be provisioned on the same underlying hardware), then resilience should be provided by running multiple clusters or by identifying in the Riak cluster groups of nodes with shared failure modes as "locations".  A location may be aligned in cloud environments with placement-groups or availability zones, with racks that have common network components in physical environments, or with maintenance groups where efficient operations require multiple-nodes to be updated concurrently.
@@ -40,7 +43,9 @@ There are also broader considerations to be made with regards to node choices, a
 The following considerations should be made when selecting the network infrastructure for running Riak:
 
 - When using Riak to store and retrieve large (e.g. o(100KB) or bigger) objects, network bandwidth may be the bottleneck and in many systems bandwidth of more than 1 Gbps will be required.
-- TCP incast is a generic problem in distributed systems, where multiple nodes return the same object to a coordinating node concurrently. Since Riak 3.0, when Riak is used with the leveled backend, the potential for incast issues is significantly mitigated by coordinating with object metadata transmission rather than value transmission.  It is still prudent to consider the potential for incast problems in network design - in particular ensuring that network switches are data-centre class with appropriate buffer sizes.
+- TCP incast is a generic problem in distributed systems, where multiple nodes return the same object to a coordinating node concurrently.
+  - Since Riak 3.0, depending on storage backend, the potential for incast issues is significantly mitigated by coordinating with object metadata transmission rather than value transmission.
+  - It is still prudent to consider the potential for incast problems in network design - in particular ensuring that network switches are data-centre class with appropriate buffer sizes.
 - Riak is partition tolerant, in that during partition events data can still be stored securely across multiple nodes, and values can be merged (potentially forming siblings where conflicts cannot be resolved) when partitions heal.  Read events (both Object and Query API calls) may still not succeed correctly during partitions, particularly on minority partitions.  So although there exists aspects of partition tolerance, it is still important to design networks running Riak clusters so that partition events are rare.
 - It is assumed in the design and development of Riak that network round-trip times within a cluster are o(1) ms or better.  At higher latencies network delays will tend to become the most significant proportion of the overall user response delay.
   - There is no assumption of minimal network latency between clusters, so resilience across geographically diverse locations with long round-trip times should be managed by running multiple clusters.
@@ -86,7 +91,7 @@ With modern hardware, a simple configuration such as this can achieve a very hig
 
 The largest Riak users have o(1000) nodes, but these are generally split into different clusters serving different purposes or geographies.  It is rare to have individual clusters that scale beyond 50 nodes.
 
-A cluster is formed by joining nodes to a cluster.  Node that a Riak node, when started is a cluster of 1.  If the ring-size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
+A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring-size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
 
 For details of the cluster management commands:
 
@@ -113,7 +118,7 @@ As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
 - the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check your proposed configuration is possible before making the change.
-- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring-size cna only be managed by replicating to a new cluster.
+- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring-size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
 There are three supported cluster claim algorithm in riak, and the algorithm is an environment variable which can be set in `riak.conf`.
@@ -138,9 +143,7 @@ The response to the plan request will be an outline of the plan.  If the plan do
 
 The plan may contain a warning e.g. if the `target_n_val` has not been achieved:
 
-```
-WARNING: Not all replicas will be on distinct nodes
-```
+> WARNING: Not all replicas will be on distinct nodes
 
 To avoid an unsafe cluster, the plan must be cleared and another attempt made with different inputs (e.g. extra nodes, more locations, alternative targets, different claim algorithm).
 
@@ -152,7 +155,7 @@ On issuing the `commit` of the plan, the transfers will be triggered, once certa
 
 The pace of handoffs within the cluster, where there is a significant volume of data to handoff, is determined by the handoff concurrency limits.  There are two concurrency limits, the `cluster_transfer_limit` and the per-node `transfer_limit` - both limits must be lifted to achieve higher concurrent transfers.
 
-When increasing the number of concurrent transfers, it is important to monitor the system for signs of stress related to transfers, such as the `backend_pause` log in the leveled backend.  In some cases, where the recipient node for a handoff cannot process the inbound data fast enough, the handoff will error and exit: and when the handoff is re-scheduled it will re-commence from the start and redo all previous handoff work.  Avoiding handoff errors is critical to transfer performance.
+When increasing the number of concurrent transfers, it is important to monitor the system for signs of stress related to transfers, such as the `backend_pause` log in the leveled backend.  In some cases, where the recipient node for a handoff cannot process the inbound data fast enough, the handoff will error and exit.  following exit, when the handoff is re-scheduled it will re-commence from the start and redo all previous handoff work.  Avoiding handoff errors is critical to transfer performance.
 
 The `handoff_batch_threshold_count` may be reduced if handoff errors are occurring.  This controls the size of each handoff batch, and reducing the size of a batch should reduce the risk the batch will not be processed within the timeout.
 
@@ -166,4 +169,4 @@ In these circumstances, if a node is under disk space pressure, inbound handoffs
 
 Cluster changes to sharing a cluster require the staging of `leave` requests.  These plans may result in two-phase transition plan - where in the first phase the leaving node simply offloads its vnodes to safe nodes (given the targets), and in the second phase the remaining nodes shuffle vnodes to ensure a better balance of load.
 
-If the first phase creates an unsafe situation, where a remaining node has higher proportion of the disk space than it can support, an alternative plane can be made by using the `full_rebalance_on_leave` configuration option.  With this option, a single-phase transition is planned based on an ideal plan for the new layout, and a broader shuffle will occur bypassing the first phase (although this will lead to more handoff events).  This should always be enabled when using `choose_claim_v4`.
+If the first phase creates an unsafe situation, where a remaining node has higher proportion of the disk space than it can support, an alternative plan can be made by using the `full_rebalance_on_leave` configuration option.  With this option, a single-phase transition is planned based on an ideal plan for the new layout, and a broader shuffle will occur bypassing the first phase (although this will lead to more handoff events).  This should always be enabled when using `choose_claim_v4`.
