@@ -22,13 +22,13 @@ A Riak database cluster is a collection of smaller databases (known as vnodes). 
 
 The following choices exist:
 
-- _leveled_ (default from Riak 3.4)
-- _bitcask_ (default prior to Riak 3.4)
+- *leveled* (default from Riak 3.4)
+- *bitcask* (default prior to Riak 3.4)
 - eleveldb (deprecated as of Riak 3.4)
 - in-memory (deprecated as of Riak 3.4)
-- multi-backend (supported only in limited use cases, specifically as a multi-bitcask backend)
+- *multi-backend* (supported only in limited use cases, specifically as a multi-bitcask backend)
 
-In general, the best choice is to use the _leveled_ backend.  The _bitcask_ backend may be used, especially if
+In general, the best choice is to use the leveled backend.  The bitcask backend may be used, especially if
 
 - there is no potential future need for querying of data, and;
 - objects are largely immutable, and;
