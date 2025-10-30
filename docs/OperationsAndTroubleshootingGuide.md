@@ -10,7 +10,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 - [Enabling Riak security controls](#enabling-riak-security)
 - [Garbage collection - monitoring and tuning](#garbage-collection---reap-erase-and-scheduled-compaction)
 - [Understanding the contents of a Riak cluster](#data-inspection)
-- [Backing a cluster](#backup-options)
+- [Backing up a cluster](#backup-options)
 - [Advanced troubleshooting of Riak internals](#advanced---troubleshoot-via-the-erlang-vm)
 
 ## Replace, Repair and Recover
@@ -271,7 +271,7 @@ As part of the replication approach of Riak it is possible to replicate, and rec
 
 Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.  Note that the real-time replication fetches use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. in this case the backup cluster) pause consumption.  After re-connecting, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful auto-resolving any unexpected deltas.
 
-Backup clusters are not a prerequisite for taking backups, but they can be a flexible and efficient starting point.
+Backup clusters are not a prerequisite for taking backups, but they can be a flexible and efficient starting point; and in some cases act as an alternative.
 
 #### Leveled - hot backups
 
@@ -300,6 +300,8 @@ It is important to note that there will be minimal impact on the disk footprint 
 Because the active journal file was "rolled" at the start of the process, new writes to the database will go into a new active journal that is not linked to the backup directory.  It is only when journal compaction is run, that there may be a disk impact from the existence of the backup.  If journal compaction compacts a set of files it will re-write a new set of files (that are not linked to the backup), and then delete the old files.  If a backup still exists for those files, the space will now not be reclaimed due to the hard links.
 
 The best practice for copying the hot backup to an alternative location, should that be required, is not defined by the OpenRiak community.  There are example solutions, such as [the S3 sync](https://github.com/OpenRiak/leveled-hotbackup-s3-sync) project which may provide a potential approach.  The S3 sync project is particularly interesting, as before copying the Journal files to S3 it creates "hints" files so that it is possible to read individual objects in the back using S3 commands - without requiring the backup to be restored.  Other standard solutions may be used (e.g. `rsync` to offline the backup).
+
+#### Leveled - restore a backup
 
 If the database is stopped, and the contents of the `data/leveled` folders replaced by the content of the `data/backup` folders, then when riak is restarted each vnode on each node will rebuild the leveled ledger (which is not backed up) from the Journal, and the cluster will return to the same distributed consensus as when the backup was taken (given the constraint that the backup coverage plan took time to be distributed).
 
