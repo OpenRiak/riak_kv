@@ -1,4 +1,4 @@
-# Initial Design Decisions
+# Riak KV - Initial Design Decisions
 
 When starting with Riak a number of initial design decisions need to be made at the outset of the project.  This is a summary of those decisions, and the factors relevant to making each choice.
 
@@ -10,6 +10,7 @@ The initial design decisions are split into the following categories:
 - [Interconnecting multiple clusters](#interconnecting-multiple-clusters)
 - [Deleting data](#deleting-data)
 - [Mapping data to objects](#mapping-data-to-objects)
+- [Understanding key Riak concepts](#key-riak-concepts)
 
 In addition to making a choice, it is also necessary to consider how to transition when a sub-optimal choice has been made.
 
@@ -198,6 +199,7 @@ The complexity of deletion with eventual consistency is that it is an underlying
 For deletion there are three modes with which a cluster can be run: `keep`, `immediate` and `time-interval`.  It is strongly recommended to where possible use the `keep` based method, especially where the intention is run multiple inter-connected clusters.  The `keep` method is a configuration whereby no object is directly deleted, it is replaced instead by a special `tombstone` object that has no value (and will appear as not found when fetched via the API), but retains a reference to its change history (the vector clock) so that it can be correctly assessed for recency when comparing with an undeleted version of the object, or a replacement of the tombstone.
 
 Tombstones have no significant cost in terms of disk space, as they have no value, but they exist as a key; and this represents an overhead for background operations and the memory footprint of the store.  It is good practice therefor to periodically reap old tombstones, where the tombstones have existed for a long-enough period to be sure no lingering problems of stale data exist for that key (e.g. tombstones > 1 month old).  If running multiple clusters and scheduling reap jobs, it is necessary to:
+
 - use the nextgenrepl replication system;
 - enable the configuration of `repl_reap` so that reaps are replicated;
 - cancel any scheduled reap activity if there are node failures or cluster change operations in progress;

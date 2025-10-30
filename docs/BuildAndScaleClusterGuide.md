@@ -1,18 +1,30 @@
-# Riak KV - Build and Scale a Cluster
+# Riak KV - Building and Scaling a Cluster
+
+This guid is split into two parts:
+
+- [The considerations to make when choosing infrastructure for Riak](#choosing-infrastructure)
+- [The practical steps to actually make and expand a cluster](#forming-and-expanding-a-riak-cluster)
 
 ## Choosing infrastructure
 
 ### Nodes
 
-The following considerations should be made when choosing servers for running Riak:
+A Riak cluster is built up of multiple individual compute nodes.  Those nodes are expected to be distinct servers, or cloud instances.
 
-- Riak is designed as a scale-out system across inexpensive computers that handles the failure of individual nodes.  It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
-  - There are production use cases of Riak with rigid zero-data-loss requirements that use ephemeral storage components due to the reliability and repair capability within a Riak cluster, and between replicating clusters in diverse locations.
-- All the memory of the system will be used to improve performance, any memory not be taken by the BEAM should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
-- The Erlang/OTP platform and the design of Riak is optimised ot make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.  Pre-release performance testing of Riak is generally performed on ARM-based CPUs, but other CPU architectures are supported.
+Riak is designed to scale-out system across _inexpensive_ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention in inconvenient hours.  It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
+
+When making server or instance choices, the following guidance should be considered with regards to component choices:
+
+- There are production use cases of Riak with rigid zero-data-loss requirements that use ephemeral storage components due to the reliability and repair capability within a Riak cluster, and between replicating clusters in diverse locations.
+  - It is best to cost-optimise for speed and capacity with node storage, rather than for resilience.
+- All the memory of the system will be used to improve performance, any memory not be taken by Riak should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
+- The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised ot make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.  Pre-release performance testing of Riak is generally performed on ARM-based CPUs, but other CPU architectures are supported.
 - The Riak system is tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwith or disk contention.  Running Riak close to these limits for extended periods should not lead to volatile outcomes.
 - The Riak system will fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits.  There is no management of activity to prevent breaches when close to these limits.  It is is critical to monitor against these limits and have additional nodes available to scale out the cluster should breaching space limits become a threat.
   - Riak will open a large volume of file descriptors, to it is important to ensure that the Riak process has a sufficiently large ulimit set.  Generally this will need to be at least 256K, but a ulimit of over 1M may be required on large-scale nodes.
+
+There are also broader considerations to be made with regards to node choices, and the overall organisation of nodes across a cluster, and when planning to operate a cluster:
+
 - The Riak system will spread load evenly through the cluster, data is sharded across individual vnodes by consistent hashing, and vnodes are allocated to nodes so that each node will have either X or X + 1 nodes.  All nodes should therefore have, wherever possible, equal capacity.
   - Riak has internal mitigation to the problem of individual nodes that are temporarily running slower than other nodes in the cluster; the job of fetching data blocks are balanced so that the work is generally performed on the fastest nodes (i.e those with available resource).  Also client responses are returned at the speed of a quorum of nodes, without waiting for the slowest response.  However, PUT and Query workloads will eventually be slowed to the pace of the slowest node.
   - Where individual nodes are undergoing long-running system tasks that may cause local slowness (e.g. RAID rebuild activity), it may be better for the nodes to be stopped (and therefore out of the active cluster), rather than acting as a slow node within the cluster.
@@ -62,7 +74,7 @@ Non-functional tests of Riak are performed with requests distributed across the 
   - The response time metrics provided by Riak commence at the start of the internal process, and do not include the time to deserialise the request and serialise the response.  Logging metrics from a proxy is a better way of assessing actual response times than relying on the Riak metrics.
 - It is generally easier to automate the management of security controls by manipulating the configuration of a load-balancing proxy, than it is through manipulation of the Riak security CLI controls.  Many environments therefore delegate access controls that restrict users and networks to specific Riak functions to the load-balancing proxy.
 
-## Scaling out a cluster
+## Forming and Expanding a Riak cluster
 
 Riak may be deployed in the style of a traditional database, with a single node primary "cluster", and a single node standby "cluster" - with the replication and reconciliation controls in riak used to make sure that primary and secondary remain in-sync.  Such setups are commonly only found in non-production environments, the power of Riak is only truly realised when it is used as a scale out database where:
 

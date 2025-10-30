@@ -1,17 +1,32 @@
-# Riak Object API
+# Riak KV - Object API
 
-## Riak Objects
+Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  When choosing between APIs, consider that:
 
-The Riak Object API controls the inserting, updating and fetching of objects.  Riak objects have six components:
+- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5 and 15%;
+  - improving relative HTTP performance is key goal of Riak development for future releases.
+- The HTTP API is generally quicker to develop against due to the ubiquity of HTTP-based tooling, and the ability for developers to switch to command line tools (e.g. curl) or graphical tools.
+  - The HTTP API is not strictly standards complaint, in that it uses HTTP request headers to describe the object rather than the request.  It is not possible to describe the API using standard tooling (e.g. OpenAPI).
+- The HTTP API places strict requirements on the characters supported in identifiers, user metadata and index entries.  Supporting non-HTTP safe characters is possible via the PB API but it is NOT supported.
+  - Always ensure that objects will be supported via HTTP, even when using PB.
+- Future development of new APIs in Riak will follow a HTTP-first policy.
+- Using the HTTP API will provide greater flexibility to control access to Riak via standard internet infrastructure (e.g. Web-Application Firewalls, Proxies and Load-Balancers).
 
-- An Identifier;
-- A value;
-- A version vector;
-- User Metadata;
-- Object Metadata;
-- Index Entries.
+The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L45-L125).
 
-## Object Identifier
+The Riak Object HTTP API is described here:
+
+- [The URL](#object-identifier---the-url)
+- [The body](#object-value---the-request-body)
+- [The request and response headers](#object-meta-content---the-request-and-response-headers)
+- [Adding options to a request - query parameters](#get-and-put-options)
+- [Conditional requests](#conditional-requests)
+- [Commit hooks](#commit-hooks)
+- [Storing an object](#http-api-definition---store)
+- [Fetching an object](#http-api-definition---fetch)
+- [Deleting an object](#http-api-definition---delete)
+- [Legacy objects](#accessing-legacy-objects)
+
+## Object Identifier - the URL
 
 The Riak object Identifier is split into three parts:
 
@@ -31,7 +46,7 @@ riak admin bucket-type --help
 
 It is preferable to set the properties of a Bucket Type before using it.
 
-## Object Value
+## Object Value - the request body
 
 Within Riak, object values are generally opaque to Riak.  The schema of the value is managed by the application, not by Riak.  Values are normally binaries, but a content-type can be passed by the user and associated with the value - and any content type can be used, as Riak will not read the value it will store it.
 
@@ -39,7 +54,16 @@ Riak is not optimised for small values, although there is no lower limit to the 
 
 Although generally opaque, Riak does have support for data-types - specially formatted values where the handling of conflict is defined and managed within the database.  Although continued use of existing types is till supported, the use of such types for new use cases is not currently recommended, as the concept is intended to be evolved in Riak 4.0.
 
-## Version Vector
+## Object Meta Content - the request and response headers
+
+There are four object components that make use of HTTP headers:
+
+- Version vector;
+- User Metadata;
+- Object Metadata;
+- Index Entries.
+
+### Version Vector
 
 The Riak version vector is relevant to the database, but generally opaque to the application.  The application should read the version vector (which will be presented base64 encoded), and present the read version vector when updating an object.  The application does not need to understand the contents of the version vector.
 
@@ -47,21 +71,21 @@ Internally, Riak tracks causality using [dotted version vectors](https://arxiv.o
 
 This information is used internally within Riak to track which content is most up-to-date - to differentiate between content that is superseded (i.e. where an update had seen the content) or genuinely concurrent (the writes were made in parallel).  Parallel writes will lead to unresolvable conflict, and how this is handled is defined within the bucket properties - but in general the choice is between returning all content items with unresolved conflict (also known as siblings), or choosing a single item based on the recency of the modification date.
 
-## User Metadata
+### User Metadata
 
 User Metadata is arbitrary pairs of binary Keys and Values that form part of the content.  The user metadata is opaque to the database.  Internally, and via the protocol buffer API then the Keys and Values may be any binary - but for presentation and use via the HTTP API they keys must be url safe and case insensitive, and the values must be visible ascii.
 
-## Object Metadata
+### Object Metadata
 
 Riak carries metadata about an object, primarily:
 
 - the last modified date;
 - the deleted status (does the object represent a current value or a record of deletion).
-- the ["dot" for each content item](#version-vector);
+- the ["dot" for each content item](#version-vector) - this is not returned via the API;
 - the content type
   - the content type is never validated, it may be added to an update, and will be returned as-is regardless of the nature of the value.
 
-## Index Entries
+### Index Entries
 
 Index entries consist of multiple index fields, where each index field may have multiple values. The field names must have a suffix of either `_bin` or `_int` - where `_bin` indicates the value will be a binary, and `_int` indicates the value is an integer.  Although the value of an index entry may be a binary type, as it is passed in HTTP headers it is [restricted to visible ASCII text](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2), and field names are required to be handled in a case-insensitive way: so using only lower-case alphanumeric index field names is strongly recommended.
 
@@ -69,29 +93,7 @@ An object will always be presented (in a GET response) with all its index entrie
 
 If an object results in an unresolved conflict, the index entries for the object within teh database will be the union of the index entries for all sibling content items.
 
-## HTTP or PB API
-
-Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  When choosing between APIs, consider that:
-
-- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5 and 15%;
-  - improving relative HTTP performance is key goal of Riak development for future releases.
-- The HTTP API is generally quicker to develop against due to the ubiquity of HTTP-based tooling, and the ability for developers to switch to command line tools (e.g. curl) or graphical tools.
-  - The HTTP API is not strictly standards complaint, in that it uses HTTP request headers to describe the object rather than the request.  It is not possible to describe the API using standard tooling (e.g. OpenAPI).
-- The HTTP API places strict requirements on the characters supported in identifiers, user metadata and index entries.  Supporting non-HTTP safe characters is possible via the PB API but it is NOT supported.
-  - Always ensure that objects will be supported via HTTP, even when using PB.
-- Future development of new APIs in Riak will follow a HTTP-first policy.
-- Using the HTTP API will provide greater flexibility to control access to Riak via standard internet infrastructure (e.g. Web-Application Firewalls, Proxies and Load-Balancers).
-
-The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L45-L125).
-
-## Object API Extensions
-
-Other than updating and receiving of a riak object, there are two API extensions through which the behaviour of request may be changed:
-
-- Options;
-- Adding conditional request headers.
-
-### GET and PUT Options
+## GET and PUT Options
 
 The GET and PUT API allow for options to be passed in the HTTP AIP via [HTTP query parameters appended to the URI](https://www.rfc-editor.org/rfc/rfc3986#section-3.4).
 
@@ -110,7 +112,7 @@ The most common options used are:
 
 There are a number of other options, but where changing defaults is not recommended without an understanding of the underlying Riak code:  `w`, `r`, `dw`, `asis`, `sloppy_quorum` and `timeout`.
 
-### Conditional Requests
+## Conditional Requests
 
 Conditional updates are very useful when looking to prevent siblings.  By default, any concurrent updates will lead to sibling generation, and handling siblings within application code may be expensive (and in some cases may require user intervention).  Conditional updates allow for improved consistency (but not formal consistency), by checking a condition before applying the PUT.
 
@@ -150,19 +152,19 @@ There are three scenarios where the conditional check will be weakened:
 
 Stronger conditional updates can be made via either API through the use of "if_none_match" and the Riak-bespoke "if_not_modified" headers (or options in the case of the PB API).  Use of the HTTP-standard "if_not_modified" header or of the "if_match" header will result only in weak `api_only` checks, and is not fully supported.
 
-#### Use of Request Header - If_None_Match
+### Use of Request Header - If_None_Match
 
 The use of if_none_match is tested on update operations only.  It uses the standard HTTP request header, but ignores the value - setting the request header to any content will be treated as `if_none_match: *`.  The purpose of if_none_match is simply to check that there is no object present before accepting the update.
 
-#### Use of Request Header - If_Not_Modified (non-standard Riak header)
+### Use of Request Header - If_Not_Modified (non-standard Riak header)
 
 The use of if_not_modified varies from the standard behaviour of the if_not_modified HTTP request.  For Riak the `x-riak-if_not_modified` header should be used as a modification check, and the value of the header should be set to the encoded version vector that had been read prior to the update.  The PUT will then be conditional on the object being at this state before the change is applied.
 
-#### Conditional requests and latch objects
+### Conditional requests and latch objects
 
 There may be circumstances where it is necessary to prevent multiple application processes working on the same set of objects concurrently - e.g. where there are two processes for batching objects, and only one should be batching at a time so the batches don't overlap.  Although conditional requests are intended to provide consensus over individual objects, the application developer may define individual objects in such a way so that they came be used as apart of a system to provide broader pseudo-serialisation of activity.
 
-### Commit Hooks
+## Commit Hooks
 
 For store requests it is possible, via bucket properties to configure "commit hooks" - functions that will be applied either pre-commit (before the PUT has coordinated), or post-commit (after coordination and before response to the client).  This may have uses such as: value validation; updating inverted index objects; triggering actions in external systems.
 
@@ -218,7 +220,7 @@ Expected HTTP response headers for GET:
 curl -v http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "Accept: multipart/mixed"
 ```
 
-## HTTP API Definition - DELETE an Object example
+## HTTP API Definition - Delete
 
 Delete requests should be sent using the DELETE method.  As with PUT requests, DELETE requests should include the `x-riak-vclock` header with the value of the entry that was read.  Without providing version information, the delete will first read the current version of the object, and then attempt to delete the object using that version information.  This may not be the same version of the object that prompted the delete - but is less likely to cause a sibling scenario.
 

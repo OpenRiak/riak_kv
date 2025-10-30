@@ -1,4 +1,4 @@
-# Riak (NextGen) Replication
+# Riak KV - NextGen Replication
 
 The Riak NextGen replication is an alternative to the riak_repl replication solution, with these benefits:
 

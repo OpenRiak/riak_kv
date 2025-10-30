@@ -1,6 +1,19 @@
 # Riak KV - Operations and Troubleshooting
 
-## Replace, Repair or Recover
+The following sections provide guidance when operating or troubleshooting a Riak cluster:
+
+- [Handling failure - replace, repair and recover](#replace-repair-and-recover)
+- [Using the remote console](#remote-console)
+- [Accessing extended configuration options](#extending-configuration)
+- [Making use of logging and statistics](#logging-and-statistics)
+- [Monitoring anti-entropy mechanisms](#monitoring-anti-entropy)
+- [Enabling Riak security controls](#enabling-riak-security)
+- [Garbage collection - monitoring and tuning](#garbage-collection---reap-erase-and-scheduled-compaction)
+- [Understanding the contents of a Riak cluster](#data-inspection)
+- [Backing a cluster](#backup-options)
+- [Advanced troubleshooting of Riak internals](#advanced---troubleshoot-via-the-erlang-vm)
+
+## Replace, Repair and Recover
 
 ### Proactive Replace
 
@@ -67,42 +80,6 @@ There exists the (very rare) potential for a ledger to be corrupted.  There are 
 
 On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster (the riak_kv application will not complete startup until the rebuilds are complete).  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
 
-## Extending configuration
-
-### Using advanced.config
-
-The advanced.config file, found within the `/etc` folder can be used to supply environment variables to Riak which are not currently covered by the riak.conf schema files.  The variables need to represented as an Erlang object, which is a list of mappings between an application and a list of key/value pairs.
-
-e.g.
-
-```erlang
-[
-    {
-        riak_kv,
-        [
-            {delete_mode, keep},
-            {add_paths, "other/"}
-        ]
-    }
-].
-```
-
-Any configuration added in advanced.config will override any configuration set in the riak.conf file.
-
-## Logging
-
-*TODO - Write after logger update.*
-
-## Riak Stats
-
-Riak collates statistics.  Stats include total counts over all time, counts in the last 60 seconds and mean, median and approximate percentile response times measured over the previous 60s.  The stats are available via the CLI `riak admin status` or via a http GET request to the "/stats" endpoint.
-
-Riak does not retain history of stats, so to track the change of stats over time it is necessary to request the stats at regular intervals, and index the stats in some other monitoring tool.  Other than the `_total` stats, the stats will always reflect the last 60s, regardless of how frequently the stats are requested (returning stats does not reset any values), the stats processes maintain a rolling view of the last 60 seconds.
-
-All timings are internal timings, and not necessarily fully representative of external application experience.
-
-The stats represent the statistics on the node from which they were requested, the stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
-
 ## Remote Console
 
 Advanced information and debugging tools are available via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for a number of purposes.
@@ -127,19 +104,6 @@ From the remote_console aae_fold queries can be run against the data in Riak.  T
 
 Running AAE folds does not require a local client to be initiated, they can be run directly from `remote_console` by passing the QueryTuple into `riak_client:aae_fold(QueryTuple).`
 
-### Setting environment variables
-
-All configuration in `riak.conf` is converted into erlang environment variables, and it is those variables that are used by the code.  The `riak.conf` is not referred to following startup of the node.
-
-To change the configuration of riak at run-time, the variables can be changed via `remote_console` using the [application:set_env/3 function](https://www.erlang.org/doc/apps/kernel/application.html#set_env/3).
-
-Note though, that:
-
-- Some environment variables will be read by long-lived processes at startup, and so making runtime changes will have no effect.
-- Configuration parameters will be translated into environment variables values by the cuttlefish schema - the configured value may not be a valid value for the environment variable e.g. `enabled`/`disabled` flags will commonly be translated into `true`/`false` boolean environment variables.  Changing an environment variable to the untranslated value may lead to node crashes.
-
-In general, never change an environment variable at run-time via `remote_console` unless you have read and understood the code that uses it.
-
 ### riak_client remote_console commands
 
 There are a number of administration commands, that are made available [via the riak_client module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_client.erl).  These include:
@@ -154,9 +118,74 @@ Remote console sessions are distinguished with `ps -ef` by the `-progname` switc
 
 If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; then hanging console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core, so it si wise to monitor for the presence of such long-lived hanging sessions.
 
-## Monitoring Anti-entropy
+## Extending configuration
 
-*TODO - Pending PR which will add improved monitoring CLI*
+### Using advanced.config
+
+The advanced.config file, found within the `/etc` folder can be used to supply environment variables to Riak which are not currently covered by the riak.conf schema files.  The variables need to represented as an Erlang object, which is a list of mappings between an application and a list of key/value pairs.
+
+e.g.
+
+```erlang
+[
+    {
+        riak_kv,
+        [
+            {delete_mode, keep},
+            {add_paths, "other/"}
+        ]
+    }
+].
+```
+
+Any configuration added in advanced.config will override any configuration set in the riak.conf file.
+
+### Setting environment variables at runtime
+
+All configuration in `riak.conf` is converted into erlang environment variables, and it is those variables that are used by the code.  The `riak.conf` is not referred to following startup of the node.
+
+To change the configuration of riak at run-time, the variables can be changed via `remote_console` using the [application:set_env/3 function](https://www.erlang.org/doc/apps/kernel/application.html#set_env/3).
+
+Note though, that:
+
+- Some environment variables will be read by long-lived processes at startup, and so making runtime changes will have no effect.
+- Configuration parameters will be translated into environment variables values by the cuttlefish schema - the configured value may not be a valid value for the environment variable e.g. `enabled`/`disabled` flags will commonly be translated into `true`/`false` boolean environment variables.  Changing an environment variable to the untranslated value may lead to node crashes.
+
+In general, never change an environment variable at run-time via `remote_console` unless you have read and understood the code that uses it.
+
+## Logging and Statistics
+
+### Logging
+
+> TODO - Write after logger update.
+
+### Riak Stats
+
+Riak collates statistics.  Stats include total counts over all time, counts in the last 60 seconds and mean, median and approximate percentile response times measured over the previous 60s.  The stats are available via the CLI `riak admin status` or via a http GET request to the "/stats" endpoint.
+
+Riak does not retain history of stats, so to track the change of stats over time it is necessary to request the stats at regular intervals, and index the stats in some other monitoring tool.  Other than the `_total` stats, the stats will always reflect the last 60s, regardless of how frequently the stats are requested (returning stats does not reset any values), the stats processes maintain a rolling view of the last 60 seconds.
+
+All timings are internal timings, and not necessarily fully representative of external application experience.
+
+The stats represent the statistics on the node from which they were requested, the stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
+
+## Monitoring Anti-Entropy
+
+### Monitoring the Tictac AAE Cycle
+
+> TODO - Pending PR which will add improved monitoring CLI
+
+### Logging and monitoring of read repairs
+
+> TODO
+
+### Monitoring inter-cluster reconciliation
+
+> TODO - Maybe an overlap with the NextGen REPL section
+
+## Enabling Riak Security
+
+> TODO - Section on applying authentication and authorisation 
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
@@ -354,11 +383,11 @@ As well as the storage backend data folder, a Riak node also stores data in a ri
 
 Without a ring file, a node cannot resume its place in the ring - but note all ring files on all nodes should be the same, they are binary files (generate using `erlang:term_to_binary/1`) and they differ only in that the second element is the node name.
 
-*TODO - A node restored with the same name, should recover the ring due to gossip?  Or can it receive the gossip without an initial transfer of the ring? Test required to confirm.*
+> TODO - A node restored with the same name, should recover the ring due to gossip?  Or can it receive the gossip without an initial transfer of the ring? Test required to confirm.
 
 The cluster metadata is a `dets` file, and a Riak node will not function until it is correctly until it is restored.  However, a node will regenerate the cluster metadata by comparing its local data with other nodes in the cluster.
 
-*TODO - A node restored with the same name, should recover the cluster_metadata due to gossip?  Test required to confirm.*
+> TODO - A node restored with the same name, should recover the cluster_metadata due to gossip?  Test required to confirm.
 
 ## Advanced - troubleshoot via the Erlang VM
 
