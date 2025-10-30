@@ -52,17 +52,9 @@ Repair uses handoffs, and so can be tracked as with other cluster change operati
 
 ### Repair key ranges
 
-There may be circumstances where incidents have impacted the status of particular buckets, key ranges, or objects within a certain range of modified dates.  To repair in these circumstances, a read repair for a range can be triggered across the whole cluster by using `riak_client:aae_fold/1` when `tictacaae_active` is `active`. AAE folds can be run from `remote_console, to repair keys then a repair_keys_range input of this form is required:
+There may be circumstances where incidents have impacted the status of particular buckets, key ranges, or objects within a certain range of modified dates.  To repair in these circumstances, a read repair for a range can be triggered across the whole cluster.
 
-```erlang
-{
-    repair_keys_range,
-    bucket(),
-    key_range(),
-    modified_range() | all,
-    all
-    }
-```
+Refer to the [API guide for AAE Fold](/OtherAPI##aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
 
 The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queues log outputs.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
 
@@ -100,9 +92,7 @@ For the full functionality of [riak_client, see the module code](https://github.
 
 ### Running AAE Folds
 
-From the remote_console aae_fold queries can be run against the data in Riak.  This can be useful as the data from one fold can be placed into another e.g. for per bucket folds, to fold over all buckets take the output of a `list_buckets` fold and then iterate over the output calling an aae_fold against each bucket.
-
-Running AAE folds does not require a local client to be initiated, they can be run directly from `remote_console` by passing the QueryTuple into `riak_client:aae_fold(QueryTuple).`
+Refer to the [API guide for AAE Fold](/OtherAPI##aae-fold-api) for information on triggering an AAE fold from `riak remote_console`.
 
 ### riak_client remote_console commands
 
@@ -191,35 +181,11 @@ The stats represent the statistics on the node from which they were requested, t
 
 ### Riak KV Reaper and Riak KV Eraser
 
-The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  The eraser queue can be fed via an AAE fold from the `riak_client:aae_fold/1` function via `remote_console`:
+The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/OtherAPI##aae-fold-api) for information on triggering a `erase_keys` AAE fold, to feed the eraser queue.
 
-```erlang
-{
-    erase_keys,
-    bucket(),
-    key_range(),
-    {segments, segment_filter(), tree_size()} | all,
-    modified_range() | all,
-    change_method()
-    }
-```
+Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/OtherAPI##aae-fold-api) for information on triggering a `reap_tombs` AAE fold, to feed the reaper queue.
 
-Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  The reaper queue can be fed via an AAE fold from the `riak_client:aae_fold/1` function via `remote_console`:
-
-```erlang
-{
-    reap_tombs,
-    bucket(),
-    key_range(),
-    {segments, segment_filter(), tree_size()} | all,
-    modified_range() | all,
-    change_method()
-    }
-```
-
-These functions can be run only against a single specific bucket at a time.  They can be further restricted to a key range within the bucket.  A segment filter can be added to only apply the fold only to keys within a given part of the AAE tree; the segment filter may be useful when trying to break up activity to do only a proportion of the required actions at a time.  A modified range may be passed so that the erase can be restricted only to which have not recently been modified, or tombs which have not recently been created - for example to only erase keys more than two years old, or reap tombs more than a month old.
-
-The change_method should be used to either `count` - and the fold will simply count, rather than queue for action.  To actually queue for action `local` should be used, which will queue each reap or erase on the node in which it was discovered.
+Filters within the AAE folds can be used to select specific key_ranges, or last modified date ranges for the erase or reap process.
 
 When queueing large volumes of changes, note that:
 
@@ -279,47 +245,7 @@ The journal may also orphan files, but in Riak 3.4 there is no automated process
 
 ## Data inspection
 
-### AAE Folds
-
-There are a number of AAE folds, which are enabled when `tictacaae_active = active`, and can be run via the `riak_client:aae_fold/1` function for interrogating the database:
-
-#### Finding objects - by AAE Fold
-
-It is possible to find keys or tombstones using the find_keys and find_tombs queries.  A bucket must be defined, and adding a key_range and modified_range is optional.  For finding keys, using {sibling_count, N} will return only keys with > N count of siblings (e.g. 0 will return all keys, 1 will return only those in a sibling state).  Using {object_size, Bytes} will find only objects bigger than Bytes size.  the size is measured after those objects have been serialised and compressed for writing to disk, and so may be different to the size as fetched via the API.
-
-Returning millions of keys, is not recommended.  Either use a key_range/modified_range, or search only for known exceptions e.g. `{sibling_count, 1}`.
-
-```erlang
-{
-    find_keys, 
-    bucket(),
-    key_range(),
-    modified_range() | all,
-    {sibling_count, pos_integer()}|{object_size, pos_integer()}
-    } |
-{
-    find_tombs,
-    bucket(),
-    key_range(), 
-    {segments, segment_filter(), tree_size()} | all,
-    modified_range() | all
-    }.
-```
-
-#### Summarise objects - by AAE Fold
-
-To find summary information for all objects in a bucket the object_stats query can be run.  It will return something similar to:
-
-``[{total_count, 1000}, {total_size, 1000000},  {sizes, [{1, 800}, {2, 180}, {3, 20}]},  {siblings, [{1, 1000}]}]``
-
-The sizes are the count of objects by order of magnitude in bytes (e.g. 1 is 10 -> 100 bytes, 2 is 100 -> 1000 bytes etc).
-
-To find a list of all buckets use list_buckets.  Listing buckets is an efficient operation, the query will skip from bucket to bucket without folding over keys in-between.  The query is less efficient when using the `leveled_so` parallel-mode backend.
-
-```erlang
-    {object_stats, bucket(), key_range(), modified_range() | all} |
-    {list_buckets, n_val()}.
-```
+To understand more about the data being held in the cluster, information cna be found using AAE folds. Refer to the [API guide for AAE Fold](/OtherAPI##aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
 
 ## Backup options
 
