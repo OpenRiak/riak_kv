@@ -22,13 +22,13 @@ A Riak database cluster is a collection of smaller databases (known as vnodes). 
 
 The following choices exist:
 
-- leveled (default from Riak 3.4)
-- bitcask (default prior to Riak 3.4)
+- _leveled_ (default from Riak 3.4)
+- _bitcask_ (default prior to Riak 3.4)
 - eleveldb (deprecated as of Riak 3.4)
 - in-memory (deprecated as of Riak 3.4)
-- multi-backend (supported only in limited use cases)
+- multi-backend (supported only in limited use cases, specifically as a multi-bitcask backend)
 
-In general, the best choice is to use the leveled backend.  The bitcask backend may be used, especially if
+In general, the best choice is to use the _leveled_ backend.  The _bitcask_ backend may be used, especially if
 
 - there is no potential future need for querying of data, and;
 - objects are largely immutable, and;
@@ -36,7 +36,7 @@ In general, the best choice is to use the leveled backend.  The bitcask backend 
 
 Even in those situations, the leveled backend may be more efficient.  The leveled backed is not efficient for storing small objects (of size 2KB or less).  In this case it may be worth evaluating other options.
 
-Use of multi-backend should generally be avoided.  It may specifically be used to manage multiple expiry schedules across multiple bitcask backends, but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
+Use of multi-backend should generally be avoided, unless as a mulit-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
 
 #### Leveled
 
@@ -241,9 +241,11 @@ Riak is designed to be agnostic to the format of the data, the schema belongs to
 
 Before configuring and starting Riak, familiarity with some key concepts will be helpful.
 
+### The Ring - The distribution of vnodes
+
 Riak is a set of smaller databases which are distributed across physical nodes.  The smaller databases are termed vnodes, and the vnode is a set of functions that are controlling a database backend - where the backend (either leveled or bitcask) does the work to modify and fetch serialised data from disk.
 
-The number of vnodes is the ring-size, which must be a factor of 2.  It is desirable for the RingSize  to be much greater than the number of nodes (i.e. actual devices).  The ring-size must be a factor of 2, because each key will be hashed to a given position in the ring, by taking a sha hash of the Bucket and Key, and using an equivalent function to: `Hash band (RingSize - 1)`.  This will give each key a position between 0 and RingSize - 1, i.e. zero-indexed position in the vnodes.
+The number of vnodes is the ring-size, which must be a factor of 2.  It is desirable for the RingSize  to be much greater than the number of nodes (i.e. actual devices).  The ring-size must be a factor of 2, because each key will be hashed to a given position in the ring, by taking a sha hash of the Bucket and Key, and using an equivalent function to: `Hash band (RingSize - 1)`.  This will give each key a position between `0` and `RingSize - 1`, i.e. zero-indexed position in the vnodes.
 
 As the object should be stored in multiple places, normally 3 (which is our `n_val`).  An object is then mapped to the Position, and the `(Position + 1) mod RingSize` and `(Position + 2) mod RingSize`.  This position triple is called the preflist, or the set of primary vnodes for the key.
 
@@ -257,9 +259,11 @@ To restore full data protection after failure, Riak must request the next node a
 
 If the distribution in claim is correct, the full divergence of `n_val` resilience is maintained even when a single node fails.  Having full resilience for greater numbers of failures is configurable (assuming there exists sufficient nodes).
 
-Each primary vnode will store the data from three preflists, and only the data for those preflists - a vnode is never both primary and fallback.  The keys that map to itself (M), and the keys that map to (M - 1) mod RingSize and (M - 2) mod RingSize are those preflists.  Fallback vnodes will contain keys for just one preflist - so every primary failure requires the starting of three fallbacks.
+Each primary vnode will store the data from three preflists, and only the data for those preflists - a vnode is never both primary and fallback.  The keys that map to itself (M), and the keys that map to `(M - 1) mod RingSize` and `(M - 2) mod RingSize` are those preflists.  Fallback vnodes will contain keys for just one preflist - so every primary failure requires the starting of three fallbacks.
 
-In reality, the ring appears to be more confusing than it is, as it does not use simple integers 0, 1, 2, 3 etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a RingSize of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named 0, 1 bsl 152, 2 bsl 152 ... etc, but the principle is still unchanged as if they were more simply 0, 1, 2, 3 etc.
+In reality, the ring appears to be more confusing than it is, as it does not use simple integers `0`, `1`, `2`, `3` etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a RingSize of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named `0`, `1 bsl 152` (i.e. `5708990770823839524233143877797980545530986496`), `2 bsl 152` (i.e. `11417981541647679048466287755595961091061972992`)... etc, but the principle is still unchanged as if they were more simply `0`, `1`, `2`, `3` etc.
+
+### API - The basics of operations
 
 When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change - and coordination is just updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining primaries (or fallbacks should their be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
 
