@@ -65,36 +65,74 @@ The OpenRiak community is currently source-only, and do not directly provide pre
 
 Riak is deployed using [a modified version of the relx release generator](https://github.com/erlware/relx), and inherits its control commands.
 
-For locally deployed instances (i.e. via `make rel` or `make devrel`), cna be controlled using the `bin/riak` script: e.g `bin/riak daemon` to start, `bin/riak ping` to pong and `bin/riak stop` to stop.
+For locally deployed instances (i.e. via `make rel` or `make devrel`), can be controlled using the `bin/riak` script:
 
-Help for further console activities can be found via `bin/riak --help`, `bin\riak admin --help` and `bin\riak admin cluster --help`. 
+```bash
+bin/riak daemon
+bin/riak ping
+bin/riak stop
+``` 
+
+> Note that `bin/riak start` is now deprecated, use `daemon` or `foreground` as appropriate.
+
+Help for further console activities can be found via:
+
+```bash
+bin/riak --help
+bin/riak admin --help
+bin/riak admin cluster --help
+``` 
 
 For instances deployed using packages, startup and shutdown should using `systemd` e.g. `service riak start`, `service riak ping` and `service riak stop`.
 
-Help for further console activities can be found via `sudo riak --help`, `sudo riak admin --help` and `sudo riak admin cluster --help`.
+Help for further console activities can be found via:
+```bash
+sudo riak --help
+sudo riak admin --help
+sudo riak admin cluster --help
+```
 
 Starting Riak may require a higher `ulimit` to be set within the shell - a limit of 100000 will be acceptable for small-scale non-production systems, but larger limits will be needed for full-scale production systems.
 
-### Configuration of Riak - riak.conf
+### Configuration of Riak - key riak.conf changes
 
-Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in the `cuttlfish` section of the `riak/rebar.config` file:
+Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in [the `cuttlfish` section of the `riak/rebar.config` file](https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37).
 
-https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37
-
-With each file being in the `priv` folder for that repository, e.g:
-
-https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema
+Each individual schema component cna be found in the `priv` folder for that repository, e.g [priv/riak_kv.schema for the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
 When starting a first cluster to experiment, the following configuration items are of particular importance:
 
-- ring_size - refer to the InitialDesignDecisions document, should be set smaller than the default for test/dev environments and larger than the default for production systems;
-- tictacaae_active - should be set to active if the active repair of deltas between vnodes is required, otherwise repair will be reactive (i.e. only once a delta has been detected on read);
-- storage_backend - refer to the InitialDesignDecisions document, but for full Riak functionality must be set to leveled;
-- read_repair_primaryonly - will impact the behaviour in failure, by default when a standby vnode replaces a failed vnode, read repair will be triggered on every GET to populate the standby with old writes, but this will have a negative impact performance during both failure and recovery;
-- buckets.default.merge_strategy - should always be set to 2, and 2 will be the only supported option from Riak 4.0;
-- nodename - a unique name for the node within the cluster;
-- platform_data_dir - where the actual data will be stored, must be a space with sufficient capacity and throughput;
-- listener.http.internal or listener.pb.internal - the IP address and port for accessing the API, and it is recommended to bind this IP address to a specific interface address.
+- `ring_size`; refer to the [ring size selection in the design decisions document](/docs/InitialDesignDecisions.md#ring-size), should be set smaller than the default for test/dev environments and larger than the default for production systems.
+- `tictacaae_active`; should be set to active if the active repair of deltas between vnodes is required, otherwise repair will be reactive (i.e. only once a delta has been detected on read).
+- `tictacaae_storeheads`; should be enabled when using `tictacaae_active` on a leveled backend if the full scope of AAE Folds are to be used.
+- `storage_backend`; refer to the [backend selection in the design decisions document](/docs/InitialDesignDecisions.md#database-backend), but for full Riak functionality must be set to leveled.
+- `read_repair_primaryonly`; will impact the behaviour in failure, by default when a standby vnode replaces a failed vnode, read repair will be triggered on every GET to populate the standby with old writes, but this will have a negative impact performance during both failure and recovery.
+- `buckets.default.merge_strategy`; should always be set to `2`, and `2` will be the only supported option from Riak 4.0.
+- `nodename`; a unique name for the node within the cluster.
+- `platform_data_dir`; where the actual data will be stored, must be a space with sufficient capacity and throughput.
+- `listener.http.internal` or `listener.pb.internal`; the IP address and port for accessing the API, and it is recommended to bind this IP address to a specific interface address.
+
+### Configuration of Riak - leveled backend
+
+There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
+
+Configuration items of notable importance are:
+
+- `leveled.compression_method`; should be set to zstd, unless objects are sent to Riak compressed, in which case configure as `none`.
+  - in testing `zstd` is by far the most efficient choice.
+- `leveled.ledger_compression`; if `compression_method` is set to `none`, then compression should still be enabled here e.g. set to `zstd`.
+  - it is strongly recommended to use some form of compression on the ledger, even when all values are pre-compressed.
+- `leveled.compaction_runs_perday`; refer to the [operations guide](/docs/OperationsAndTroubleshootingGuide.md#leveled-compaction-highlow-hour) for more on leveled compaction.
+- `leveled.log_level`; leveled logs are verbose, but useful for monitoring as well as troubleshooting, so careful consideration is required before moving to an alternate log level.
+
+### Configuration of Riak - bitcask backend
+
+There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
+
+Configuration items of notable importance are:
+
+- `bitcask.merge_policy`; refer to the [operations guide](/docs/OperationsAndTroubleshootingGuide.md#bitcask-merge-window) for more on bitcask compaction.
+- `bitcask.io_mode`; should be set to `erlang`, careful consideration is required before moving to `nif`.
 
 ### Configuration of Riak - Delete Mode
 
@@ -238,6 +276,10 @@ It is strongly recommended to consider using `node_confirms`, `sync_on_write` or
 It is normally best practice to configure either `{pr, 1}` or `{notfound_ok, false}`, rather than rely on defaults.  Otherwise there is a potential issue when at least two nodes have failed and for some objects 2 of the 3 vnodes are unpopulated fallbacks.  In this case, without changing defaults, the two unpopulated fallback vnodes can return `not_found` and the GET request can achieve quorum and return a false not_found to the client.  By configuring either `{pr, 1}` or `{notfound_ok, false}`, when there is only one populated/primary vnode, the GET request must wait for this vnode to respond.
 
 As a consequence though, in the case where there are at least three node failures, and for an unfortunate preflist all three primaries are down - this will then lead to failing requests, which may be preferable to false not_found responses.
+
+#### Property - backend
+
+If using the mutli-backend, the bucket property `backend` can be used to map bucket types to different backends.
 
 #### Property - General read/write parameters
 

@@ -8,8 +8,9 @@ Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  Wh
   - The HTTP API is not strictly standards complaint, in that it uses HTTP request headers to describe the object rather than the request.  It is not possible to describe the API using standard tooling (e.g. OpenAPI).
 - The HTTP API places strict requirements on the characters supported in identifiers, user metadata and index entries.  Supporting non-HTTP safe characters is possible via the PB API but it is NOT supported.
   - Always ensure that objects will be supported via HTTP, even when using PB.
-- Future development of new APIs in Riak will follow a HTTP-first policy.
 - Using the HTTP API will provide greater flexibility to control access to Riak via standard internet infrastructure (e.g. Web-Application Firewalls, Proxies and Load-Balancers).
+
+> TODO - need a statement (or a pointer to discussions) about roadmap for API
 
 The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L45-L125).
 
