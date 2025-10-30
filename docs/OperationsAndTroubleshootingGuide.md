@@ -159,7 +159,7 @@ All timings are internal timings, and not necessarily fully representative of ex
 
 The stats represent the statistics on the node from which they were requested, the stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
 
-## Monitoring Anti-Entropy
+## Monitoring Operational Services
 
 ### Monitoring the Tictac AAE Cycle
 
@@ -171,7 +171,13 @@ The stats represent the statistics on the node from which they were requested, t
 
 ### Monitoring inter-cluster reconciliation
 
-> TODO - Maybe an overlap with the NextGen REPL section
+For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](/docs/NextGenReplGuide.md#monitoring-and-run-time-changes).
+
+### Monitoring node worker pools
+
+Each worker pool will regularly log its current queue length and last checkout time (when it last picked up a new piece of work).  There are also riak stats for each pool, giving the average queue time (how long work is waiting in the queue), and work time (how long each piece of work takes).
+
+> TODO - Will change after PR
 
 ## Enabling Riak Security
 

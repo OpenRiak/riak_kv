@@ -3,9 +3,10 @@
 The majority of work within Riak KV can be done using the [Object API](/ObjectAPI.md), and the [Query API](/QueryAPI.md).  There are though additional APIs, with specific purposes:
 
 - [The AAE Fold API](#aae-fold-api)
-- The Data Type API
-- The Map/Reduce API
-- The List API
+- [The Fetch API used to access replication queues](#the-fetch-api)
+- [The Data Type API](#the-data-type-api)
+- [The Map/Reduce API](#the-mapreduce-api)
+- [The List API](#the-list-api)
 
 ## AAE Fold API
 
@@ -238,6 +239,10 @@ To run a query against an untyped bucket, remove the `types/<BucketType>` slice 
 ### AAE Folds via PB
 
 The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L409-L660).
+
+## The Fetch API
+
+The fetch API is currently source-only, and has no documented support for external use.
 
 ## The Data Type API
 

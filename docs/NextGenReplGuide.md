@@ -1,20 +1,34 @@
 # Riak KV - NextGen Replication
 
-The Riak NextGen replication is an alternative to the riak_repl replication solution, with these benefits:
+The Riak NextGen replication is a replication solution, with these benefits:
 
 - allows for replication between clusters with different ring-sizes and n-vals;
 - provides very efficient reconciliation to confirm clusters are synchronised;
 - efficient and fast resolution of small deltas between clusters;
 - extensive configuration control over the behaviour of replication;
-- a comprehensive set of operator tools to troubleshoot and resolve issues via `remote_console`;
+- a comprehensive set of operator tools to troubleshoot and resolve issues via `remote_console` and the CLI;
 - uses an API which is reusable for replication to and reconciliation with non-Riak databases.
 
-The relative negatives of the Riak NextGen replication solution are:
+The replication solution works with these caveats:
 
-- greater responsibility on the operator to ensure that the configuration supplied across the nodes provides sufficient capacity and resilience;
 - slow to resolve very large deltas between clusters, operator intervention to use alternative tools may be required;
-- no support for hierarchical replication (i.e. such as the spanning-tree protected replication available in riak_repl);
+- no support for hierarchical replication (i.e. such as the spanning-tree protected replication available in the legacy `riak_repl` application);
 - relatively little production testing when using parallel mode AAE (i.e. when not exclusively using the leveled backend).
+
+Before starting, it is helpful to understand the underling concepts:
+
+- [Queues and Workers](#concepts---queues-and-workers);
+- [Replication references](#concepts---replication-references);
+- [Reconciliation with anti-entropy](#concepts---reconciliation-with-active-anti-entropy).
+
+This document contains guidance on:
+
+- [Configuring and starting replication and reconciliation](#configuring-and-starting-nextgen-replication);
+- [Monitoring and troubleshooting replication and reconciliation](#monitoring-and-run-time-changes)
+
+Note that NextGen replication is a replacement for `riak_repl`, a legacy replication application packaged with Riak.  For information on configuring `riak_repl` as an alternative to nextgen replication see legacy Riak documentation.
+
+It is possible to run `riak_repl` concurrently with nextgen repl, in order to ease the transition between the two services.
 
 ## Concepts - Queues and Workers
 
@@ -61,16 +75,14 @@ It is theoretically possible to prompt NextGen replication events through other 
 
 A full-sync process can be used to reconcile between two clusters which have configured real-time replication.  The purpose is to quickly determine if the two clusters are in sync, and if they are not in sync identify some keys to be repaired.
 
-Full-sync with NextGen replication is dependent on active anti-entropy, there is no key-listing form of reconciliation or synchronisation.  Riak has two anti-entropy mechanisms, and older version of AAE known as hashtree, and an updated one known as tictacaae.  Both methods use merkle trees to represent the state of a partition (a subset of a vnode), where the merkle tree has a million leaves (or segments) that each hold a single hash that represents the accumulated hashes of all the keys and hashes in that partition where the key hashes to that segment ID (i.e. that one millionth of the key-space).
+Full-sync with NextGen replication is dependent on tictacaae active anti-entropy, there is no key-listing form of reconciliation or synchronisation.
 
-The tictacaae service differs in two key ways:
+The tictacaae solution uses special merkle trees to represent the state of a partition (a subset of a vnode), where the merkle tree has a million leaves (or segments) that each hold a single hash that represents the accumulated hashes of all the keys and hashes in that partition where the key hashes to that segment ID (i.e. that one millionth of the key-space).  These merkle trees are not cryptographically secure, however they can:
 
-- the merkle trees it holds are mergeable, multiple trees representing multiple partitions can be quickly merged to represent the combined tree of those partitions.
-- the hashtree aae service always requires a segment ordered keystore to be kept in an eleveldb database; whereas the tictacaae service can reuse as a keystore the ledger of a native leveled based backend (or if the backend is not leveled, use a parallel leveled-based key-store that can be either segment-ordered or key-ordered).
+- be mergeable, multiple trees representing multiple partitions can be quickly merged to represent the combined tree of those partitions.
+- and align with the hashes used internally within the leveled store, so that it is possible to accelerate a key-ordered store when scanning for subsets of segments.
 
-The NextGen repl full-sync solution depends on tictacaae being enabled.  The tictacaae does not to be used exclusively, it can exist in parallel to hashtree-based AAE during transition scenarios.
-
-A more efficient and flexible full-sync reconciliation service is possible with tictacaae, as a tree to represent the whole store can be made quickly by merging a covering set of partition trees.  The cached trees are split into three levels - root, branches and leaves.  To confirm synchronisation it is only necessary to compare the roots of the merged trees match (which is just 16KB of data to represent the entire cluster).  
+An efficient and flexible full-sync reconciliation service is possible with tictacaae, as a tree to represent the whole store can be made quickly by merging a covering set of partition trees.  The cached trees are split into three levels - root, branches and leaves.  To confirm synchronisation it is only necessary to compare the roots of the merged trees match (which is just 16KB of data to represent the entire cluster).  
 
 The basic mechanism for performing a full-sync reconciliation is as follows:
 
@@ -82,31 +94,29 @@ The basic mechanism for performing a full-sync reconciliation is as follows:
 - Run a coverage query across both clusters, using the key-stores (which in native mode will be the leveled backend), asking for the keys & clocks which match the mismatched segment IDs.
 - Compare the keys and clocks, and prompt the cluster with the more advanced clock for a mismatch to re-replicate its object.
 
-The disadvantage of tictacaae over hashtree, is that when using a key-ordered backend ot the AAE system (such as a native leveled vnode backend), the query to fetch the keys & clocks by segment has to run a full scan over all the object keys.  This disadvantage is mitigated within leveled as it embeds within its own hash-based filters hints about the presence of segment hashes within blocks of keys.  Further the use of a native backend reduces the write and rebuild activity necessary to maintain a parallel keystore.
+Note that reconciliation is not designed to repair quickly.  When repairing deltas, the aim is to minimise the impact of repair on the cluster, not to accelerate the time to resolve the delta.
 
-## Concepts - Delete Mode
+## Configuring and Starting NextGen Replication
 
-There are three possible delete modes for Riak
-
-- Timeout (default 3s);
-- Keep;
-- Immediate.
-
-When running replication, it is strongly recommended to change from the default setting, and use to the delete mode of `keep`.  This needs to be added via a `riak_kv` section of the advanced.config file (there is no way of setting the delete mode via riak.conf).  Running `keep` will retain semi-permanent tombstones after deletion, that are important to avoid issues of object resurrection when running bi-directional replication between clusters.
-
-When running Tictac AAE, the tombstones can now be reaped using the `reap_tomb` aae_fold query.  This allows for tombstones to be reaped after a long delay (e.g. 1 week).  
-
-Running an alternative delete mode, is tested, and will work, but there will be a significantly increased probability of false-negative reconciliation events, that may consume resource on the cluster.
-
-## Getting started
-
-For this getting started, it is assumed that the setup involves:
+For this getting started guide, it is assumed that the setup involves:
 
 - 2 x 8-node clusters (A & B) where all data is nval=3, and where application writes may be received by either cluster;
 - 1 x 2-node cluster (a backup cluster - C) where all data is nval=1, which does not receive real-time write activity;
 - A requirement to both real-time replicate and full-sync reconcile between clusters;
 - Each cluster has o(1bn) keys;
 - bi-directional replication required between active (non-backup) clusters.
+
+### Setting Delete Mode
+
+There are three possible delete modes for Riak:
+
+- Timeout (default 3s);
+- Keep;
+- Immediate.
+
+When running replication, it is strongly recommended to change from the default setting, and use to the delete mode of `keep`.  Running `keep` will retain semi-permanent tombstones after deletion, that are important to avoid issues of object resurrection when running bi-directional replication between clusters.
+
+Running an alternative delete mode, is tested, and will work, but there will be a significantly increased probability of false-negative reconciliation events, that may consume resource on the cluster.
 
 ### Configure real-time replication
 
@@ -276,11 +286,11 @@ All real-time and full-sync operations are available via the Riak API, and suppo
 
 It is recommended, where possible to use the PB API for performance reasons, and also as TLS security can be enabled via this API.  The HTTP API is slower, but maybe useful where it is easier to set up peer relationships with a HTTP-based load-balancer rather than an individual node.
 
-The API is not documented outside of the code base.
+The replication API consists of [the AAE fold API](/docs/OtherAPI.md#aae-fold-api) and the [fetch API required to access replication queues](/docs/OtherAPI.md#the-fetch-api).
 
-### Monitoring and Run-time Changes
+## Monitoring and Run-time Changes
 
-#### Monitoring full-sync exchanges via logs
+### Monitoring full-sync exchanges via logs
 
 Full-sync exchanges will go through the following states:
 
@@ -317,7 +327,7 @@ At the end of each stage a log EX003 is produced which explains the outcome of t
 
 The mismatched_segments is an estimate of the scope of damage to the tree.  Even if clock_compare shows no deltas, clusters are not considered in_sync until deltas are not shown with tree comparisons (e.g. root_compare or branch_compare return 0).
 
-#### Prompting a check
+### Prompting a check
 
 Individual full-syncs between clusters can be triggered outside the standard schedule:
 
@@ -327,22 +337,22 @@ riak_client:ttaaefs_fullsync(all_check).
 
 The `all_check` can be replaced with `hour_check`, `day_check` or `range_check` as required.  The request will uses the standard max_results and range_boost for the node.
 
-#### Configure and Monitor work queues
+### Configure and Monitor work queues
 
-There are two per-node worker pools which have particular relevance to full-sync:
+The node worker pool configuration is [detailed further in the AAE fold API documentation](/docs/OtherAPI.md#node-worker-pools).
+
+There are two per-node worker pool sizes which have particular relevance to full-sync:
 
 > af1_worker_pool_size = 2
 > af3_worker_pool_size = 4
 
-The AF1 pool is used by rebuilds of the AAE tree cache.
+The AF1 pool is used by rebuilds of the AAE tree cache, and AF3 pool is used for key/clock fetches when using cluster-wide reconciliation.
 
 If the full-sync processes are taking too long (perhaps as max_results or range_boost are set too aggressively) then the worker pools may backup.  At some stage there may develop a situation where all full-sync queries will time out as the queries will take too long to reach the front of the queue, and hence all the effort associated with the queries will be wasted.
 
-By default there is a log prompted for every aae_fold on completion (all full-sync activity depends on aae_folds prompted on both the source and sink).  Each worker pool will regularly log its current queue length and last checkout time (when it last picked up a new piece of work).  There are also riak stats for each pool, giving the average queue time (how long work is waiting in the queue), and work time (how long eahc piece of work takes).
+By default there is a log prompted for every aae_fold on completion (all full-sync activity depends on aae_folds prompted on both the source and sink).  For more information on monitoring node worker pools [refer to the Operations guide](/docs/OperationsAndTroubleshootingGuide.md#monitoring-node-worker-pools).
 
-Significant improvements have been made since 2023 on the performance of full-sync folds, and there are more improvements in the pipeline (as at 2024), so running the most up-to-date version of Riak is helpful.
-
-#### Update the request limits
+### Update the request limits
 
 If there is sufficient capacity to resolve a delta between clusters, but the current schedule is taking too long to resolve - the max_results and range_boost settings on a given node can be overridden.
 
@@ -357,7 +367,7 @@ The fetching of keys and clocks will require a scan across the key-store, which 
 
 It should be noted, that if the number of segment IDs being checked goes significantly over 1000, then the number of blocks that can be skipped will start to tend towards zero.  So the combined value of maxresults * rangeboost should generlaly be kept to a value less than or equal to 1024.
 
-#### Overriding the range
+### Overriding the range
 
 When a query successfully repairs a significant number of keys, it will set the range property to guide any future range queries on that node.  This range can be temporarily overridden, if, for example there exists more specific knowledge of what the range should be.  It may also be necessary to override the range when an even erroneously wipes the range (e.g. falling behind in the schedule will remove the range to force range_checks to throttle back their activity).
 
@@ -377,87 +387,9 @@ riak_kv_ttaaefs_manager:clear_range().
 
 Remember the `range_check` queries will only run if either: the last check on the node found the clusters in sync, or; a range has been defined.  Clearing the range may prevent future range_check queries from running until another check re-assigns a range.
 
-#### Re-replicating keys for a given time period
+### Re-replicating keys for a given time period
 
-The aae_fold `repl_keys_range` will replicate any key within the defined range to the clusters consuming from a defined queue.  For exampled, to replicate all keys in the bucket `<<"domainRecord">>` that were last modified between 3am and 4am on a 2020/09/01, to the queue `cluster_b`:
-
-```erlang
-riak_client:aae_fold({repl_keys_range, <<"domainRecord">>, all, {date, {{2020, 9, 1}, {3, 0, 0}}, {{2020, 9, 1}, {4, 0, 0}}}, cluster_b}).
-```
-
-The fold will discover the keys in the defined range, and add them to the replication queue - but with a lower priority than freshly modified items, so the sink-side consumers will only consume these re-replicated items when they have excess capacity over and above that required to keep-up with current replication.
-
-The `all` in the above query may be replaced with a range of keys if that can be specified.  Also if there is a specific modified range, but multiple buckets to be re-replicated the bucket reference can be replaced with `all`.
-
-#### Reaping tombstones
-
-
-With the recommended delete_mode of `keep`, tombstones will be left permanently in the cluster following deletion.  It may be deemed, that a number of days after a set of objects have been deleted, that it is safe to reap tombstones.
-
-Reaping can be achieved through an aae_fold.  However, reaping is local to a cluster.  If full-sync is enabled when reaping from one cluster then a full-sync operation will discover a delta (between the existence of a tombstone, and the non-existence of an object) and then work to repair that delta (by re-replicating and hence resurrecting the tombstone).
-
-When reaping tombstones, there are two approaches within clusters kept using full-sync - with operator coordination or with replication.  
-
-If using operator coordination, The reap folds can be issued in parallel on the two clusters, but will full-sync temporarily disabled.  The same fold will reap in different order on different clusters, so if full-sync is enabled, full-sync will (slowly) resurrect tombstones that have already been reaped - so it may be necessary then to re-reap for the same range in a subsequent operation.
-
-There is a configuration option to automatically replicate reap requests generated via aae_folds - in riak.conf set `repl_reap = enabled`.  This will allow you to reap from one cluster, the reap aae_fold will populate a reap queue, and as each reap item is taken from the queue and acted on it will be replicated via source queue and sink workers to any clusters configured for real-time replication.  This will keep clusters roughly in-sync during the reap.  `repl_reap` is disabled by default, but is now the recommended way of managing reaps in multi-cluster environments.
-
-It is possible for reap (and erase) folds to overwhelm the cluster, as they can generate reap requests much faster than they can be completed.  Reaps and erases are both throttled via the riak.conf configuration of `tombstone_pause = 10` - where the configured value is the number of milliseconds to pause for each reap/erase event.  This can be adjusted at run-time from the remote_console using `application:set_env(riak_kv, tombstone_pause, 10)`.  In some cases sink clusters may need a lower value than source clusters to keep up-to-pace with the reap or erase events.
-
-To issue a reap fold, for all the tombstones in August, a query like this may be made at the `remote_console`:
-
-```erlang
-riak_client:aae_fold({reap_tombs, all, all, all, {date, {{2020, 8, 1}, {0, 0, 0}}, {{2020, 9, 1}, {0, 0, 0}}}, local}).
-```
-
-Issue the same query with the method `count` in place of `local` if you first wish to count the number of tombstones before reaping them in a separate fold.
-
-#### Erasing keys and buckets
-
-It is possible to issue an aae_fold from `remote_console` to erase all the keys in a bucket, or a given key range or last-modified-date range within that bucket.  This is a replicated operation, so as each key is deleted, the delete action will be replicated to any real-time sync'd clusters.
-
-Erasing keys will not happen immediately, the fold will queue the keys at the `riak_kv_eraser` for deletion and they will be deleted one-by-one as a background process.
-
-This is not a reversible operation, once the deletion has been de-queued and acted upon.  The backlog of queue deletes can be cancelled at the `remote_console` on each node in turn using:
-
-```erlang
-riak_kv_eraser:clear_queue(riak_kv_eraser).
-```
-
-See the `riak_kv_cluseraae_fsm` module for further details on how to form an aae_fold that erases keys.
-
-#### Gathering per-bucket object stats
-
-It is useful when considering the tuning of full-sync and replication, to understand the size and scope of data within the cluster.  On a per-bucket basis, object_stats can be discovered via aae_fold from the remote_console.
-
-```erlang
-riak_client:aae_fold({object_stats, <<"domainRecord">>, all, all}).
-```
-
-The above fold will return:
-
-- a count of objects in the buckets;
-
-- the total size of all the objects combined;
-
-- a histogram of count by number of siblings sibling;
-
-- a histogram of count by the order of magnitude of object size.
-
-The fold is run as a "best efforts" query on a constrained queue, so may take some time to complete.  A last-modified-date range may be used to get results for objects modified since a recent check.
-
-
-```erlang
-riak_client:aae_fold({object_stats, <<"domainRecord">>, all, {date, {{2020, 8, 1}, {0, 0, 0}}, {{2020, 9, 1}, {0, 0, 0}}}}).
-```
-
-To find all the buckets with objects in the cluster for a given n_val (e.g. n_val = 3):
-
-```erlang
-riak_client:aae_fold({list_buckets, 3}).
-```
-
-To find objects with more than a set number of siblings, and objects over a given size a `find_keys` fold can be used (see `riak_kv_clusteraae_fsm` for further details).  It is possible to run `find_keys` with a last_modified_date range to find only objects which have recently been modified which are of interest due to either their sibling count or object size.
+The aae_fold `repl_keys_range` will replicate any key within the defined range to the clusters consuming from a defined queue.  See the [AAE fold API documentation](/docs/OtherAPI.md#aae-fold-api) for more information on using `repl_key_range`.
 
 #### Participate in Coverage
 
