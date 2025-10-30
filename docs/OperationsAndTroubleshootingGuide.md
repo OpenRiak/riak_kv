@@ -54,7 +54,7 @@ Repair uses handoffs, and so can be tracked as with other cluster change operati
 
 There may be circumstances where incidents have impacted the status of particular buckets, key ranges, or objects within a certain range of modified dates.  To repair in these circumstances, a read repair for a range can be triggered across the whole cluster.
 
-Refer to the [API guide for AAE Fold](/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
+Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
 
 The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queues log outputs.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
 
@@ -92,7 +92,7 @@ For the full functionality of [riak_client, see the module code](https://github.
 
 ### Running AAE Folds
 
-Refer to the [API guide for AAE Fold](/OtherAPI.md#aae-fold-api) for information on triggering an AAE fold from `riak remote_console`.
+Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering an AAE fold from `riak remote_console`.
 
 ### riak_client remote_console commands
 
@@ -181,9 +181,9 @@ The stats represent the statistics on the node from which they were requested, t
 
 ### Riak KV Reaper and Riak KV Eraser
 
-The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold, to feed the eraser queue.
+The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold, to feed the eraser queue.
 
-Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold, to feed the reaper queue.
+Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold, to feed the reaper queue.
 
 Filters within the AAE folds can be used to select specific key_ranges, or last modified date ranges for the erase or reap process.
 
@@ -245,7 +245,7 @@ The journal may also orphan files, but in Riak 3.4 there is no automated process
 
 ## Data inspection
 
-To understand more about the data being held in the cluster, information cna be found using AAE folds. Refer to the [API guide for AAE Fold](/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
+To understand more about the data being held in the cluster, information cna be found using AAE folds. Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
 
 ## Backup options
 
