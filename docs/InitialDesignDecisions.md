@@ -10,7 +10,6 @@ The initial design decisions are split into the following categories:
 - [Interconnecting multiple clusters](#interconnecting-multiple-clusters)
 - [Deleting data](#deleting-data)
 - [Mapping data to objects](#mapping-data-to-objects)
-- [Understanding key Riak concepts](#key-riak-concepts)
 
 In addition to making a choice, it is also necessary to consider how to transition when a sub-optimal choice has been made.
 
@@ -30,11 +29,12 @@ The following choices exist:
 
 In general, the best choice is to use the leveled backend.  The bitcask backend may be used, especially if
 
-- there is no potential future need for querying of data, and;
-- objects are largely immutable, and;
-- read-repair is sufficient to meet the application anti-entropy requirements.
+- there is no potential future need for querying of data using the Query API, and;
+- objects are largely immutable, and especially if also;
+- read-repair is sufficient to meet the application anti-entropy requirements,
+  - noting that anti-entropy is still supported with bitcask, just with additional overheads.
 
-Even in those situations, the leveled backend may be more efficient.  The leveled backed is not efficient for storing small objects (of size 2KB or less).  In this case it may be worth evaluating other options.
+Sometimes, even in those situations, the leveled backend may be more efficient at present, however, the OpenRiak team continue to invest in bitcask improvements and have pending changes which have been shown to improve Riak/bitcask performance by 30% to 50%.  Bitcask is the preferred long-term solution for immutable, unsorted data storage in Riak.
 
 Use of multi-backend should generally be avoided, unless as a mulit-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
 
@@ -67,7 +67,7 @@ The bitcask backend has the following characteristics and features:
 - No current support for optimised HEAD requests, which can have significant impact on overall efficiency within Riak.
   - Implementations of bitcask have been produced with this optimisation, and may be open-sourced in the future. 
 
-#### Eleveldb
+#### Eleveldb (deprecated)
 
 The eleveldb backend has the following characteristics and features:
 
@@ -79,7 +79,7 @@ The eleveldb backend has the following characteristics and features:
   - This provides some additional capabilities, in particular the ability to fix the percentage of memory used used across all vnodes on a node.
   - This has some long-term maintenance overheads, which the OpenRiak community will not continue to support after the release of Riak 3.4.
 
-#### In-memory
+#### In-memory (deprecated)
 
 The in-memory backend has the following characteristics and features:
 
@@ -93,8 +93,9 @@ The in-memory backend has the following characteristics and features:
 The multi-backend has the following characteristics and features:
 
 - Allows different data buckets to be mapped to different backends, so that different buckets can utilise the different capabilities of those backends.
-- Generally not recommended for production use, other than when running multiple bitcask backends (e.g. with different TTL, or storage paths):
-  - Behaviour of individual backends is better understood, and subject to greater testing - especially when requiring anti-entropy and inter-cluster reconciliation.
+- Generally only recommended for production use when running multiple bitcask backends (e.g. with different TTL, or storage paths).
+
+Testing of Riak is focused on single-backend solutions, but multi-backend (bitcask) is a combination well-tested within large-scale production deployments.
 
 ### Database backend - changing the choice
 
@@ -224,7 +225,7 @@ The delete mode is a per-node configuration which needs to be applied consistent
 The most important design decision is how to map the data requirements in a project to objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions - but there is some general guidance that tends to be helpful in most cases:
 
 - Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is is to fetch multiple objects to fulfill a single application data demand - where possible make the most common read requests fulfilled via a single object read request.
-- By default always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`.
+- By default when using mutable objects, always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`, unless immutability is guaranteed - all objects are create once, update never.
 - Eventually parallel writes will occur, and siblings will exist.  Siblings can be minimised using conditional PUTs, if sibling resolution is complex or requires manual intervention.  Use aae_folds feeding operator dashboards ot track the generation of siblings.  To auto-resolve siblings CRDTs (conflict-free replicated data types) can be used, and third-party client-side libraries are generally a better long-term option than using Riak's internal CRDTs.
 - Values can be large, especially when using the leveled backend.  Objects significantly in excess of 1MB are not in themselves likely to cause a direct performance issue.  Values are compressed before being persisted to disk (unless compression is disabled), when using the leveled-backend, so pre-compression is not necessary unless network bandwidth is a significant factor.
 - Specialist data-types (e.g. conflict-free replicated data types) do not scale well as the objects grow.  The values of CRDTs (e.g. set sizes) should be kept small.
@@ -236,39 +237,3 @@ The most important design decision is how to map the data requirements in a proj
 ### Mapping data to objects - changing the choice
 
 Riak is designed to be agnostic to the format of the data, the schema belongs to the application and not the database.  It is therefore necessary to plan for schema migration within the application - detecting the schema version for an object, finding objects within a given schema version, updating a schema version in parallel to other application activity.  It is strongly recommended a lazy migration strategy is used whereby the application can roll forward each object to the latest version on GET, without necessarily updating the persisted version.  
-
-## Key Riak Concepts
-
-Before configuring and starting Riak, familiarity with some key concepts will be helpful.
-
-### The Ring - The distribution of vnodes
-
-Riak is a set of smaller databases which are distributed across physical nodes.  The smaller databases are termed vnodes, and the vnode is a set of functions that are controlling a database backend - where the backend (either leveled or bitcask) does the work to modify and fetch serialised data from disk.
-
-The number of vnodes is the ring-size, which must be a factor of 2.  It is desirable for the RingSize  to be much greater than the number of nodes (i.e. actual devices).  The ring-size must be a factor of 2, because each key will be hashed to a given position in the ring, by taking a sha hash of the Bucket and Key, and using an equivalent function to: `Hash band (RingSize - 1)`.  This will give each key a position between `0` and `RingSize - 1`, i.e. zero-indexed position in the vnodes.
-
-As the object should be stored in multiple places, normally 3 (which is our `n_val`).  An object is then mapped to the Position, and the `(Position + 1) mod RingSize` and `(Position + 2) mod RingSize`.  This position triple is called the preflist, or the set of primary vnodes for the key.
-
-When a cluster is formed, a claim algorithm will distribute vnodes `0` to `RingSize - 1` around the physical nodes, so that all of these preflists fall onto 3 separate nodes, but also ensures that for every such position `(Position + 3) mod RingSize` is also on a diverse physical node to the preflist for that position.
-
-To restore full data protection after failure, Riak must request the next node along in each preflist to start a fallback vnode.  For example, if a node holding vnode 10 fails, then this has an impact on the keys that have mapped to vnodes 8, 9 and 10 - they all now have a missing vnode.  three fallback vnodes will now be started:
-
-- A key which hashes to vnode 8 will be stored in vnodes 8, 9 and a fallback for 10 that runs on the node owning vnode 11.
-- A key which hashes to vnode 9 will be stored in vnodes 9, 11, and a fallback to vnode 10 started on the node which owns vnode 12.
-- A key which hashes to vnode 10 will be stored in vnodes 11, 12 and a fallback for vnode 10 started on the node which owns vnode 13.
-
-If the distribution in claim is correct, the full divergence of `n_val` resilience is maintained even when a single node fails.  Having full resilience for greater numbers of failures is configurable (assuming there exists sufficient nodes).
-
-Each primary vnode will store the data from three preflists, and only the data for those preflists - a vnode is never both primary and fallback.  The keys that map to itself (M), and the keys that map to `(M - 1) mod RingSize` and `(M - 2) mod RingSize` are those preflists.  Fallback vnodes will contain keys for just one preflist - so every primary failure requires the starting of three fallbacks.
-
-In reality, the ring appears to be more confusing than it is, as it does not use simple integers `0`, `1`, `2`, `3` etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a RingSize of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named `0`, `1 bsl 152` (i.e. `5708990770823839524233143877797980545530986496`), `2 bsl 152` (i.e. `11417981541647679048466287755595961091061972992`)... etc, but the principle is still unchanged as if they were more simply `0`, `1`, `2`, `3` etc.
-
-### API - The basics of operations
-
-When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change - and coordination is just updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining primaries (or fallbacks should their be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
-
-When a request is made to GET an object in Riak, the vector of the version history of for that object is fetched from each vnode in the preflist.  The first vnode to respond is tasked with fetching the value, and the remaining responses are used to determine whether the fetched value represents the most recent version (and if it is it may be returned to the client as the response).  If a replacement (later) version is available, then that is fetched as the value instead.  If analysis of the version vector and the version of the values, cannot determine which value is up-to-date the full history of unreconciled values is returned as "siblings".
-
-When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes.  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.
-
-Riak tracks the current state of the version vectors across all the key space to perform anti-entropy (i.e. recover an object to its most up-to-date value on a given vnode) both within and between clusters, using special cached and mergeable merkle trees; these trees allow entropy to be tracked across large key spaces highly efficiently.  There are also a number of other mechanisms that repair in reaction to the detection of failure (read repair), or in update vnodes following cluster changes (handoff for both repair, cluster change and recovery of fallbacks).

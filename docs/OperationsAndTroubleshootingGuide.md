@@ -10,6 +10,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 - [Enabling Riak security controls](#enabling-riak-security)
 - [Garbage collection - monitoring and tuning](#garbage-collection---reap-erase-and-scheduled-compaction)
 - [Understanding the contents of a Riak cluster](#data-inspection)
+- [Volume and performance testing](#volume-and-performance-testing)
 - [Backing up a cluster](#backup-options)
 - [Advanced troubleshooting of Riak internals](#advanced---troubleshoot-via-the-erlang-vm)
 
@@ -253,6 +254,37 @@ The journal may also orphan files, but in Riak 3.4 there is no automated process
 
 To understand more about the data being held in the cluster, information cna be found using AAE folds. Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
 
+## Volume and performance testing
+
+The volume and performance testing of databases is challenging because of the number of variables relevant to performance tests, which when set incorrectly will result in unrealistic results.  Common problems to consider when building up a database non-functional test suite:
+
+- Objects being inserted should be suitably live-like, especially with regards to;
+  - the size of the object,
+  - the compression ratio,
+  - the number of index entries.
+- Unless objects are expected to arrive in key order, volume tests should avoid either writing or reading in key order.
+- Read requests should be distributed across the key space in a realistic manner, e.g. 80% of the requests to 20% of the keys.
+- Correlation of factors need to be considered;
+  - larger objects may be bigger as they're updated more frequently.
+- Exceptional items should be randomly included in the test case e.g.;
+  - super-size objects,
+  - index keys with very high hit match counts.
+- Avoid counting `not_found`;
+  - A `not_found` operation is not equivalent to a GET, it is extremely low cost operation is Riak,
+  - Validate the test software is reading keys that are present.
+- Avoid counting inserts, if the application mainly updates;
+  - Altering an object has extra costs over inserting objects,
+  - The size of the delta in index keys impacts the cost of an update.
+
+Generally tests should be run for days not hours, to ensure that:
+
+- there is a realistic volume of data in the store being tested;
+- that testing covers activity in merge windows or compaction periods.
+
+All databases improve short-term performance through deferring work (e.g. batched compaction), avoiding work (e.g. optimising for sequential keys) and caching.  Always examine any performance test report with these factors in mind.  Plan tests to challenge worst-case scenarios, and focus more attention on high-percentile latencies rather than means.
+
+For performance testing Riak [`basho_bench`](https://github.com/OpenRiak/basho_bench) or [rcl-bench](https://github.com/riak-core-lite/rcl_bench) are commonly used.  Note though, that most large-scale Riak users depend on heavy modifications to these tests to create sufficiently realistic scenarios.
+
 ## Backup options
 
 Before considering backups, it is worth noting that as a distributed database there is no single commit position that represents a point of truth.  Therefore there is no way to effectively backup at a point, and restore to a point.  The overall state is eventually consistent.
@@ -313,15 +345,7 @@ The tested mechanism for backing up a bitcask store, requires the node to be sto
 
 #### Backup - ring folder, and cluster metadata
 
-As well as the storage backend data folder, a Riak node also stores data in a ring folder, and in cluster metadata.  Backing up these folders will save time during restore, especially the ring folder, as this contains the knowledge of the nodes involvement in the ring.
-
-Without a ring file, a node cannot resume its place in the ring - but note all ring files on all nodes should be the same, they are binary files (generate using `erlang:term_to_binary/1`) and they differ only in that the second element is the node name.
-
-> TODO - A node restored with the same name, should recover the ring due to gossip?  Or can it receive the gossip without an initial transfer of the ring? Test required to confirm.
-
-The cluster metadata is a `dets` file, and a Riak node will not function until it is correctly until it is restored.  However, a node will regenerate the cluster metadata by comparing its local data with other nodes in the cluster.
-
-> TODO - A node restored with the same name, should recover the cluster_metadata due to gossip?  Test required to confirm.
+As well as the storage backend data folder, a Riak node also stores data in a ring folder, and in a cluster metadata folder - with both found in the `platform_data_dir` with a standard configuration.  Backing up these folders is critical to the recovery should all nodes in the cluster be lost.  They are required for the cluster to understand the distribution of data.  The restored data alone, without this metadata, will be inaccessible.
 
 ## Advanced - troubleshoot via the Erlang VM
 
