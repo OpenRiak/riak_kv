@@ -77,24 +77,12 @@ A full-sync process can be used to reconcile between two clusters which have con
 
 Full-sync with NextGen replication is dependent on tictacaae active anti-entropy, there is no key-listing form of reconciliation or synchronisation.
 
-The tictacaae solution uses special merkle trees to represent the state of a partition (a subset of a vnode), where the merkle tree has a million leaves (or segments) that each hold a single hash that represents the accumulated hashes of all the keys and hashes in that partition where the key hashes to that segment ID (i.e. that one millionth of the key-space).  These merkle trees are not cryptographically secure, however they can:
+The tictacaae solution uses special merkle trees to represent the state of a partition (a subset of a vnode), these merkle trees are not cryptographically secure, however they can:
 
 - be mergeable, multiple trees representing multiple partitions can be quickly merged to represent the combined tree of those partitions.
 - and align with the hashes used internally within the leveled store, so that it is possible to accelerate a key-ordered store when scanning for subsets of segments.
 
-An efficient and flexible full-sync reconciliation service is possible with tictacaae, as a tree to represent the whole store can be made quickly by merging a covering set of partition trees.  The cached trees are split into three levels - root, branches and leaves.  To confirm synchronisation it is only necessary to compare the roots of the merged trees match (which is just 16KB of data to represent the entire cluster).  
-
-The basic mechanism for performing a full-sync reconciliation is as follows:
-
-- Compare the roots by merging the cached tree roots on both clusters.
-- If there are no deltas, the sync status is true; otherwise compare the roots again.
-- If any of the 4K root hashes differ in both comparisons - this represents a delta.
-- Compare the branches for the differing root elements, and then the leaves until a list of differing segment IDs are found.
-- Limit the process so that it only ever discovers `max_results` different segment IDs.
-- Run a coverage query across both clusters, using the key-stores (which in native mode will be the leveled backend), asking for the keys & clocks which match the mismatched segment IDs.
-- Compare the keys and clocks, and prompt the cluster with the more advanced clock for a mismatch to re-replicate its object.
-
-Note that reconciliation is not designed to repair quickly.  When repairing deltas, the aim is to minimise the impact of repair on the cluster, not to accelerate the time to resolve the delta.
+For an overview of the theory behind reconciliation via anti-entropy in Riak [see the Riak Theory Guide](/docs/RiakTheoryGuide.md#anti-entropy).
 
 ## Configuring and Starting NextGen Replication
 
