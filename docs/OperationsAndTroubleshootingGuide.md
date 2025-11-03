@@ -39,9 +39,40 @@ After completing a replace, it may be necessary for to realign node naming with 
 
 ### Reactive Replace
 
-It is possible to efficiently replace a node in the cluster, without requiring a backup of the data.  If a node has been terminated, and is not recoverable, a new node can be re-joined to the cluster in its place by committing a `plan` for two scheduled changes - a `join` of the new node and `force_replace` of the old node.
+When a node has failed following an incident, the ndoe can still be recovered back to its previous state without requiring a backup.
 
-The new node should be started with `participate_in_coverage` disabled, as it will at this stage be a full member of the cluster but have no data.
+There are three stages to replace and recover the node:
+
+- ensuring the node is downed;
+- forcing the replace;
+- repairing the new node.
+
+#### Administratively Downing a Node
+
+A node that is down, should not have a negative impact on the cluster.  There may be though the possibility of a node being non-functional, but not correctly being considered as down.
+
+The status of all nodes in the cluster, from the perspective of another node can be gained by running:
+
+```bash
+riak admin cluster status
+```
+
+There are four states that a node can be considered to be in `up`, `down`, `up!` and `down!`.  The `!` indicates some the health-check status is unexpected given the administrative status - i.e. a node that is `down!` is not functioning as expected, but has not been marked as `down`.  If a node is known to be not operational, it should be marked as down using `riak admin down` from another node; and this should set the status of an unhealthy node to `down` not `down!`.
+
+#### Forcing a Replace
+
+When replacing a failed node, the situation differs depending on whether the new node is to be given the same IP address as the replaced node.  If the new (replacement) node has been built with the same address and naming it can be re-joined by re-staging a join, planning the change and committing it (which should lead to no actual transfers).  If the new node has differing configuration, then the plan will require a `join` and a `force_replace` operation to be staged.
+
+If `force_replace` has been used, then the replacement node can be renamed at a later date using `riak admin reip_manual`.
+
+The new node should be started with `participate_in_coverage` disabled, as it will at this stage be a full member of the cluster but have no data.  It is also more efficient to suspend anti-entropy until the repair is complete.
+
+```bash
+riak eval "riak_client:tictacaae_suspend_node()."
+riak eval "riak_client:remove_node_from_coverage()."
+```
+
+#### Completing a Repair
 
 The data can then be recovered from the other nodes in the cluster issuing the `riak_client:repair_node()` command from the `remote_console` of the replacement node.  This will prompt all vnodes which partially overlap the data held in the vnodes on the replacement node to race to play a role in repairing the node.  Each vnode will only repair the data which overlaps, filtering out any data that another vnode has already repaired (or is in the process of repairing).
 
@@ -49,7 +80,7 @@ To improve the performance of repair the `repair_span` configuration in the [ria
 
 The combination of `repair_span = double_pair, repair_deferred = enabled` is proven to be significantly more effective when using the leveled backend, especially when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, and when using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are under heavy utilisation.
 
-Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, and Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
+Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
 
 ### Repair key ranges
 
@@ -72,6 +103,16 @@ There exists the (very rare) potential for a ledger to be corrupted.  There are 
 - Restarting the node.
 
 On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster (the riak_kv application will not complete startup until the rebuilds are complete).  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
+
+### Repair an individual vnode
+
+Storage backends make use of CRC checks to detect and respond to corruption (by impacting individual objects not the whole store).  This means that a corrupted store should still be started, and still be repairable via anti-entropy.  If a storage backend is corrupted in an unexpected way, and cannot be re-started, the individual vnode can simply be repaired from the other vnodes in the preflist:
+
+```bash
+riak eval "riak_kv_vnode:repair(<partition_number>)."
+```
+
+The repair node will replace any object which the store does not presently hold.  However, following corruption that validation may not be accurate - the store may incorrectly report presence.  So it is normally better to delete all the data on the vnode following corruption before triggering the repair.  Data will always be repaired eventually, deleting the store first ensures the time to repair is bounded and not dependent on long-running background recovery jobs.
 
 ## Remote Console
 
@@ -108,6 +149,14 @@ There are a number of administration commands, that are made available [via the 
 Remote console sessions are distinguished with `ps -ef` by the `-progname` switch.  Riak applications will have ``--progname <PATH>/bin/riak``; whereas remote_console sessions will have ``progname <path>/bin/erl``.
 
 If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; then hanging console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core, so it si wise to monitor for the presence of such long-lived hanging sessions.
+
+### Using `riak eval`
+
+All single commands run from riak remote_console should be scriptable from the command line using `riak eval`:
+
+```bash
+riak eval "riak_client:repair_node()."
+```
 
 ## Extending configuration
 
@@ -252,7 +301,7 @@ The journal may also orphan files, but in Riak 3.4 there is no automated process
 
 ## Data inspection
 
-To understand more about the data being held in the cluster, information cna be found using AAE folds. Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
+To understand more about the data being held in the cluster, information can be found using AAE folds. Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
 
 ## Volume and performance testing
 
