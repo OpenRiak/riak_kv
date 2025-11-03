@@ -6,7 +6,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 - [Using the remote console](#remote-console)
 - [Accessing extended configuration options](#extending-configuration)
 - [Making use of logging and statistics](#logging-and-statistics)
-- [Monitoring anti-entropy mechanisms](#monitoring-anti-entropy)
+- [Monitoring background operational services](#monitoring-operational-services)
 - [Enabling Riak security controls](#enabling-riak-security)
 - [Garbage collection - monitoring and tuning](#garbage-collection---reap-erase-and-scheduled-compaction)
 - [Understanding the contents of a Riak cluster](#data-inspection)
@@ -193,6 +193,12 @@ Note though, that:
 
 In general, never change an environment variable at run-time via `remote_console` unless you have read and understood the code that uses it.
 
+### Accessing configuration
+
+From the command line it is possible to view the current description of a configuration option using `riak admin describe <option_name>` e.g. `riak admin describe conditional_put_mode `.
+
+Note that the result of `describe` request id the current schema documentation of an option, whereas if a `riak.conf` file has been kept in place between upgrades, that `riak.conf` file may not have the up to data description.  The command-line `describe` is a more reliable way of understanding the present advice for the option.
+
 ## Logging and Statistics
 
 ### Logging
@@ -211,7 +217,7 @@ The stats represent the statistics on the node from which they were requested, t
 
 ## Monitoring Operational Services
 
-### Monitoring the Tictac AAE Cycle
+### Monitoring Anti-Entropy
 
 > TODO - Pending PR which will add improved monitoring CLI
 

@@ -23,6 +23,7 @@ When making server or instance choices, the following guidance should be conside
 - The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised to make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.
   - There are production deployments of Riak on both ARM and Intel-based CPUs.
   - The Erlang VM which has JIT optimisations for both architectures.
+  - Extremely high core counts per node (e.g. > 40) may require specific Erlang VM tuning to fully realise the benefits of additional capacity.
 - The Riak system is tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwidth or disk contention.  Running Riak close to these limits for extended periods should not lead to volatile outcomes.
 - The Riak system will fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits.  There is no management of activity to prevent breaches when close to these limits.  It is is critical to monitor against these limits and have additional nodes available to scale out the cluster should breaching space limits become a threat.
   - Riak will open a large volume of file descriptors, to it is important to ensure that the Riak process has a sufficiently large ulimit set.  Generally this will need to be at least 256K, but a ulimit of over 1M may be required on large-scale nodes.
