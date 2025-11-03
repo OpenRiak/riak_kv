@@ -26,13 +26,13 @@ Overview documentation on is available in this repository.  The documentation is
 
 - [Initial Design Decisions](/docs/InitialDesignDecisions.md);
 - [Install and Start Guide](/docs/InstallAndStartGuide.md);
-- [Riak Theory Guide](/docs/RiakTheoryGuide.md);
 - [Building and then Scaling a Cluster](/docs/BuildAndScaleClusterGuide.md);
 - [Replication Guide](/docs/NextGenReplGuide.md);
 - [Object API](/docs/ObjectAPI.md);
 - Query API - pending
 - [OtherAPI](/docs/OtherAPI.md);
-- [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md).
+- [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md);
+- [Riak Theory Guide](/docs/RiakTheoryGuide.md).
 
 ## Discussions
 
