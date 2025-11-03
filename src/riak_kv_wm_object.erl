@@ -185,7 +185,8 @@
         charset,      %% string() | undefined - extracted character set provided
         timeout,      %% integer() - passed-in timeout value in ms
         security,     %% security context
-        not_modified  %% decoded vector clock to be used in not_modified check
+        not_modified, %% decoded vector clock to be used in not_modified check
+        header_map    %% processed request headers, with lowercase keys in a map
     }
 ).
 
@@ -201,11 +202,131 @@
 
 -type link() :: {{Bucket::binary(), Key::binary()}, Tag::binary()}.
 
+-define(BINHEAD_CTYPE, <<"content-type">>).
+-define(BINHEAD_IF_NOT_MODIFIED, <<"x-riak-if-not-modified">>).
+-define(BINHEAD_NONE_MATCH, <<"if-none-match">>).
+-define(BINHEAD_MATCH, <<"if-match">>).
+-define(BINHEAD_UNMODIFIED_SINCE, <<"if-unmodified-since">>).
+-define(BINHEAD_ENCODING, <<"content-encoding">>).
+-define(BINHEAD_ACCEPT, <<"accept">>).
+-define(BINHEAD_LINK, <<"link">>).
+-define(BINHEAD_VCLOCK, <<"x-riak-vclock">>).
+-define(PREFIX_USERMETA, "x-riak-meta-").
+-define(PREFIX_INDEX, "x-riak-index-").
+
 -define(V1_BUCKET_REGEX, "/([^/]+)>; ?rel=\"([^\"]+)\"").
 -define(V1_KEY_REGEX, "/([^/]+)/([^/]+)>; ?riaktag=\"([^\"]+)\"").
 -define(V2_BUCKET_REGEX, "</buckets/([^/]+)>; ?rel=\"([^\"]+)\"").
 -define(V2_KEY_REGEX,
             "</buckets/([^/]+)/keys/([^/]+)>; ?riaktag=\"([^\"]+)\"").
+
+
+-spec make_reqheader_map(request_data()) -> #{binary() => any()}.
+make_reqheader_map(RD) ->
+    lists:foldl(
+        fun({HeadKey, HeadVal}, AccMap) ->
+            BinHeadKey =
+                case HeadKey of
+                    HeadKey when is_binary(HeadKey) ->
+                        HeadKey;
+                    HeadKey when is_list(HeadKey) ->
+                        list_to_binary(HeadKey);
+                    HeadKey when is_atom(HeadKey) ->
+                        atom_to_binary(HeadKey)
+                end,
+            accumulate_header_info(
+                string:lowercase(BinHeadKey),
+                BinHeadKey,
+                HeadVal,
+                AccMap
+            )
+        end,
+        maps:new(),
+        mochiweb_headers:to_list(wrq:req_headers(RD))
+    ).
+
+-if(?OTP_RELEASE >= 25).
+-if(byte_size(<<?PREFIX_USERMETA>>) /= 12).
+-error("length ?PREFIX_USERMETA differs from 12").
+-endif.
+-if(byte_size(<<?PREFIX_INDEX>>) /= 13).
+-error("length ?PREFIX_INDEX differs from 13").
+-endif.
+-endif.
+
+%% @doc
+%% The usermeta header may have been added by a previous version of the
+%% riak_kv_wm_object, in which case the key would have a x-riak-meta- prefix.
+%% If this prefix exists, no need to add it, otherwise add it.
+%% Note that the PB API has never added the prefix
+-spec generate_usermeta_header(
+    {binary()|list(), any()}, list({any(), any()})) -> list({any(), any()}).
+generate_usermeta_header({<<Prefix:12/binary, RestKey/binary>> = K, V}, Acc) ->
+    case string:lowercase(Prefix) of
+        <<?PREFIX_USERMETA>> ->
+            [{<<?PREFIX_USERMETA, RestKey/binary>>, V} | Acc];
+        _NotMyPrefix ->
+            [{<<?PREFIX_USERMETA, K/binary>>, V} | Acc]
+        end;
+generate_usermeta_header({Key, V}, Acc) when is_binary(Key) ->
+    [{<<?PREFIX_USERMETA, Key/binary>>, V} | Acc];
+generate_usermeta_header({KeyAsList, V}, Acc) when length(KeyAsList) > 12 ->
+    case string:lowercase(lists:sublist(KeyAsList, 12)) of
+        ?PREFIX_USERMETA ->
+            [
+                {
+                    ?PREFIX_USERMETA ++
+                        lists:sublist(KeyAsList, 13, length(KeyAsList) - 12),
+                    V
+                }
+                | Acc
+            ];
+        _ ->
+            [{?PREFIX_USERMETA ++ KeyAsList, V} | Acc]
+    end;
+generate_usermeta_header({KeyAsList, V}, Acc) ->
+    [{?PREFIX_USERMETA ++ KeyAsList, V} | Acc].
+
+accumulate_header_info(<<?PREFIX_INDEX, _Field/binary>>, OriginalKey, T, MapAcc) ->
+    <<_Prefix:13/binary, Field/binary>> = OriginalKey,
+    maps:update_with(
+        <<?PREFIX_INDEX>>,
+        fun(Indices) -> [{Field, T}|Indices] end,
+        [{Field, T}],
+        MapAcc
+    );
+accumulate_header_info(<<?PREFIX_USERMETA, _MetaKey/binary>>, OriginalKey, V, MapAcc) ->
+    <<_Prefix:12/binary, MetaKey/binary>> = OriginalKey,
+    maps:update_with(
+        <<?PREFIX_USERMETA>>,
+        fun(Indices) -> [{MetaKey, V}|Indices] end,
+        [{MetaKey, V}],
+        MapAcc
+    );
+accumulate_header_info(?BINHEAD_ACCEPT, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_ACCEPT, V, MapAcc);
+accumulate_header_info(?BINHEAD_CTYPE, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_CTYPE, V, MapAcc);
+accumulate_header_info(?BINHEAD_ENCODING, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_ENCODING, V, MapAcc);
+accumulate_header_info(?BINHEAD_VCLOCK, _OK, VC, MapAcc) ->
+    maps:put(
+        ?BINHEAD_VCLOCK,
+        riak_object:decode_vclock(base64:decode(VC)),
+        MapAcc
+    );
+accumulate_header_info(?BINHEAD_LINK, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_LINK, V, MapAcc);
+accumulate_header_info(?BINHEAD_IF_NOT_MODIFIED, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_IF_NOT_MODIFIED, V, MapAcc);
+accumulate_header_info(?BINHEAD_UNMODIFIED_SINCE, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_UNMODIFIED_SINCE, V, MapAcc);
+accumulate_header_info(?BINHEAD_MATCH, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_MATCH, V, MapAcc);
+accumulate_header_info(?BINHEAD_NONE_MATCH, _OK, V, MapAcc) ->
+    maps:put(?BINHEAD_NONE_MATCH, V, MapAcc);
+accumulate_header_info(_DiscardIdx, _OK, _Value, MapAcc) ->
+    MapAcc.
 
 -spec init(proplists:proplist()) -> {ok, context()}.
 %% @doc Initialize this resource.  This function extracts the
@@ -216,8 +337,8 @@ init(Props) ->
               riak=proplists:get_value(riak, Props),
               bucket_type=proplists:get_value(bucket_type, Props)}}.
 
--spec service_available(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec service_available(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Determine whether or not a connection to Riak
 %%      can be established.  This function also takes this
 %%      opportunity to extract the 'bucket' and 'key' path
@@ -244,14 +365,18 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
                         list_to_binary(
                             riak_kv_wm_utils:maybe_decode_uri(RD, K))
                 end,
-            {true,
+            {
+                true,
                 RD,
                 Ctx#ctx{
-                    method=wrq:method(RD),
-                    client=C,
-                    bucket=Bucket,
-                    key=Key,
-                    vtag=wrq:get_qs_value(?Q_VTAG, RD)}};
+                    method = wrq:method(RD),
+                    client = C,
+                    bucket = Bucket,
+                    key = Key,
+                    vtag = wrq:get_qs_value(?Q_VTAG, RD),
+                    header_map = make_reqheader_map(RD)
+                }
+            };
         Error ->
             {false,
              wrq:set_resp_body(
@@ -275,7 +400,7 @@ is_authorized(ReqData, Ctx) ->
                     "instead.">>, ReqData), Ctx}
     end.
 
--spec forbidden(#wm_reqdata{}, context()) -> term().
+-spec forbidden(request_data(), context()) -> term().
 forbidden(RD, Ctx) ->
     case riak_kv_wm_utils:is_forbidden(RD) of
         true ->
@@ -284,7 +409,7 @@ forbidden(RD, Ctx) ->
             validate(RD, Ctx)
     end.
 
--spec validate(#wm_reqdata{}, context()) -> term().
+-spec validate(request_data(), context()) -> term().
 validate(RD, Ctx=#ctx{security=undefined}) ->
     validate_resource(
         RD, Ctx, riak_kv_wm_utils:method_to_perm(Ctx#ctx.method));
@@ -297,16 +422,21 @@ validate(RD, Ctx=#ctx{security=Security}) ->
     maybe_validate_resource(Res, RD, Ctx, Perm).
 
 -spec maybe_validate_resource(
-        term(), #wm_reqdata{}, context(), string()) -> term().
+        term(), request_data(), context(), string()) -> term().
 maybe_validate_resource({false, Error, _}, RD, Ctx, _Perm) ->
     RD1 = wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD),
-    {true, wrq:append_to_resp_body(
-             unicode:characters_to_binary(Error, utf8, utf8),
-             RD1), Ctx};
+    {
+        true,
+        wrq:append_to_resp_body(
+            unicode:characters_to_binary(Error, utf8, utf8),
+            RD1
+        ),
+        Ctx
+    };
 maybe_validate_resource({true, _}, RD, Ctx, Perm) ->
     validate_resource(RD, Ctx, Perm).
 
--spec validate_resource(#wm_reqdata{}, context(), string()) -> term().
+-spec validate_resource(request_data(), context(), string()) -> term().
 validate_resource(RD, Ctx, Perm) when Perm == "riak_kv.get" ->
     %% Ensure the key is here, otherwise 404
     %% we do this early as it used to be done in the
@@ -337,21 +467,21 @@ validate_bucket_type(RD, Ctx) ->
             handle_common_error(bucket_type_unknown, RD, Ctx)
     end.
 
--spec allowed_methods(#wm_reqdata{}, context()) ->
-    {[atom()], #wm_reqdata{}, context()}.
+-spec allowed_methods(request_data(), context()) ->
+    {[atom()], request_data(), context()}.
 %% @doc Get the list of methods this resource supports.
 allowed_methods(RD, Ctx) ->
     {['HEAD', 'GET', 'POST', 'PUT', 'DELETE'], RD, Ctx}.
 
--spec allow_missing_post(#wm_reqdata{}, context()) ->
-    {true, #wm_reqdata{}, context()}.
+-spec allow_missing_post(request_data(), context()) ->
+    {true, request_data(), context()}.
 %% @doc Makes POST and PUT equivalent for creating new
 %%      bucket entries.
 allow_missing_post(RD, Ctx) ->
     {true, RD, Ctx}.
 
--spec malformed_request(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_request(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Determine whether query parameters, request headers,
 %%      and request body are badly-formed.
 %%      Body format is checked to be valid JSON, including
@@ -367,15 +497,26 @@ allow_missing_post(RD, Ctx) ->
 %%      at this time.
 malformed_request(RD, Ctx) when Ctx#ctx.method =:= 'POST'
                                 orelse Ctx#ctx.method =:= 'PUT' ->
-    malformed_request([fun malformed_content_type/2,
-                       fun malformed_timeout_param/2,
-                       fun malformed_rw_params/2,
-                       fun malformed_link_headers/2,
-                       fun malformed_index_headers/2],
-                      RD, Ctx);
+    malformed_request(
+        [
+            fun malformed_content_type/2,
+            fun malformed_timeout_param/2,
+            fun malformed_rw_params/2,
+            fun malformed_link_headers/2,
+            fun malformed_index_headers/2
+        ],
+        RD,
+        Ctx
+    );
 malformed_request(RD, Ctx) ->
-    malformed_request([fun malformed_timeout_param/2,
-                       fun malformed_rw_params/2], RD, Ctx).
+    malformed_request(
+        [
+            fun malformed_timeout_param/2,
+            fun malformed_rw_params/2
+        ],
+        RD,
+        Ctx
+    ).
 
 %% @doc Given a list of 2-arity funs, threads through the request data
 %% and context, returning as soon as a single fun discovers a
@@ -387,8 +528,10 @@ malformed_request([], RD, Ctx) ->
     {false, RD, Ctx};
 malformed_request([H|T], RD, Ctx) ->
     case H(RD, Ctx) of
-        {true, _, _} = Result -> Result;
-        {{halt,_}, _, _} = Halt -> Halt;
+        {true, _, _} = Result ->
+            Result;
+        {{halt,_}, _, _} = Halt ->
+            Halt;
         {false, RD1, Ctx1} ->
             malformed_request(T, RD1, Ctx1)
     end.
@@ -397,18 +540,18 @@ malformed_request([H|T], RD, Ctx) ->
 %% PUT/POST.
 %% This should probably result in a 415 using the known_content_type callback
 malformed_content_type(RD, Ctx) ->
-    case wrq:get_req_header(?HEAD_CTYPE, RD) of
+    case maps:get(?BINHEAD_CTYPE, Ctx#ctx.header_map, undefined) of
         undefined ->
             {true, missing_content_type(RD), Ctx};
         RawCType ->
-            [ContentType|RawParams] = string:tokens(RawCType, "; "),
-            Params = [ list_to_tuple(string:tokens(P, "=")) || P <- RawParams],
+            [ContentType|RawParams] = string:lexemes(RawCType, "; "),
+            Params = [ list_to_tuple(string:lexemes(P, "=")) || P <- RawParams],
             Charset = proplists:get_value("charset", Params),
             {false, RD, Ctx#ctx{ctype = ContentType, charset = Charset}}
     end.
 
--spec malformed_timeout_param(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_timeout_param(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Check that the timeout parameter is are a
 %%      string-encoded integer.  Store the integer value
 %%      in context() if so.
@@ -422,44 +565,62 @@ malformed_timeout_param(RD, Ctx) ->
                 {false, RD, Ctx#ctx{timeout=Timeout}}
             catch
                 _:_ ->
-                    {true,
+                    {
+                        true,
                         wrq:append_to_resp_body(
-                            io_lib:format("Bad timeout "
-                                            "value ~p~n",
-                                            [TimeoutStr]),
-                        wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-                     Ctx}
+                            io_lib:format(
+                                "Bad timeout value ~p~n",
+                                [TimeoutStr]
+                            ),
+                            wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)
+                        ),
+                        Ctx
+                    }
             end
     end.
 
--spec malformed_rw_params(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_rw_params(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Check that r, w, dw, and rw query parameters are
 %%      string-encoded integers.  Store the integer values
 %%      in context() if so.
 malformed_rw_params(RD, Ctx) ->
     Res =
-    lists:foldl(fun malformed_rw_param/2,
-                {false, RD, Ctx},
-                [{#ctx.r, "r", "default"},
-                 {#ctx.w, "w", "default"},
-                 {#ctx.dw, "dw", "default"},
-                 {#ctx.rw, "rw", "default"},
-                 {#ctx.pw, "pw", "default"},
-                 {#ctx.node_confirms, "node_confirms", "default"},
-                 {#ctx.pr, "pr", "default"}]),
+        lists:foldl(
+            fun malformed_rw_param/2,
+            {false, RD, Ctx},
+            [
+                {#ctx.r, "r", default},
+                {#ctx.w, "w", default},
+                {#ctx.dw, "dw", default},
+                {#ctx.rw, "rw", default},
+                {#ctx.pw, "pw", default},
+                {#ctx.node_confirms, "node_confirms", default},
+                {#ctx.pr, "pr", default}
+            ]
+        ),
     Res2 =
-    lists:foldl(fun malformed_custom_param/2,
-                 Res,
-                 [{#ctx.sync_on_write,
-                     "sync_on_write",
-                     "default",
-                     [default, backend, one, all]}]),
-    lists:foldl(fun malformed_boolean_param/2,
-                Res2,
-                [{#ctx.basic_quorum, "basic_quorum", "default"},
-                 {#ctx.notfound_ok, "notfound_ok", "default"},
-                 {#ctx.asis, "asis", "false"}]).
+        lists:foldl(
+            fun malformed_custom_param/2,
+            Res,
+            [
+                {
+                    #ctx.sync_on_write,
+                    "sync_on_write",
+                    default,
+                    [default, backend, one, all]
+                }
+            ]
+        ),
+    lists:foldl(
+        fun malformed_boolean_param/2,
+        Res2,
+        [
+            {#ctx.basic_quorum, "basic_quorum", default},
+            {#ctx.notfound_ok, "notfound_ok", default},
+            {#ctx.asis, "asis", false}
+        ]
+    ).
 
 -spec malformed_rw_param({Idx::integer(), Name::string(), Default::string()},
                          {boolean(), #wm_reqdata{}, context()}) ->
@@ -468,69 +629,81 @@ malformed_rw_params(RD, Ctx) ->
 %%      string-encoded integer.  Store its result in context() if it
 %%      is, or print an error message in #wm_reqdata{} if it is not.
 malformed_rw_param({Idx, Name, Default}, {Result, RD, Ctx}) ->
-    case catch normalize_rw_param(wrq:get_qs_value(Name, Default, RD)) of
-        P when (is_atom(P) orelse is_integer(P)) ->
-            {Result, RD, setelement(Idx, Ctx, P)};
-        _ ->
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format("~s query parameter must be an integer or "
-                   "one of the following words: 'one', 'quorum' or 'all'~n",
-                             [Name]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            case catch normalize_rw_param(ExtractedString) of
+                P when (is_atom(P) orelse is_integer(P)) ->
+                    {Result, RD, setelement(Idx, Ctx, P)};
+                _ ->
+                    {true,
+                    wrq:append_to_resp_body(
+                        io_lib:format(
+                            "~s query parameter must be an integer or "
+                            "one of the following words: 'one', 'quorum' or 'all'~n",
+                            [Name]
+                        ),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
--spec malformed_custom_param({Idx::integer(),
-                                    Name::string(),
-                                    Default::string(),
-                                    AllowedValues::[atom()]},
-                                {boolean(), #wm_reqdata{}, context()}) ->
-   {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_custom_param(
+    {
+        Idx::integer(),
+        Name::string(),
+        Default::atom(),
+        AllowedValues::[atom()]
+    },
+    {boolean(), request_data(), context()}) ->
+        {boolean(), request_data(), context()}.
 %% @doc Check that a custom parameter is one of the AllowedValues
 %% Store its result in context() if it is, or print an error message
 %% in #wm_reqdata{} if it is not.
 malformed_custom_param({Idx, Name, Default, AllowedValues}, {Result, RD, Ctx}) ->
-    AllowedValueTuples = [{V} || V <- AllowedValues],
-    Option=
-        lists:keyfind(
-            list_to_atom(
-                string:to_lower(
-                    wrq:get_qs_value(Name, Default, RD))),
-                1,
-                AllowedValueTuples),
-    case Option of
-        false ->
-            ErrorText =
-                "~s query parameter must be one of the following words: ~p~n",
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format(ErrorText, [Name, AllowedValues]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx};
-        _ ->
-            {Value} = Option,
-            {Result, RD, setelement(Idx, Ctx, Value)}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            UsableValue = list_to_atom(string:lowercase(ExtractedString)),
+            case lists:member(UsableValue, AllowedValues) of
+                true ->
+                    {Result, RD, setelement(Idx, Ctx, UsableValue)};
+                false ->
+                    ErrorText =
+                        "~s query parameter must be one of the following words: ~p~n",
+                    {true,
+                    wrq:append_to_resp_body(
+                    io_lib:format(ErrorText, [Name, AllowedValues]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
 %% @doc Check that a specific query param is a
 %%      string-encoded boolean.  Store its result in context() if it
 %%      is, or print an error message in #wm_reqdata{} if it is not.
 malformed_boolean_param({Idx, Name, Default}, {Result, RD, Ctx}) ->
-    case string:to_lower(wrq:get_qs_value(Name, Default, RD)) of
-        "true" ->
-            {Result, RD, setelement(Idx, Ctx, true)};
-        "false" ->
-            {Result, RD, setelement(Idx, Ctx, false)};
-        "default" ->
-            {Result, RD, setelement(Idx, Ctx, default)};
-        _ ->
-            {true,
-            wrq:append_to_resp_body(
-              io_lib:format("~s query parameter must be true or false~n",
-                            [Name]),
-              wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+    case wrq:get_qs_value(Name, RD) of
+        undefined ->
+            {Result, RD, setelement(Idx, Ctx, Default)};
+        ExtractedString ->
+            case string:lowercase(ExtractedString) of
+                "true" ->
+                    {Result, RD, setelement(Idx, Ctx, true)};
+                "false" ->
+                    {Result, RD, setelement(Idx, Ctx, false)};
+                "default" ->
+                    {Result, RD, setelement(Idx, Ctx, default)};
+                _ ->
+                    {true,
+                    wrq:append_to_resp_body(
+                    io_lib:format("~s query parameter must be true or false~n",
+                                    [Name]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                    Ctx}
+            end
     end.
 
 normalize_rw_param("backend") -> backend;
@@ -540,44 +713,55 @@ normalize_rw_param("quorum") -> quorum;
 normalize_rw_param("all") -> all;
 normalize_rw_param(V) -> list_to_integer(V).
 
--spec malformed_link_headers(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_link_headers(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Check that the Link header in the request() is valid.
 %%      Store the parsed links in context() if the header is valid,
 %%      or print an error in #wm_reqdata{} if it is not.
 %%      A link header should be of the form:
 %%        &lt;/Prefix/Bucket/Key&gt;; riaktag="Tag",...
 malformed_link_headers(RD, Ctx) ->
-    case catch get_link_heads(RD, Ctx) of
+    case catch get_link_heads(Ctx) of
         Links when is_list(Links) ->
             {false, RD, Ctx#ctx{links=Links}};
         _Error when Ctx#ctx.api_version == 1->
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format("Invalid Link header. Links must be of the form~n"
-                             "</~s/BUCKET/KEY>; riaktag=\"TAG\"~n",
-                             [Ctx#ctx.prefix]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx};
+            {
+                true,
+                wrq:append_to_resp_body(
+                    io_lib:format(
+                        "Invalid Link header. Links must be of the form~n"
+                        "</~s/BUCKET/KEY>; riaktag=\"TAG\"~n",
+                        [Ctx#ctx.prefix]
+                    ),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)
+                ),
+                Ctx
+            };
         _Error when Ctx#ctx.api_version == 2 ->
-            {true,
-             wrq:append_to_resp_body(
-               io_lib:format("Invalid Link header. Links must be of the form~n"
-                             "</buckets/BUCKET/keys/KEY>; riaktag=\"TAG\"~n", []),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+            {
+                true,
+                wrq:append_to_resp_body(
+                    io_lib:format(
+                        "Invalid Link header. Links must be of the form~n"
+                        "</buckets/BUCKET/keys/KEY>; riaktag=\"TAG\"~n",
+                        []
+                    ),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)
+                ),
+                Ctx
+            }
 
     end.
 
--spec malformed_index_headers(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec malformed_index_headers(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Check that the Index headers (HTTP headers prefixed with index_")
 %%      are valid. Store the parsed headers in context() if valid,
 %%      or print an error in #wm_reqdata{} if not.
 %%      An index field should be of the form "index_fieldname_type"
 malformed_index_headers(RD, Ctx) ->
     %% Get a list of index_headers...
-    IndexFields1 = extract_index_fields(RD),
+    IndexFields1 = extract_index_fields(Ctx),
 
     %% Validate the fields. If validation passes, then the index
     %% headers are correctly formed.
@@ -585,44 +769,33 @@ malformed_index_headers(RD, Ctx) ->
         {ok, IndexFields2} ->
             {false, RD, Ctx#ctx { index_fields=IndexFields2 }};
         {error, Reasons} ->
-            {true,
-             wrq:append_to_resp_body(
-               [riak_index:format_failure_reason(X) || X <- Reasons],
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+            {
+                true,
+                wrq:append_to_resp_body(
+                    [riak_index:format_failure_reason(X) || X <- Reasons],
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)
+                ),
+                Ctx
+            }
     end.
 
--spec extract_index_fields(#wm_reqdata{}) -> proplists:proplist().
+-spec extract_index_fields(context()) -> proplists:proplist().
 %% @doc Extract fields from headers prefixed by "x-riak-index-" in the
 %%      client's PUT request, to be indexed at write time.
-extract_index_fields(RD) ->
-    PrefixSize = length(?HEAD_INDEX_PREFIX),
-    {ok, RE} = re:compile(",\\s"),
-    F =
-        fun({K,V}, Acc) ->
-            KList = riak_kv_wm_utils:any_to_list(K),
-            case lists:prefix(?HEAD_INDEX_PREFIX, string:to_lower(KList)) of
-                true ->
-                    %% Isolate the name of the index field.
-                    IndexField =
-                        list_to_binary(
-                            element(2, lists:split(PrefixSize, KList))),
+extract_index_fields(Ctx) ->
+    RE = get_compiled_index_regex(),
+    lists:flatten(
+        lists:map(
+            fun({Field, Term}) ->
+                Values = re:split(Term, RE, [{return, binary}]),
+                [{Field, X} || X <- Values]
+            end,
+            maps:get(<<?PREFIX_INDEX>>, Ctx#ctx.header_map, [])
+        )
+    ).
 
-                    %% HACK ALERT: Split values on comma. The HTTP
-                    %% spec allows for comma separated tokens
-                    %% where the tokens can be quoted strings. We
-                    %% don't currently support quoted strings.
-                    %% (http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html)
-                    Values = re:split(V, RE, [{return, binary}]),
-                    [{IndexField, X} || X <- Values] ++ Acc;
-                false ->
-                    Acc
-            end
-        end,
-    lists:foldl(F, [], mochiweb_headers:to_list(wrq:req_headers(RD))).
-
--spec content_types_provided(#wm_reqdata{}, context()) ->
-    {[{ContentType::string(), Producer::atom()}], #wm_reqdata{}, context()}.
+-spec content_types_provided(request_data(), context()) ->
+    {[{ContentType::string(), Producer::atom()}], request_data(), context()}.
 %% @doc List the content types available for representing this resource.
 %%      The content-type for a key-level request is the content-type that
 %%      was used in the PUT request that stored the document in Riak.
@@ -639,13 +812,22 @@ content_types_provided(RD, Ctx0) ->
         {MD, V} ->
             {[{get_ctype(MD,V), produce_doc_body}], RD, DocCtx};
         multiple_choices ->
-            {[{"text/plain", produce_sibling_message_body},
-              {"multipart/mixed", produce_multipart_body}], RD, DocCtx}
+            {
+                [
+                    {"text/plain", produce_sibling_message_body},
+                    {"multipart/mixed", produce_multipart_body}
+                ],
+                RD,
+                DocCtx
+            }
     end.
 
--spec charsets_provided(#wm_reqdata{}, context()) ->
-    {no_charset|[{Charset::string(), Producer::function()}],
-     #wm_reqdata{}, context()}.
+-spec charsets_provided(request_data(), context()) ->
+    {
+        no_charset|[{Charset::string(), Producer::function()}],
+        request_data(),
+        context()
+    }.
 %% @doc List the charsets available for representing this resource.
 %%      The charset for a key-level request is the charset that was used
 %%      in the PUT request that stored the document in Riak (none if
@@ -680,14 +862,20 @@ charsets_provided(RD, Ctx0) ->
             {no_charset, RD, DocCtx}
     end.
 
--spec encodings_provided(#wm_reqdata{}, context()) ->
-    {[{Encoding::string(), Producer::function()}], #wm_reqdata{}, context()}.
+-spec encodings_provided(request_data(), context()) ->
+    {[{Encoding::string(), Producer::function()}], request_data(), context()}.
 %% @doc List the encodings available for representing this resource.
 %%      The encoding for a key-level request is the encoding that was
 %%      used in the PUT request that stored the document in Riak, or
 %%      "identity" and "gzip" if no encoding was specified at PUT-time.
 encodings_provided(RD, Ctx0) ->
-    DocCtx = ensure_doc(RD, Ctx0),
+    DocCtx =
+        case Ctx0#ctx.method of
+            UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
+                Ctx0;
+            _ ->
+                ensure_doc(RD, Ctx0)
+        end,
     case DocCtx#ctx.doc of
         {ok, _} ->
             case select_doc(DocCtx) of
@@ -705,15 +893,15 @@ encodings_provided(RD, Ctx0) ->
             {riak_kv_wm_utils:default_encodings(), RD, DocCtx}
     end.
 
--spec content_types_accepted(#wm_reqdata{}, context()) ->
+-spec content_types_accepted(request_data(), context()) ->
     {[{ContentType::string(), Acceptor::atom()}],
-     #wm_reqdata{}, context()}.
+     request_data(), context()}.
 %% @doc Get the list of content types this resource will accept.
 %%      Whatever content type is specified by the Content-Type header
 %%      of a key-level PUT request will be accepted by this resource.
 %%      (A key-level put *must* include a Content-Type header.)
 content_types_accepted(RD, Ctx) ->
-    case wrq:get_req_header(?HEAD_CTYPE, RD) of
+    case maps:get(?BINHEAD_CTYPE, Ctx#ctx.header_map, undefined) of
         undefined ->
             %% user must specify content type of the data
             {[], RD, Ctx};
@@ -724,27 +912,41 @@ content_types_accepted(RD, Ctx) ->
                     %% accept whatever the user says
                     {[{Media, accept_doc_body}], RD, Ctx};
                 _ ->
-                    {[],
-                     wrq:set_resp_header(
-                       ?HEAD_CTYPE,
-                       "text/plain",
-                       wrq:set_resp_body(
-                         ["\"", Media, "\""
-                          " is not a valid media type"
-                          " for the Content-type header.\n"],
-                         RD)),
-                     Ctx}
+                    {
+                        [],
+                        wrq:set_resp_header(
+                            ?HEAD_CTYPE,
+                            "text/plain",
+                            wrq:set_resp_body(
+                                [
+                                    "\"", Media, "\""
+                                    " is not a valid media type"
+                                    " for the Content-type header.\n"
+                                ],
+                                RD
+                            )
+                        ),
+                        Ctx
+                    }
             end
     end.
 
--spec resource_exists(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec resource_exists(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc Determine whether or not the requested item exists.
 %%      Documents exists if a read request to Riak returns {ok, riak_object()},
 %%      and either no vtag query parameter was specified, or the value of the
 %%      vtag param matches the vtag of some value of the Riak object.
 resource_exists(RD, Ctx0) -> 
-    case element(1, doc_required(RD, Ctx0)) of
+    Method = Ctx0#ctx.method,
+    ToFetch =
+        case Method of
+            UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
+                conditional_headers_present(Ctx0) == true;
+            _ ->
+                true
+        end,
+    case ToFetch of
         true ->
             DocCtx = ensure_doc(RD, Ctx0),
             case DocCtx#ctx.doc of
@@ -756,8 +958,7 @@ resource_exists(RD, Ctx0) ->
                             MDs = riak_object:get_metadatas(Doc),
                             {lists:any(
                                     fun(M) ->
-                                        riak_object:metadata_fetch(
-                                            ?MD_VTAG, M) =:= Vtag
+                                        dict:fetch(?MD_VTAG, M) =:= Vtag
                                     end,
                                     MDs),
                                 RD,
@@ -789,11 +990,12 @@ doc_required(RD, Context) ->
             {true, true}
     end.
 
-
 -spec is_conflict(request_data(), context()) ->
         {boolean(), request_data(), context()}.
 is_conflict(RD, Ctx) ->
-    case {Ctx#ctx.method, wrq:get_req_header(?HEAD_IF_NOT_MODIFIED, RD)} of
+    NotModified =
+        maps:get(?BINHEAD_IF_NOT_MODIFIED, Ctx#ctx.header_map, undefined),
+    case {Ctx#ctx.method, NotModified} of
         {_ , undefined} ->
             {false, RD, Ctx};
         {UpdM, NotModifiedClock} when UpdM =:= 'PUT'; UpdM =:= 'POST' ->
@@ -815,21 +1017,16 @@ is_conflict(RD, Ctx) ->
             {false, RD, Ctx}
     end.
 
--spec conditional_headers_present(request_data()) -> boolean().
-conditional_headers_present(RD) ->
-    NoneMatch =
-        (wrq:get_req_header("If-None-Match", RD) =/= undefined),
-    Match =
-        (wrq:get_req_header("If-Match", RD) =/= undefined),
-    UnModifiedSince =
-        (wrq:get_req_header("If-Unmodified-Since", RD) =/= undefined),
-    NotModified =
-        (wrq:get_req_header(?HEAD_IF_NOT_MODIFIED, RD) =/= undefined),
+-spec conditional_headers_present(context()) -> boolean().
+conditional_headers_present(Ctx) ->
+    NoneMatch = maps:is_key(?BINHEAD_NONE_MATCH, Ctx#ctx.header_map),
+    Match = maps:is_key(?BINHEAD_MATCH, Ctx#ctx.header_map),
+    UnModifiedSince = maps:is_key(?BINHEAD_UNMODIFIED_SINCE, Ctx#ctx.header_map),
+    NotModified = maps:is_key(?BINHEAD_IF_NOT_MODIFIED, Ctx#ctx.header_map),
     (NoneMatch or Match or UnModifiedSince or NotModified).
 
-
--spec post_is_create(#wm_reqdata{}, context()) ->
-    {boolean(), #wm_reqdata{}, context()}.
+-spec post_is_create(request_data(), context()) ->
+    {boolean(), request_data(), context()}.
 %% @doc POST is considered a document-creation operation for bucket-level
 %%      requests (this makes webmachine call create_path/2, where the key
 %%      for the created document will be chosen).
@@ -840,21 +1037,24 @@ post_is_create(RD, Ctx) ->
     %% key-POST is not create
     {false, RD, Ctx}.
 
--spec create_path(#wm_reqdata{}, context()) ->
-    {string(), #wm_reqdata{}, context()}.
+-spec create_path(request_data(), context()) ->
+    {string(), request_data(), context()}.
 %% @doc Choose the Key for the document created during a bucket-level POST.
 %%      This function also sets the Location header to generate a
 %%      201 Created response.
 create_path(RD, Ctx=#ctx{prefix=P, bucket_type=T, bucket=B, api_version=V}) ->
     K = riak_core_util:unique_id_62(),
-    {K,
-     wrq:set_resp_header("Location",
-                         riak_kv_wm_utils:format_uri(T, B, K, P, V),
-                         RD),
+    {
+        K,
+        wrq:set_resp_header(
+            "Location",
+            riak_kv_wm_utils:format_uri(T, B, K, P, V),
+            RD
+        ),
      Ctx#ctx{key=list_to_binary(K)}}.
 
--spec process_post(#wm_reqdata{}, context()) ->
-    {true, #wm_reqdata{}, context()}.
+-spec process_post(request_data(), context()) ->
+    {true, request_data(), context()}.
 %% @doc Pass-through for key-level requests to allow POST to function
 %%      as PUT for clients that do not support PUT.
 process_post(RD, Ctx) -> accept_doc_body(RD, Ctx).
@@ -873,8 +1073,12 @@ accept_doc_body(
             not_modified = IfNotModified
         }) ->
     Doc0 = riak_object:new(riak_kv_wm_utils:maybe_bucket_type(T,B), K, <<>>),
-    VclockDoc = riak_object:set_vclock(Doc0, decode_vclock_header(RD)),
-    UserMeta = extract_user_meta(RD),
+    VclockDoc =
+        riak_object:set_vclock(
+            Doc0,
+            maps:get(?BINHEAD_VCLOCK, Ctx#ctx.header_map, vclock:fresh())
+        ),
+    UserMeta = maps:get(<<?PREFIX_USERMETA>>, Ctx#ctx.header_map, []),
     CTypeMD =
         riak_object:metadata_store(
             ?MD_CTYPE,
@@ -888,9 +1092,11 @@ accept_doc_body(
                 CTypeMD
         end,
     EncMD =
-        case wrq:get_req_header(?HEAD_ENCODING, RD) of
-            undefined -> CharsetMD;
-            E -> riak_object:metadata_store(?MD_ENCODING, E, CharsetMD)
+        case maps:get(?BINHEAD_ENCODING, Ctx#ctx.header_map, undefined) of
+            undefined ->
+                CharsetMD;
+            E ->
+                riak_object:metadata_store(?MD_ENCODING, E, CharsetMD)
         end,
     LinkMD = riak_object:metadata_store(?MD_LINKS, L, EncMD),
     UserMetaMD = riak_object:metadata_store(?MD_USERMETA, UserMeta, LinkMD),
@@ -905,7 +1111,7 @@ accept_doc_body(
             _ -> []
         end,
     Options = make_options(Options0, Ctx),
-    IfNoneMatch = (wrq:get_req_header("If-None-Match", RD) =/= undefined),
+    IfNoneMatch = maps:is_key(?BINHEAD_NONE_MATCH, Ctx#ctx.header_map),
     IsConsistent = riak_kv_util:consistent_object(B),
     CondPutMode =
         application:get_env(riak_kv, conditional_put_mode, api_only),
@@ -986,7 +1192,7 @@ send_returnbody(RD, DocCtx, _HasSiblings = false) ->
 %% Handle the sibling case. Send either the sibling message body, or a
 %% multipart body, depending on what the client accepts.
 send_returnbody(RD, DocCtx, _HasSiblings = true) ->
-    AcceptHdr = wrq:get_req_header("Accept", RD),
+    AcceptHdr = maps:get(?BINHEAD_ACCEPT, DocCtx#ctx.header_map, undefined),
     PossibleTypes = ["multipart/mixed", "text/plain"],
     case webmachine_util:choose_media_type(PossibleTypes, AcceptHdr) of
         "multipart/mixed"  ->
@@ -1015,19 +1221,8 @@ add_conditional_headers(RD, Ctx) ->
                 calendar:universal_time_to_local_time(LM)), RD4),
     {RD5,Ctx3}.
 
--spec extract_user_meta(#wm_reqdata{}) -> proplists:proplist().
-%% @doc Extract headers prefixed by X-Riak-Meta- in the client's PUT request
-%%      to be returned by subsequent GET requests.
-extract_user_meta(RD) ->
-    lists:filter(fun({K,_V}) ->
-                    lists:prefix(
-                        ?HEAD_USERMETA_PREFIX,
-                        string:to_lower(riak_kv_wm_utils:any_to_list(K)))
-                end,
-                mochiweb_headers:to_list(wrq:req_headers(RD))).
-
--spec multiple_choices(#wm_reqdata{}, context()) ->
-          {boolean(), #wm_reqdata{}, context()}.
+-spec multiple_choices(request_data(), context()) ->
+          {boolean(), request_data(), context()}.
 %% @doc Determine whether a document has siblings.  If the user has
 %%      specified a specific vtag, the document is considered not to
 %%      have sibling versions.  This is a safe assumption, because
@@ -1038,8 +1233,10 @@ multiple_choices(RD, Ctx=#ctx{vtag=undefined, doc={ok, Doc}}) ->
     case riak_object:get_update_value(Doc) of
         undefined ->
             case riak_object:value_count(Doc) of
-                1 -> {false, RD, Ctx};
-                _ -> {true, RD, Ctx}
+                1 ->
+                    {false, RD, Ctx};
+                _ ->
+                    {true, RD, Ctx}
             end;
         _ ->
             %% just updated can't have multiple
@@ -1066,8 +1263,8 @@ multiple_choices(RD, Ctx) ->
                 multiple_choices})
     end.
 
--spec produce_doc_body(#wm_reqdata{}, context()) ->
-    {binary(), #wm_reqdata{}, context()}.
+-spec produce_doc_body(request_data(), context()) ->
+    {binary(), request_data(), context()}.
 %% @doc Extract the value of the document, and place it in the
 %%      response body of the request.  This function also adds the
 %%      Link, X-Riak-Meta- headers, and X-Riak-Index- headers to the
@@ -1089,18 +1286,18 @@ produce_doc_body(RD, Ctx) ->
             Links2 =
                 riak_kv_wm_utils:format_links(
                     [{Bucket, "up"}|Links1], Prefix, APIVersion),
-            LinkRD = wrq:merge_resp_headers(Links2, RD),
 
             %% Add user metadata to response...
             UserMetaRD =
                 case riak_object:metadata_find(?MD_USERMETA, MD) of
                     {ok, UserMeta} ->
                         lists:foldl(
-                            fun({K,V},Acc) ->
-                                wrq:merge_resp_headers([{K,V}],Acc)
-                            end,
-                            LinkRD, UserMeta);
-                    error -> LinkRD
+                            fun generate_usermeta_header/2,
+                            Links2,
+                            UserMeta
+                        );
+                    error ->
+                        Links2
                 end,
 
             %% Add index metadata to response...
@@ -1108,18 +1305,21 @@ produce_doc_body(RD, Ctx) ->
                 case riak_object:metadata_find(?MD_INDEX, MD) of
                     {ok, IndexMeta} ->
                         lists:foldl(
-                        fun({K,V}, Acc) ->
-                            K1 = riak_kv_wm_utils:any_to_list(K),
-                            V1 = riak_kv_wm_utils:any_to_list(V),
-                            wrq:merge_resp_headers(
-                                [{?HEAD_INDEX_PREFIX ++ K1, V1}], Acc)
-                        end,
-                        UserMetaRD, IndexMeta);
+                            fun({K,V}, Acc) ->
+                                K1 = riak_kv_wm_utils:any_to_list(K),
+                                V1 = riak_kv_wm_utils:any_to_list(V),
+                                [{?HEAD_INDEX_PREFIX ++ K1, V1} | Acc]
+                            end,
+                            UserMetaRD,
+                            IndexMeta
+                        );
                     error ->
                         UserMetaRD
                 end,
-            {riak_kv_wm_utils:encode_value(Doc),
-                encode_vclock_header(IndexRD, Ctx), Ctx};
+            {
+                riak_kv_wm_utils:encode_value(Doc),
+                encode_vclock_header(wrq:merge_resp_headers(IndexRD, RD), Ctx), Ctx
+            };
         multiple_choices ->
             throw(
                 {unexpected_code_path,
@@ -1128,8 +1328,8 @@ produce_doc_body(RD, Ctx) ->
                 multiple_choices})
     end.
 
--spec produce_sibling_message_body(#wm_reqdata{}, context()) ->
-    {iolist(), #wm_reqdata{}, context()}.
+-spec produce_sibling_message_body(request_data(), context()) ->
+    {iolist(), request_data(), context()}.
 %% @doc Produce the text message informing the user that there are multiple
 %%      values for this document, and giving that user the vtags of those
 %%      values so they can get to them with the vtag query param.
@@ -1139,13 +1339,18 @@ produce_sibling_message_body(RD, Ctx=#ctx{doc={ok, Doc}}) ->
             riak_object:metadata_fetch(?MD_VTAG, M)
             || M <- riak_object:get_metadatas(Doc) 
         ],
-    {[<<"Siblings:\n">>, [ [V,<<"\n">>] || V <- Vtags]],
-     wrq:set_resp_header(?HEAD_CTYPE, "text/plain",
-                         encode_vclock_header(RD, Ctx)),
-     Ctx}.
+    {
+        [<<"Siblings:\n">>, [ [V,<<"\n">>] || V <- Vtags]],
+        wrq:set_resp_header(
+            ?HEAD_CTYPE,
+            "text/plain",
+            encode_vclock_header(RD, Ctx)
+        ),
+        Ctx
+    }.
 
--spec produce_multipart_body(#wm_reqdata{}, context()) ->
-    {iolist(), #wm_reqdata{}, context()}.
+-spec produce_multipart_body(request_data(), context()) ->
+    {iolist(), request_data(), context()}.
 %% @doc Produce a multipart body representation of an object with multiple
 %%      values (siblings), each sibling being one part of the larger
 %%      document.
@@ -1188,7 +1393,7 @@ select_doc(#ctx{doc={ok, Doc}, vtag=Vtag}) ->
             {riak_object:get_update_metadata(Doc), UpdateValue}
     end.
 
--spec encode_vclock_header(#wm_reqdata{}, context()) -> #wm_reqdata{}.
+-spec encode_vclock_header(request_data(), context()) -> request_data().
 %% @doc Add the X-Riak-Vclock header to the response.
 encode_vclock_header(RD, #ctx{doc={ok, Doc}}) ->
     {Head, Val} = riak_object:vclock_header(Doc),
@@ -1197,16 +1402,6 @@ encode_vclock_header(RD, #ctx{doc={error, {deleted, VClock}}}) ->
     BinVClock = riak_object:encode_vclock(VClock),
     wrq:set_resp_header(
         ?HEAD_VCLOCK, binary_to_list(base64:encode(BinVClock)), RD).
-
--spec decode_vclock_header(#wm_reqdata{}) -> vclock:vclock().
-%% @doc Translate the X-Riak-Vclock header value from the request into
-%%      its Erlang representation.  If no vclock header exists, a fresh
-%%      vclock is returned.
-decode_vclock_header(RD) ->
-    case wrq:get_req_header(?HEAD_VCLOCK, RD) of
-        undefined -> vclock:fresh();
-             Head -> riak_object:decode_vclock(base64:decode(Head))
-    end.
 
 -spec ensure_doc(request_data(), context()) -> context().
 %% @doc Ensure that the 'doc' field of the context() has been filled
@@ -1240,18 +1435,17 @@ ensure_doc(RD, Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
     end;
 ensure_doc(_RD, Ctx) -> Ctx.
 
--spec delete_resource(#wm_reqdata{}, context()) ->
-    {true, #wm_reqdata{}, context()}.
+-spec delete_resource(request_data(), context()) ->
+    {true, request_data(), context()}.
 %% @doc Delete the document specified.
 delete_resource(RD, Ctx=#ctx{bucket_type=T, bucket=B, key=K, client=C}) ->
     Options = make_options([], Ctx),
     BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
     Result =
-        case wrq:get_req_header(?HEAD_VCLOCK, RD) of
+        case maps:get(?BINHEAD_VCLOCK, Ctx#ctx.header_map, undefined) of
             undefined ->
                 riak_client:delete(BT, K, Options, C);
-            _ ->
-                VC = decode_vclock_header(RD),
+            VC ->
                 riak_client:delete_vclock(BT, K, VC, Options, C)
         end,
     case Result of
@@ -1269,8 +1463,8 @@ md5(Bin) ->
     crypto:md5(Bin).
 -endif.
 
--spec generate_etag(#wm_reqdata{}, context()) ->
-    {undefined|string(), #wm_reqdata{}, context()}.
+-spec generate_etag(request_data(), context()) ->
+    {undefined|string(), request_data(), context()}.
 %% @doc Get the etag for this resource.
 %%      Documents will have an etag equal to their vtag. For documents with
 %%      siblings when no vtag is specified, this will be an etag derived from
@@ -1286,8 +1480,8 @@ generate_etag(RD, Ctx) ->
             {riak_core_util:integer_to_list(ETag, 62), RD, Ctx}
     end.
 
--spec last_modified(#wm_reqdata{}, context()) ->
-    {undefined|calendar:datetime(), #wm_reqdata{}, context()}.
+-spec last_modified(request_data(), context()) ->
+    {undefined|calendar:datetime(), request_data(), context()}.
 %% @doc Get the last-modified time for this resource.
 %%      Documents will have the last-modified time specified by the
 %%      riak_object.
@@ -1299,8 +1493,11 @@ last_modified(RD, Ctx) ->
             {normalize_last_modified(MD),RD, Ctx};
         multiple_choices ->
             {ok, Doc} = Ctx#ctx.doc,
-            LMDates = [ normalize_last_modified(MD) ||
-                          MD <- riak_object:get_metadatas(Doc) ],
+            LMDates = 
+                [ 
+                    normalize_last_modified(MD) ||
+                    MD <- riak_object:get_metadatas(Doc)
+                ],
             {lists:max(LMDates), RD, Ctx}
     end.
 
@@ -1317,18 +1514,18 @@ normalize_last_modified(MD) ->
             httpd_util:convert_request_date(Rfc1123)
     end.
 
--spec get_link_heads(#wm_reqdata{}, context()) -> [link()].
+-spec get_link_heads(context()) -> [link()].
 %% @doc Extract the list of links from the Link request header.
 %%      This function will die if an invalid link header format
 %%      is found.
-get_link_heads(RD, Ctx) ->
+get_link_heads(Ctx) ->
     APIVersion = Ctx#ctx.api_version,
     Prefix = Ctx#ctx.prefix,
     Bucket = Ctx#ctx.bucket,
 
     %% Get a list of link headers...
-    LinkHeaders1 =
-        case wrq:get_req_header(?HEAD_LINK, RD) of
+    LinkHeaders =
+        case maps:get(?BINHEAD_LINK, Ctx#ctx.header_map, undefined) of
             undefined -> [];
             Heads -> string:tokens(Heads, ",")
         end,
@@ -1336,21 +1533,14 @@ get_link_heads(RD, Ctx) ->
     %% Decode the link headers. Throw an exception if we can't
     %% properly parse any of the headers...
     {BucketLinks, KeyLinks} =
-        case APIVersion of
-            1 ->
-                {ok, BucketRegex} =
-                    re:compile("</" ++ Prefix ++ ?V1_BUCKET_REGEX),
-                {ok, KeyRegex} =
-                    re:compile("</" ++ Prefix ++ ?V1_KEY_REGEX),
-                extract_links(LinkHeaders1, BucketRegex, KeyRegex);
-            %% @todo Handle links in API Version 3?
-            Two when Two >= 2 ->
-                {ok, BucketRegex} =
-                    re:compile(?V2_BUCKET_REGEX),
-                {ok, KeyRegex} =
-                    re:compile(?V2_KEY_REGEX),
-                extract_links(LinkHeaders1, BucketRegex, KeyRegex)
-        end,
+    case LinkHeaders of
+        [] ->
+            {[], []};
+        LinkHeaders ->
+            {KeyRegex, BucketRegex} =
+                get_compiled_link_regex(APIVersion, Prefix),
+            extract_links(LinkHeaders, BucketRegex, KeyRegex)
+    end,
 
     %% Validate that the only bucket header is pointing to the parent
     %% bucket...
@@ -1359,7 +1549,7 @@ get_link_heads(RD, Ctx) ->
         true ->
             KeyLinks;
         false ->
-            throw({invalid_link_headers, LinkHeaders1})
+            throw({invalid_link_headers, LinkHeaders})
     end.
 
 %% Run each LinkHeader string() through the BucketRegex and
@@ -1388,6 +1578,50 @@ extract_links_1([LinkHeader|Rest], BucketRegex, KeyRegex, BucketAcc, KeyAcc) ->
     end;
 extract_links_1([], _BucketRegex, _KeyRegex, BucketAcc, KeyAcc) ->
     {BucketAcc, KeyAcc}.
+
+-type mp() :: {re_pattern, _, _, _, _}.
+
+-spec get_compiled_link_regex(non_neg_integer(), string()) -> {mp(), mp()}.
+get_compiled_link_regex(1, Prefix) ->
+    case persistent_term:get({?MODULE, compiled_link_regex_v1}, undefined) of
+        undefined ->
+            {ok, KeyRegex} = re:compile("</" ++ Prefix ++ ?V1_KEY_REGEX),
+            {ok, BucketRegex} = re:compile("</" ++ Prefix ++ ?V1_BUCKET_REGEX),
+            persistent_term:put(
+                {?MODULE, compiled_link_regex_v1},
+                {KeyRegex, BucketRegex}
+            ),
+            {KeyRegex, BucketRegex};
+        PreCompiledExpressions ->
+            PreCompiledExpressions
+    end;
+get_compiled_link_regex(Two, _Prefix) when Two >= 2 ->
+    case persistent_term:get({?MODULE, compiled_link_regex_v2}, undefined) of
+        undefined ->
+            {ok, KeyRegex} = re:compile(?V2_KEY_REGEX),
+            {ok, BucketRegex} = re:compile(?V2_BUCKET_REGEX),
+            persistent_term:put(
+                {?MODULE, compiled_link_regex_v2},
+                {KeyRegex, BucketRegex}
+            ),
+            {KeyRegex, BucketRegex};
+        PreCompiledExpressions ->
+            PreCompiledExpressions
+    end.
+
+-spec get_compiled_index_regex() -> mp().
+get_compiled_index_regex() ->
+    case persistent_term:get({?MODULE, compiled_index_regex}, undefined) of
+        undefined ->
+            {ok, IndexRegex} = re:compile(",\\s"),
+            persistent_term:put(
+                {?MODULE, compiled_index_regex},
+                IndexRegex
+            ),
+            IndexRegex;
+        PreCompiledIndexRegex ->
+            PreCompiledIndexRegex
+    end.
 
 -spec get_ctype(riak_object:riak_object_meta(), term()) -> string().
 %% @doc Work out the content type for this object - use the metadata if provided
@@ -1520,3 +1754,38 @@ ensure_bucket_type(RD, Ctx) ->
     Ctx0 = riak_kv_wm_utils:ensure_bucket_type(RD, Ctx, #ctx.bucket_type),
     Ctx0#ctx{type_exists =
                riak_kv_wm_utils:bucket_type_exists(Ctx0#ctx.bucket_type)}.
+
+
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
+generate_usermeta_header_test() ->
+    KV1 = {<<"X-Riak-Meta-Key">>, <<"Value1">>},
+    KV2 = {<<"x-riak-meta-key">>, <<"Value2">>},
+    KV3 = {<<"SomeKey">>, <<"Value3">>},
+    KV4 = {<<"AMuchLongerKeyWithoutPrefix">>, <<"Value4">>},
+    KV5 = {"X-Riak-Meta-Key", <<"Value5">>},
+    KV6 = {"x-riak-meta-key", <<"Value6">>},
+    KV7 = {"SomeKey", <<"Value7">>},
+    KV8 = {"AMuchLongerKeyWithoutPrefix", <<"Value8">>},
+    UserMetaHeaders =
+        lists:foldr(
+            fun generate_usermeta_header/2,
+            [],
+            [KV1, KV2, KV3, KV4, KV5, KV6, KV7, KV8]
+        ),
+    ExpResult =
+        [
+            {<<"x-riak-meta-Key">>, <<"Value1">>},
+            {<<"x-riak-meta-key">>, <<"Value2">>},
+            {<<"x-riak-meta-SomeKey">>, <<"Value3">>},
+            {<<"x-riak-meta-AMuchLongerKeyWithoutPrefix">>, <<"Value4">>},
+            {"x-riak-meta-Key", <<"Value5">>},
+            {"x-riak-meta-key", <<"Value6">>},
+            {"x-riak-meta-SomeKey", <<"Value7">>},
+            {"x-riak-meta-AMuchLongerKeyWithoutPrefix", <<"Value8">>}
+        ],
+    ?assertMatch(ExpResult, UserMetaHeaders).
+
+-endif.
