@@ -450,7 +450,7 @@ validate_resource(RD, Ctx, _Perm) ->
 %% @doc Detects whether fetching the requested object results in an
 %% error.
 validate_doc(RD, Ctx) ->
-    DocCtx = ensure_doc(RD, Ctx),
+    DocCtx = ensure_doc(Ctx),
     case DocCtx#ctx.doc of
         {error, Reason} ->
             handle_common_error(Reason, RD, DocCtx);
@@ -806,7 +806,7 @@ content_types_provided(RD, Ctx=#ctx{method=Method})
             when Method =:= 'DELETE' ->
     {[{"text/html", to_html}], RD, Ctx};
 content_types_provided(RD, Ctx0) ->
-    DocCtx = ensure_doc(RD, Ctx0),
+    DocCtx = ensure_doc(Ctx0),
     %% we can assume DocCtx#ctx.doc is {ok,Doc} because of malformed_request
     case select_doc(DocCtx) of
         {MD, V} ->
@@ -844,7 +844,7 @@ charsets_provided(RD, Ctx=#ctx{method=Method})
             when Method =:= 'DELETE' ->
     {no_charset, RD, Ctx};
 charsets_provided(RD, Ctx0) ->
-    DocCtx = ensure_doc(RD, Ctx0),
+    DocCtx = ensure_doc(Ctx0),
     case DocCtx#ctx.doc of
         {ok, _} ->
             case select_doc(DocCtx) of
@@ -874,7 +874,7 @@ encodings_provided(RD, Ctx0) ->
             UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
                 Ctx0;
             _ ->
-                ensure_doc(RD, Ctx0)
+                ensure_doc(Ctx0)
         end,
     case DocCtx#ctx.doc of
         {ok, _} ->
@@ -948,7 +948,7 @@ resource_exists(RD, Ctx0) ->
         end,
     case ToFetch of
         true ->
-            DocCtx = ensure_doc(RD, Ctx0),
+            DocCtx = ensure_doc(Ctx0),
             case DocCtx#ctx.doc of
                 {ok, Doc} ->
                     case DocCtx#ctx.vtag of
@@ -981,11 +981,11 @@ resource_exists(RD, Ctx0) ->
             end
     end.
 
--spec doc_required(request_data(), context()) -> {boolean(), boolean()}.
-doc_required(RD, Context) ->
+-spec doc_required(context()) -> {boolean(), boolean()}.
+doc_required(Context) ->
     case Context#ctx.method of
         UpdM when UpdM =:= 'PUT'; UpdM =:= 'POST'; UpdM =:= 'DELETE' ->
-            {conditional_headers_present(RD) == true, false};
+            {conditional_headers_present(Context) == true, false};
         _ ->
             {true, true}
     end.
@@ -1023,7 +1023,7 @@ conditional_headers_present(Ctx) ->
     Match = maps:is_key(?BINHEAD_MATCH, Ctx#ctx.header_map),
     UnModifiedSince = maps:is_key(?BINHEAD_UNMODIFIED_SINCE, Ctx#ctx.header_map),
     NotModified = maps:is_key(?BINHEAD_IF_NOT_MODIFIED, Ctx#ctx.header_map),
-    (NoneMatch or Match or UnModifiedSince or NotModified).
+    (NoneMatch orelse Match orelse UnModifiedSince orelse NotModified).
 
 -spec post_is_create(request_data(), context()) ->
     {boolean(), request_data(), context()}.
@@ -1403,19 +1403,19 @@ encode_vclock_header(RD, #ctx{doc={error, {deleted, VClock}}}) ->
     wrq:set_resp_header(
         ?HEAD_VCLOCK, binary_to_list(base64:encode(BinVClock)), RD).
 
--spec ensure_doc(request_data(), context()) -> context().
+-spec ensure_doc(context()) -> context().
 %% @doc Ensure that the 'doc' field of the context() has been filled
 %%      with the result of a riak_client:get request.  This is a
 %%      convenience for memoizing the result of a get so it can be
 %%      used in multiple places in this resource, without having to
 %%      worry about the order of executing of those places.
-ensure_doc(_RD, Ctx=#ctx{doc=undefined, key=undefined}) ->
+ensure_doc(Ctx=#ctx{doc=undefined, key=undefined}) ->
     Ctx#ctx{doc={error, notfound}};
-ensure_doc(RD, Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
+ensure_doc(Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
                     basic_quorum=Quorum, notfound_ok=NotFoundOK}) ->
     case Ctx#ctx.type_exists of
         true ->
-            case doc_required(RD, Ctx) of
+            case doc_required(Ctx) of
                 {true, BodyRequired} ->
                     Options0 =
                         [
@@ -1425,7 +1425,7 @@ ensure_doc(RD, Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
                         {notfound_ok, NotFoundOK}
                     ],
                     Options = make_options(Options0, Ctx),
-                    BT = riak_kv_wm_utils:maybe_bucket_type(T,B),
+                    BT = riak_kv_wm_utils:maybe_bucket_type(T, B),
                     Ctx#ctx{doc=riak_client:get(BT, K, Options, C)};
                 _ ->
                     Ctx
@@ -1433,7 +1433,8 @@ ensure_doc(RD, Ctx=#ctx{doc=undefined, bucket_type=T, bucket=B, key=K, client=C,
         false ->
             Ctx#ctx{doc={error, bucket_type_unknown}}
     end;
-ensure_doc(_RD, Ctx) -> Ctx.
+ensure_doc(Ctx) ->
+    Ctx.
 
 -spec delete_resource(request_data(), context()) ->
     {true, request_data(), context()}.
