@@ -28,6 +28,42 @@ Each primary vnode will store the data from three preflists, and only the data f
 
 In reality, the ring appears to be more confusing than it is, as it does not use simple integers `0`, `1`, `2`, `3` etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a RingSize of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named `0`, `1 bsl 152` (i.e. `5708990770823839524233143877797980545530986496`), `2 bsl 152` (i.e. `11417981541647679048466287755595961091061972992`)... etc, but the principle is still unchanged as if they were more simply `0`, `1`, `2`, `3` etc.
 
+## Eventual Consistency
+
+Riak is designed to be eventually consistent, in that it is:
+
+- Permissive about accepting updates, even when the the current state of the data cannot be guaranteed;
+  - either because some state may be in geographically diverse location where waiting for verification of present state would unacceptably increase latency,
+  - or because availability of individual components has limited visibility of the current state.
+- Definitive that all changes will eventually visible;
+  - not just because data is replicated between nodes and between clusters,
+  - but also because it is continuously reconciled, with background process that efficiently analyse the overall system for discrepancies and proactively heal those deltas without operator intervention,
+  - where that continuous reconciliation occurs both within and between clusters.
+
+It should be noted that Riak offers the same guarantees of zero-intervention eventual-consistency for both multi-cluster environments as well as single cluster environments.  However, within a cluster it is possible to enforce conditions on writes to make Riak less permissive, but less likely to result in conflict (e.g. conditional PUTs with token-based consensus).
+
+In databases in general, not being eventually consistent increases the operational processes required to ensure data integrity is maintained: e.g. static failovers between primary and standby clusters, intervention to recover from replication failures between regions.  However, being eventually consistent means that eventually there will be failure events that mean maintaining availability comes at a cost that object values will inevitably end-up in conflict - an object may have two values where the database cannot determine which is the most current, often as updates were made concurrently by two different application instances.
+
+Handling an object where the value is in doubt, adds cognitive load to the application developer - it is the key trade-off between the operator and the developer to accept when adopting Riak.  It is possible to craft objects whereby the situation can always be resolved - known as conflict-free replicated data-types.  However, designing a system based only on those data types is another type of cognitive load for the application developer.
+
+In general, most applications that depend on Riak evolve strategies to restrict and manage conflict scenarios:
+
+- Separating immutable and mutable data into different objects.
+- Using application conditions to direct updates to clusters to avoid conflicting cross-cluster updates on the same object.
+- Use sharding within the application or Riak's conditional PUT controls to avoid intra-cluster conflicts.
+  - Potentially following a event sourcing CQRS-type pattern, to first secure capture of the data and then retry updates to queryable stores, so that refusing a write downstream will not induce a risk of data-loss.
+- Adding metadata to objects to allow deterministic resolution in either all cases, or just common cases.
+
+### Quorum on Read, Write and Query
+
+All standard GET and PUT options are based on validating quorum within the cluster before returning a response to client.  So although Riak offers a guarantee that data will be eventually consistent, within a single, stable cluster results will generally be immediately consistent.  A read that follows a write will see the most up-to-date value.
+
+Quorum is the default for the GET of an object, but not the default for a query run across multiple objects.
+
+Queries are distributed to a single "covering" set of primary vnodes, and all index updates within a vnode are transactional to the object change; so Riak is different to some other distributed databases in that queries in a single, stable cluster will generally immediately reflect the latest update.  There is no post-update delay for indices to be updated. However, these index queries are checking only one replica - so if a primary vnode is active but not up-to-date (i.e. due to a recent recovery from failure or corruption), query results are not validated by checking results between replicas.  A query is not equivalent to a GET, it has a higher probability of failing to return up-to-date data.  This can be partially mitigated by relying on operator intervention during recovery (using the  `participate_in_coverage` setting to block a recovering node from participating in queries).
+
+It is possible to use inverted indexes for queries within Riak, so that queries can also use quorum reads.  However, using inverted indexes in Riak 3.4 requires management from within the application not the database.
+
 ## Handling requests
 
 ### Object API
