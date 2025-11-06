@@ -1337,12 +1337,6 @@ handle_command({exchange_complete, ExchangeResult, ST},
                             tictac_exchangetime = XT,
                             tictac_skiptick = 0}};
 
-handle_command({set_nextrebuild, Delay},
-               _Sender, State) ->
-    AAECntrl = State#state.aae_controller,
-    ok = aae_controller:aae_set_nextrebuild(AAECntrl, Delay),
-    {noreply, State};
-
 handle_command({prompt_nextrebuild, Delay},
                _Sender, State) ->
     AAECntrl = State#state.aae_controller,
