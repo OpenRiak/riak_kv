@@ -85,7 +85,7 @@
     %% since unix epoch
 -type hash_method() :: pre_hash|{rehash, non_neg_integer()}.
     %% clocks are pre-hashed before storage to reduce CPU load for hash
-    %% comparisons.  However, there may be be hash collisions, and in this case
+    %% comparisons.  However, there may be hash collisions, and in this case
     %% it may be periodically required to use an alternate hash.  For this
     %% {rehash, non_neg_integer()} is used whereby the integer concatenated
     %% with the hash

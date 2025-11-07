@@ -584,12 +584,12 @@ otp_encode_results(false, Results, Continuation) ->
     ).
 
 results_encode({Term, Key}, Encode) when is_binary(Term), is_binary(Key) ->
-    [123, [Encode(Term, Encode), $: | Encode(Key, Encode)], 125];
+    [${, [Encode(Term, Encode), $: | Encode(Key, Encode)], $}];
 results_encode({Term, Key}, Encode) when is_integer(Term), is_binary(Key) ->
     [
-        123,
+        ${,
         [Encode(integer_to_binary(Term), Encode), $: | Encode(Key, Encode)],
-        125
+        $}
     ];
 results_encode(Result, Encode) ->
     riak_kv_wm_json:encode_value(Result, Encode).

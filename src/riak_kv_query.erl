@@ -209,7 +209,7 @@ get_query_definition(#riak_kv_query{type = Type} = Query)
     end;
 get_query_definition(
     #riak_kv_query{type = Type, aggregation_expression = AE} = Query)
-        when Type == combo_query, AE =/= single_query, AE =/= none ->
+        when Type == combo_query, AE =/= single_query ->
     case Query#riak_kv_query.query of
         EvaluatedQueryList when is_list(EvaluatedQueryList) ->
             {AE, EvaluatedQueryList}

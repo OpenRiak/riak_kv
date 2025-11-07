@@ -72,7 +72,6 @@
 
 -define(VERSION, [{version, 2}]). % to be used in sets
 -define(ETS_THRESHOLD, 4096).
-% -define(START_OPTS, [{spawn_opt, [{min_heap_size, ?MIN_HEAP_SIZE}]}]).
 -define(START_OPTS, []).
 -define(DEFAULT_BUFFER_SIZE, 320).
 -define(MINIMUM_BUFFER_SIZE, 16).
