@@ -125,12 +125,12 @@ So in this term there are two delimiters, one `|` which splits up a fixed number
 
 After applying the evaluation expression, the filter_expression will receive a map of projected attributes like this (for this specific index entry):
 
-```json
-    {
-        $dob : "19650501",
-        $fn : "SMITH",
-        $gn : ["ANNE", "MARIE", "ANNE-MARIE"],
-        $pc : "LS9_0TW"
+```erlang
+    #{
+        <<"$dob">> => "19650501",
+        <<"$fn">> => "SMITH",
+        <<"$gn">> => ["ANNE", "MARIE", "ANNE-MARIE"],
+        <<"$pc">> => "LS9_0TW"
     }
 ```
 
@@ -246,13 +246,13 @@ This evaluation expression can then be used: `delim($term, :dl1, ($dob, $kvs)) |
 
 To produce this set of projected attributes to be passed to the filter expression:
 
-```json
-    {
-        $dob : "19650501",
-        $fn : "SMITH",
-        $pgn : "ANNE",
-        $sgn : ["MARIE", "ANNE-MARIE"],
-        $pc : "LS9_0TW"
+```erlang
+    #{
+        <<"$dob">> => "19650501",
+        <<"$fn">> => "SMITH",
+        <<"$pgn">> => "ANNE",
+        <<"$sgn">> => ["MARIE", "ANNE-MARIE"],
+        <<"$pc">> => "LS9_0TW"
     }
 ```
 
@@ -270,9 +270,9 @@ The start date and end dates will be of fixed YYYYMMDD format, with current info
 
 So for a sample person, the index entries could be:
 
-> familyname_bin: SMITH|19650501|19895060499999999, JONES|19650501|19650501198950604
-> givenname_bin: ANNE|19650501|1965050199999999, MARIE|19650501|1965050199999999, ANNE-MARIE|19650501|1965050199999999
-> postcode_bin: LS9_0TW|19650501|1990080199999999, LS9_1GH|19650501|1965050119900801
+- `familyname_bin: SMITH|19650501|19895060499999999, JONES|19650501|19650501198950604`
+- `givenname_bin: ANNE|19650501|1965050199999999, MARIE|19650501|1965050199999999, ANNE-MARIE|19650501|1965050199999999`
+- `postcode_bin: LS9_0TW|19650501|1990080199999999, LS9_1GH|19650501|1965050119900801`
 
 This strategy requires more index entries, but potentially simpler and more powerful querying.
 

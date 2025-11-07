@@ -20,6 +20,20 @@ For later OTP versions, an alternative `openriak-<release>` branch will be requi
 
 You should have [Erlang/OTP 26](http://erlang.org/download.html) to compile and run this version Riak KV. The easiest way to utilise Riak KV is by installing the full Riak application available on [Github](https://github.com/OpenRiak/riak).
 
+## Quick Docs
+
+Overview documentation on is available in this repository.  The documentation is split into the following pages:
+
+- [Initial Design Decisions](/docs/InitialDesignDecisions.md);
+- [Install and Start Guide](/docs/InstallAndStartGuide.md);
+- [Building and then Scaling a Cluster](/docs/BuildAndScaleClusterGuide.md);
+- [Replication Guide](/docs/NextGenReplGuide.md);
+- [Object API](/docs/ObjectAPI.md);
+- [Query API](/docs/QueryAPI.md);
+- [OtherAPI](/docs/OtherAPI.md);
+- [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md);
+- [Riak Theory Guide](/docs/RiakTheoryGuide.md).
+
 ## Discussions
 
 For discussions on Riak development see https://github.com/orgs/OpenRiak/discussions.  For direct contact with the OpenRiak development community please use the `open-riak` channel on the [Slack channel for the Erlang Ecosystem Foundation](https://erlef.org/slack-invite/erlef). 
