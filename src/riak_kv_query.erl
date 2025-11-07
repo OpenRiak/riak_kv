@@ -352,7 +352,7 @@ add_accumulation_option(_Q, BadOption) when is_binary(BadOption) ->
     {
         error,
         accumulation_option,
-        list_to_binary(
+        iolist_to_binary(
             io_lib:format(<<"Unrecognised option ~0p">>, [BadOption])
         )
     }.
@@ -383,7 +383,7 @@ add_accumulation_term(
     {
         error,
         accumulation_term,
-        list_to_binary(
+        iolist_to_binary(
             io_lib:format(
                 <<"Bad term ~0p with option ~w">>, [AccumulationTerm, AccOpt])
         )
@@ -401,7 +401,7 @@ add_maxresults(#riak_kv_query{accumulation_option = AccOpt, type = T} = Q, MR)
             {
                 error,
                 max_results,
-                list_to_binary(
+                iolist_to_binary(
                     io_lib:format(
                         "Invalid combination max_results ~0p "
                         "query_type ~w accumulation_option ~0p",
@@ -412,7 +412,7 @@ add_maxresults(_Query, InvalidMax) ->
     {
         error,
         max_results,
-        list_to_binary(
+        iolist_to_binary(
             io_lib:format(<<"Invalid max_results ~0p">>, [InvalidMax]))
     }.
 
