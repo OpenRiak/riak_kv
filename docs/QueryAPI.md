@@ -121,6 +121,8 @@ The query list in this case contains only one query, and that identifies the ind
 
 The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and then up to four elements as will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
 
+So in this term there are two delimiters, one `|` which splits up a fixed number of attributes, and some evaluated with the `delim` function which outputs elements directly into the mpa of attributes.  There is then a second delimiter `.` which splits one of those attributes, the given name attribute into individual given names.  As there is variable number of given names supported, the `split` function is used to output an attribute whose value is a list.  In this case the output name of the attribute `$gn` is the same as the input, so this alters the value in the attribute map rather than creating a new one.
+
 After applying the evaluation expression, the filter_expression will receive a map of projected attributes like this (for this specific index entry):
 
 ```json
@@ -196,7 +198,7 @@ Alternative approaches would be possible:
 
 - `ends_with($dob, :qbd)` could be used for the birthday check avoiding the additional pipeline function in the evaluation expression.
 - `index($fn, 0, 2, $fn)` could be used in the evaluation expression to slim the $fn to the first two characters for equality checking.
-
+- Also, because of the birthday check, the range start and end terms could also be tighter, and reduce the number of index terms to be processed by about 20%.
 
 ### Example (1) - Inexact Match of Given Name
 
@@ -582,7 +584,7 @@ Aggregation of queries is performed at a vnode-level, before results are returne
 
 Index changes are not deferred to an async process, at a vnode level all index changes are made as a transaction with the object change.  Outside of failure scenarios, secondary index queries will almost always immediately reflect the results of any changes in the object (with caveats related to unreliable latency across intra-cluster networking communication).
 
-In failure and recovery scenarios, false negatives are possible (i.e. results may be missing until anti-entropy mechanisms correct) but results will be eventually consistent.  The query uses a coverage plan which will check only one (of N) potential copies of the data, and so should a vnode be temporarily incorrect, the entropy is not detected as part of the query.  The `participate_in_coverage` configuration option (which can be applied at run-time) us used to mitigate this - this can be used to prevent a node with a known entropy issue from being involved in queries. 
+In failure and recovery scenarios, false negatives are possible (i.e. results may be missing until anti-entropy mechanisms correct) but results will be eventually consistent.  The query uses a coverage plan which will check only one (of N) potential copies of the data, and so should a vnode be temporarily incorrect, the entropy is not detected as part of the query.  The `participate_in_coverage` configuration option (which can be applied at run-time) is used to mitigate this - this can be used to prevent a node with a known entropy issue from being involved in queries. 
 
 ### Notes on Implementation - Further Improvements
 
