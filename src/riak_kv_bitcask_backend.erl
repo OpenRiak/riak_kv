@@ -95,12 +95,13 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()) -> {ok, [atom()]}.
+-spec capabilities(state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_) ->
     {ok, ?CAPABILITIES}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
@@ -278,10 +279,14 @@ delete(Bucket, Key, _IndexSpecs,
     {ok, State}.
 
 %% @doc Fold over all the buckets.
--spec fold_buckets(riak_kv_backend:fold_buckets_fun(),
-                   any(),
-                   [],
-                   state()) -> {ok, any()} | {async, fun()} | {error, term()}.
+-spec fold_buckets(
+    riak_kv_backend:fold_buckets_fun(),
+    any(),
+    [],
+    state()) ->
+        {ok, any()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_buckets(FoldBucketsFun, Acc, Opts, #state{opts=BitcaskOpts,
                                                data_dir=DataFile,
                                                ref=Ref,
@@ -321,10 +326,14 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{opts=BitcaskOpts,
     end.
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, term()} | {async, fun()} | {error, term()}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, term()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_keys(FoldKeysFun, Acc, Opts, #state{opts=BitcaskOpts,
                                          data_dir=DataFile,
                                          ref=Ref,
@@ -359,10 +368,14 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{opts=BitcaskOpts,
     end.
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()} | {error, term()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_objects(FoldObjectsFun, Acc, Opts, #state{opts=BitcaskOpts,
                                                data_dir=DataFile,
                                                ref=Ref,

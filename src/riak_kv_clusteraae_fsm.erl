@@ -25,7 +25,6 @@
 
 -behaviour(riak_core_coverage_fsm).
 
--include_lib("riak_kv_vnode.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 
 -export([init/2,
@@ -66,10 +65,18 @@
 -type from() :: {atom(), req_id(), pid()}.
 -type req_id() :: non_neg_integer().
 
+-type query_types() :: 
+    merge_root_nval|merge_branch_nval|fetch_clocks_nval|
+    merge_tree_range|fetch_clocks_range|repl_keys_range|repair_keys_range|
+    find_keys|object_stats|
+    find_tombs|reap_tombs|erase_keys|
+    list_buckets.
+
+
 %% Building blocks for supported aae fold query definitions
--type segment_filter() :: list(integer()).
--type tree_size() :: leveled_tictac:tree_size().
--type branch_filter() :: list(integer()).
+-type segment_filter() :: list(non_neg_integer()).
+-type tree_size() :: xxsmall|xsmall|small|medium|large|xlarge.
+-type branch_filter() :: list(non_neg_integer()).
 -type key_range() :: {riak_object:key(), riak_object:key()}|all.
 -type bucket() :: riak_object:bucket().
 -type n_val() :: pos_integer().
@@ -78,7 +85,7 @@
     %% since unix epoch
 -type hash_method() :: pre_hash|{rehash, non_neg_integer()}.
     %% clocks are pre-hashed before storage to reduce CPU load for hash
-    %% comparisons.  However, there maye be hash collisions, and in this case
+    %% comparisons.  However, there may be hash collisions, and in this case
     %% it may be periodically required to use an alternate hash.  For this
     %% {rehash, non_neg_integer()} is used whereby the integer concatenated
     %% with the hash
@@ -87,21 +94,12 @@
     %% be actioned only by a job-specific riak_kv_reaper/eraser process started
     %% by this FSM.  Or each fold can send reap/delete requests direct to the
     %% local node's riak_kv_reaper/riak_kv_eraser to distribute the load across
-    %% the cluster and increase parallelistaion of the process.
+    %% the cluster and increase parallelisation of the process.
     %% The count change_method() will perform no reaps/deletes - but will
-    %% simply count the matching keys - this is cheaper than runnning
+    %% simply count the matching keys - this is cheaper than running
     %% find_tombs/find_keys to accumulate/sort a large list for counting. 
--type query_types() :: 
-    merge_root_nval|merge_branch_nval|fetch_clocks_nval|
-    merge_tree_range|fetch_clocks_range|repl_keys_range|repair_keys_range|
-    find_keys|object_stats|
-    find_tombs|reap_tombs|erase_keys|
-    list_buckets.
 
--type query_definition() ::
-    % Use of these folds depends on the Tictac AAE being enabled in either
-    % native mode, or in parallel mode with key_order being used.  
-
+-type nval_queries() ::
     % N-val AAE (using cached trees)
     {merge_root_nval, n_val()}|
         % Merge the roots of cached Tictac trees for the given n-val to give
@@ -112,7 +110,7 @@
         % n-val to give a combined view of those branches across the cluster.
         % This should be a fast, low-overhead operation
     {fetch_clocks_nval, n_val(), segment_filter()}|
-    {fetch_clocks_nval, n_val(), segment_filter(), modified_range()}|
+    {fetch_clocks_nval, n_val(), segment_filter(), modified_range()}.
         % Scan over all the keys for a given n_val in the tictac AAE key store
         % (which for native stores will be the actual key store), skipping 
         % those blocks of the store not containing keys in the segment filter,
@@ -123,13 +121,14 @@
         % Variant supported with a modified range, which will be converted into
         % a fetch_clocks_range
 
+-type range_queries() ::
     % Range-based AAE (requiring folds over native/parallel AAE key stores)
     {merge_tree_range, 
         bucket(),
         key_range(), 
         tree_size(),
-        {segments, segment_filter(), tree_size()} | all,
-        modified_range() | all,
+        {segments, segment_filter(), tree_size()}|all,
+        modified_range()|all,
         hash_method()}|
         % Provide the values for a subset of AAE tree branches for the given
         % key range.  This will be a background operation, and the cost of
@@ -143,7 +142,7 @@
         % A segment_filter() may be passed.  For example, if a tree comparison
         % has been done between two clusters, it might be preferable to confirm
         % the differences before fetching clocks. This can be done by
-        % requesting a seocnd tree but placing the mismatched segments into a
+        % requesting a second tree but placing the mismatched segments into a
         % segment filter so that the subsequent comparison will be made just on
         % those segments.  This will reduce the cost of producing the tree by
         % an order of magnitude.
@@ -219,7 +218,7 @@
         bucket(),
         key_range(),
         modified_range() | all,
-        all}|
+        all}.
         % Read repair all keys in the range.  Keys will be read in batches
         % and then queued for repair
         % Will default to repairing all keys (i.e. all of those fetched and a
@@ -227,6 +226,7 @@
         % only attempt to read those keys where a primary vnode is not
         % participating in coverage
 
+-type operations_queries() ::
     % Operational support functions
     {find_keys, 
         bucket(),
@@ -235,7 +235,7 @@
         {sibling_count, pos_integer()}|{object_size, pos_integer()}}|
         % Find all the objects in the key range that have more than
         % the given count of siblings (where {sibling_count, 1} means
-        % find all objects with more than a single,unconflicted
+        % find all objects with more than a single, unconflicted
         % value), or are bigger than the given object size.  This uses
         % the AAE keystore, and will only discover siblings that have
         % been generated and stored within a vnode (which should
@@ -251,10 +251,9 @@
         % It would be beneficial to use the results of object_stats (or 
         % knowledge of the application) to ensure that the result size of
         % this query is reasonably bounded (e.g. don't set too low an object
-        % size).  If only interested in the outcom of recent modifications,
+        % size).  If only interested in the outcome of recent modifications,
         % use a modified_range().
-
-    {object_stats, bucket(), key_range(), modified_range() | all} |
+    {object_stats, bucket(), key_range(), modified_range() | all}|
         % Returns:
         % - the total count of objects in the key range
         % - the accumulated total size of all objects in the range
@@ -272,12 +271,11 @@
         %
         % If only interested in the outcome of recent modifications,
         % use a modified_range().
-
     {find_tombs,
         bucket(),
         key_range(), 
         {segments, segment_filter(), tree_size()} | all,
-        modified_range() | all} |
+        modified_range() | all}|
         % Find all tombstones in the range that match the criteria, and
         % return a list of keys and delete_hashes
     {reap_tombs,
@@ -285,7 +283,7 @@
         key_range(),
         {segments, segment_filter(), tree_size()} | all,
         modified_range() | all,
-        change_method()} |
+        change_method()}|
         % Reap all the tombstones in the range using either a job-specific
         % reaper process, or using the process on each node (local to each
         % vnode fold).  Should return a count of all the tombstones for
@@ -295,11 +293,16 @@
         key_range(),
         {segments, segment_filter(), tree_size()} | all,
         modified_range() | all,
-        change_method()} |
+        change_method()}|
         % Erase keys using a riak_kv_eraser.  This is of specific use when
         % expiring keys beyond a certain modified date
     {list_buckets, n_val()}.
         % List all buckets in the aae store - assuming a given n_val
+
+-type query_definition() ::
+    % Use of these folds depends on the Tictac AAE being enabled in either
+    % native mode, or in parallel mode with key_order being used.  
+    nval_queries() | range_queries() | operations_queries().
 
 
 %% NOTE: this is a dialyzer/start war with the weird init needing a
@@ -352,9 +355,6 @@
 -export_type([query_definition/0]).
 
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -spec init(from(), inbound_api()) -> init_response().
 %% @doc 
@@ -769,7 +769,7 @@ encode_key_and_clock(Bucket, Key, Clock) ->
      {<<"clock">>, base64:encode_to_string(riak_object:encode_vclock(Clock))}].
 
 -spec hash_function(hash_method()) ->
-                        pre_hash|fun((vclock:vclock()) -> non_neg_integer()).
+        pre_hash|fun((vclock:vclock()) -> non_neg_integer()).
 %% Return a hash function to be applied to the vector clock, to produce the
 %% object hash for the merkle tree.  The pre_hash will use the default
 %% pre-calculated hash of (erlang:phash2(lists:sort(VC)).
@@ -991,6 +991,10 @@ is_valid_fold(_InvalidFold) ->
 %% EUnit tests
 %% ===================================================================
 -ifdef(TEST).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 merge_countinlists_test() ->
     L0 = [{1, 23}, {4, 36}, {3, 17}, {8, 12}],

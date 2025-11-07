@@ -120,6 +120,9 @@ raw_dispatch(Name) ->
      {Prefix ++ ["buckets", bucket, "index", field, '*'],
       riak_kv_wm_index, Props},
 
+     {Prefix ++ ["buckets", bucket, "query"],
+      riak_kv_wm_query, Props},
+
      %% AAE fold URLs
      {["cachedtrees", "nvals", nval, "root"],
       riak_kv_wm_aaefold, Props},
