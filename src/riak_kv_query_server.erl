@@ -51,7 +51,6 @@
 -export(
     [
         query_start/1,
-        new_timeout/2,
         check_vnode_monitor/1
     ]
 ).
@@ -153,10 +152,6 @@ query_start(Query) ->
     {ok, Worker} = gen_server:start_link(?MODULE, Query, ?START_OPTS),
     {ok, Worker, riak_kv_query:get_reqid(Query)}.
 
--spec new_timeout(pid(), pos_integer()) -> ok.
-new_timeout(Pid, SecondsToTimeout) ->
-    gen_server:cast(Pid, {new_timeout, SecondsToTimeout}).
-
 -spec check_vnode_monitor(pid()) -> {ok, vnode_monitor()}.
 check_vnode_monitor(Pid) ->
     gen_server:call(Pid, {check_progress, vnode_monitor}, infinity).
@@ -241,10 +236,8 @@ init(Query) ->
             }
     end.
 
-handle_cast({new_timeout, SecondsToTimeout}, State) ->
-    ReqID = riak_kv_query:get_reqid(),
-    erlang:send_after(SecondsToTimeout * 1000, self(), {timeout, ReqID}),
-    {noreply, State#state{timeout_reqid = ReqID}}.
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 
 handle_call({check_progress, vnode_monitor}, _From, State) ->
     {reply, {ok, State#state.vnode_monitor}, State}.
