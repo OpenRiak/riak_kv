@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_query_fsm_sup: supervise the riak_kv query state machines.
+%% riak_kv_query_sup: supervise the riak_kv query servers.
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc supervise the riak_kv query state machines used to
+%% @doc supervise the riak_kv query servers used to
 %% process complex secondary index queries.
 
 -module(riak_kv_query_sup).

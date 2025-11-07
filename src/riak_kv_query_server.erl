@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_query_worker: Manage complex secondary index query.
+%% riak_query_server: Manage complex secondary index query.
 %%
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 %%

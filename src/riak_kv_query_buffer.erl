@@ -306,7 +306,7 @@ aggregate(R, none) ->
 aggregate({T, KL}, {T, AggKL}) when T == keys ->
     {T, lists:umerge(lists:usort(KL), AggKL)};
 aggregate({T, TKL}, {T, AggTKL}) when T == terms ->
-    {T, lists:umerge(lists:usort(lists:reverse(TKL)), AggTKL)};
+    {T, lists:umerge(lists:usort(TKL), AggTKL)};
 aggregate({T, KL}, {T, AggKL}) when T == raw_keys; T == raw_terms ->
     {T, KL ++ AggKL};
 aggregate({T, C}, {T, AggC}) when T == raw_count; T == count ->

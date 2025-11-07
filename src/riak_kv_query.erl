@@ -493,7 +493,10 @@ make_continuation(StartTerm, StartKeyExclusive) ->
 validate_substitutions(Subs) ->
     try
         maps:foreach(
-            fun(K, V) when is_binary(K), is_binary(V); is_integer(V) -> ok end,
+            fun(K, V) when
+                is_binary(K), (is_binary(V) orelse is_integer(V)) ->
+                ok
+            end,
             Subs
         ),
         ok
@@ -995,7 +998,16 @@ bad_singlequery_test() ->
     ?assertMatch(
         {<<"index_bin">>, <<"Will">>, <<"Wilm">>, _QE2},
         R2#riak_kv_query.query
-    )
-    .
+    ).
+
+validate_subs_intint_test() ->
+    ?assertMatch(
+        {error, query_evaluation, <<"Invalid type in substitution">>},
+        validate_substitutions(#{12 => 12})
+    ),
+    ?assertMatch(
+        ok,
+        validate_substitutions(#{<<"binkey">> => 12})
+    ).
 
 -endif.
