@@ -38,7 +38,7 @@ Some points to note when installing Erlang:
 
 ### Download Riak
 
-Riak is available at to clone at https://github.com/OpenRiak/riak.
+Riak is available to clone at https://github.com/OpenRiak/riak.
 
 Each major release has an associated branch which represents current development activity.  For Riak 3.2 this is `openriak-3.2`, For Riak 3.4 this is `openriak-3.4`.  Building from these branches may contain unreleased changes.
 

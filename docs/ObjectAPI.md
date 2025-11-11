@@ -2,7 +2,7 @@
 
 Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  When choosing between APIs, consider that:
 
-- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5 and 15%;
+- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5% and 15% in terms of request latency;
   - improving relative HTTP performance is key goal of Riak development for future releases.
 - The HTTP API is generally quicker to develop against due to the ubiquity of HTTP-based tooling, and the ability for developers to switch to command line tools (e.g. curl) or graphical tools.
   - The HTTP API is not strictly standards complaint, in that it uses HTTP request headers to describe the object rather than the request.  It is not possible to describe the API using standard tooling (e.g. OpenAPI).

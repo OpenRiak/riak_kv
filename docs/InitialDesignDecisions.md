@@ -17,12 +17,12 @@ In addition to making a choice, it is also necessary to consider how to transiti
 
 ### Database backend - making a choice
 
-A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and proving access to the data.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
+A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and providing access to the data.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
 
 The following choices exist:
 
-- **leveled** (default from Riak 3.4)
-- **bitcask** (default prior to Riak 3.4)
+- **leveled** (recommended for Riak 3.4)
+- **bitcask** (default)
 - eleveldb (deprecated as of Riak 3.4)
 - in-memory (deprecated as of Riak 3.4)
 - **multi-backend** (supported only in limited use cases, specifically as a multi-bitcask backend)

@@ -16,6 +16,16 @@ The following sections provide guidance when operating or troubleshooting a Riak
 
 ## Replace, Repair and Recover
 
+There are several potential repair and recovery processes for handling different scenarios:
+
+- [proactive replace](#proactive-replace);
+- [reactive replace](#reactive-replace);
+- [leveled backend repair](#repair-an-individual-leveled-store);
+- [repairing a single vnode](#repair-an-individual-vnode);
+- [repairing a key range](#repair-key-ranges).
+
+The most common repair requirements are for proactive replace, and reactive replace: testing these processes under load prior to production deployment of Riak is recommended.
+
 ### Proactive Replace
 
 It is possible to proactively replace a node in a Riak cluster, if:
@@ -85,16 +95,6 @@ The combination of `repair_span = double_pair, repair_deferred = enabled` is pro
 
 Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
 
-### Repair key ranges
-
-There may be circumstances where incidents have impacted the status of particular buckets, key ranges, or objects within a certain range of modified dates.  To repair in these circumstances, a read repair for a range can be triggered across the whole cluster.
-
-Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
-
-The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queues log outputs.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
-
-Repair key ranges is especially powerful for repairing keys across a cluster following a known incident with a given time range, and may prove to be quicker in some circumstances that awaiting for the delta to heal via active anti-entropy.
-
 ### Repair an individual leveled store
 
 The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.  As the journal is the source of truth, the ledger can be rebuilt from the journal, and leveled will do this automatically on startup when the ledger is missing.
@@ -122,6 +122,16 @@ riak eval "riak_kv_vnode:repair(<partition_number>)."
 ```
 
 The repair node will replace any object which the store does not presently hold.  However, following corruption that validation may not be accurate - the store may incorrectly report presence.  So it is normally better to delete all the data on the vnode following corruption before triggering the repair.  Data will always be repaired eventually, deleting the store first ensures the time to repair is bounded and not dependent on long-running background recovery jobs.
+
+### Repair key ranges
+
+AOutside of the circumstances covered in the previous sections, it is not expected that there should be a need for operator intervention in the recovery from failure.  There is though an additional process for handling any unexpected scenarios, to allow for cluster wide repair of key ranges.  There `repair_key_range` operation is targeted at a specific bucket, potentially combined with a key range or last modified date range: and triggers via an AAE fold the read repair process within the cluster for that range.
+
+Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
+
+The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queues log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
+
+Repair key ranges is especially powerful for repairing keys across a cluster following a known incident with a given time range, and may prove to be quicker in some circumstances that awaiting for the delta to heal via active anti-entropy.
 
 ## Remote Console
 

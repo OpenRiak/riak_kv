@@ -41,6 +41,13 @@ There are also broader considerations to be made with regards to node choices, a
 - Scheduling of operational actions within Riak cluster should avoid concurrent running of resource-intensive activity e.g. array integrity checks in software RAID systems, solid-state disk trim jobs, or operational security software sweeps.
 - Some cloud providers offer special instance types design for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
 
+For the configuration of nodes, some general pointers:
+
+- File-system performance is important to Riak performance, generally the use of an XFS file system is recommended, and thorough testing is recommended should alternatives be desired.
+- Operating system configuration options that optimise for performance are not recommended where they present a risk of unpredictable performance during relatively rare events - such as for garbage collection of realignment.
+  - It is recommended that `transparent_huge_pages` be disabled due to the risk of latency spikes.
+- Avoid file-system scheduler settings that re-order activity, normally a `noop`/`none` scheduler is preferred, but this advice may be superseded by OS or hardware-specific guidance.
+
 ### Network
 
 The following considerations should be made when selecting the network infrastructure for running Riak:
@@ -74,6 +81,9 @@ Non-functional tests of Riak are performed with requests distributed across the 
 - If enabling proactive health-checking of nodes, sending a `ping` request represents a weak check of availability, and a `status` request may have excessive costs.  It is better to use checks for the availability of sentinel objects instead (store specific objects in the cluster for the purpose of health-checks).
   - There is no mechanism for making objects permanent and immutable, so care must be taken to ensure sentinel objects are not accidentally deleted.
 - When sending requests via a proxy, it is recommended to avoid connection pooling (e.g. use a `connection_close` of equivalent directive).  Pooling and reusing long-lived connections will reduce response times by a small margin; however there will be failure conditions that may take a long time to be detected, especially without frequent proactive health-checks.
+  - Without connection pools it is necessary to ensure there is sufficient connection capacity to handle the required database load, and this will require the reuse of connections in a TIME_WAIT state.
+  - Reuse of connections in a TIME_WAIT state will require the PAWS protection described in [RFC 7323](https://www.rfc-editor.org/rfc/rfc7323).  Note that the TCP timestamps necessary may sometimes be erroneously disabled by default for security reasons.
+  - Note that a common signal of connection pool exhaustion is response times of close to 1s, 3s or 5s; the delays normally associated with a TCP retry.
 - A proxy for a Riak cluster will generally require a significant amount of bandwidth, especially where the cluster is supporting relatively large objects.  Scaling proxy bandwidth may require a step-change in underlying network technology compared to that of the individual nodes.
 - The `503` service unavailable message is used by Riak when sending a timeout.  However, such timeouts may occur because of poorly formed requests (such as overly complex queries).  It is therefore generally recommended that `503` errors should not be considered as server failures within the proxy configuration, so that nodes that coordinate complex queries are not marked as down.
 - If a node is marked as `down` by a proxy, either through failure detection or operator intervention, it should be noted that the node will still play an active role in the cluster unless it has been stopped.  Marking a node as `down` is not sufficient to remove a role from service.

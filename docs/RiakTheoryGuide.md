@@ -32,7 +32,7 @@ In reality, the ring appears to be more confusing than it is, as it does not use
 
 Riak is designed to be eventually consistent, in that it is:
 
-- Permissive about accepting updates, ensuring data is stored securely on behalf of the application, even when the the current state of the data relative tot he update cannot be guaranteed;
+- Permissive about accepting updates, ensuring data is stored securely on behalf of the application, even when the current state of the data relative tot he update cannot be guaranteed;
   - either because some state may be in geographically diverse location where waiting for verification of present state would unacceptably increase latency,
   - or because availability of individual components has limited visibility of the current state.
 - Definitive that all changes will eventually be visible;
