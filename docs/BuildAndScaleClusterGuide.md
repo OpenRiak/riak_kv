@@ -94,7 +94,7 @@ With modern hardware, a simple configuration such as this can achieve a very hig
 
 The largest Riak users have o(1000) nodes, but these are generally split into different clusters serving different purposes or geographies.  It is rare to have individual clusters that scale beyond 50 nodes.
 
-A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring-size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
+A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
 
 For details of the cluster management commands:
 
@@ -103,6 +103,7 @@ riak admin cluster --help
 ```
 
 The process of joining, is a five stage process:
+
 - staging changes;
 - plan the change;
 - verify the plan;
@@ -121,7 +122,7 @@ As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
 - the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check your proposed configuration is possible before making the change.
-- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring-size can only be managed by replicating to a new cluster.
+- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
 There are three supported cluster claim algorithm in riak, and the algorithm is an environment variable which can be set in `riak.conf`.

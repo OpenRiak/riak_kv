@@ -2,7 +2,7 @@
 
 The Riak NextGen replication is a replication solution, with these benefits:
 
-- allows for replication between clusters with different ring-sizes and n-vals;
+- allows for replication between clusters with different ring sizes and `n_val`s;
 - provides very efficient reconciliation to confirm clusters are synchronised;
 - efficient and fast resolution of small deltas between clusters;
 - extensive configuration control over the behaviour of replication;
