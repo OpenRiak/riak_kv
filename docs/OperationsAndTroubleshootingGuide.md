@@ -16,6 +16,16 @@ The following sections provide guidance when operating or troubleshooting a Riak
 
 ## Replace, Repair and Recover
 
+There are several potential repair and recovery processes for handling different scenarios:
+
+- [proactive replace](#proactive-replace);
+- [reactive replace](#reactive-replace);
+- [leveled backend repair](#repair-an-individual-leveled-store);
+- [repairing a single vnode](#repair-an-individual-vnode);
+- [repairing a key range](#repair-key-ranges).
+
+The most common repair requirements are for proactive replace, and reactive replace: testing these processes under load prior to production deployment of Riak is recommended.
+
 ### Proactive Replace
 
 It is possible to proactively replace a node in a Riak cluster, if:
@@ -25,11 +35,14 @@ It is possible to proactively replace a node in a Riak cluster, if:
 - to change the storage_backend of a cluster node-by-node;
 - or to fully vacuum a node's storage backends of garbage.
 
-To replace a node, there needs to be a cluster `plan` made, with two staged changes - the `join` of a new node, and a `replace` to indicate the old node which should be replaced.
+A proactive replace is a cluster administration change, and [follows the standard five stage process described in the general guidance on amending the cluster make-up](/docs/BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).  In the case of a proactive replace, the first stage, staging, requires the staging of two changes: 
+
+- the `join` of a new node, and
+- a `replace` to indicate the old node which should be replaced.
+
+The plan should be planned, reviewed, committed and then monitored as with other changes.
 
 The node may have its `location` set prior to the `join`, but the location will be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster.
-
-Replace uses handoffs, and so can be tracked as with other cluster change operations.
 
 See `riak admin cluster --help` for further details on the required inputs to cluster change commands.
 
@@ -39,13 +52,13 @@ After completing a replace, it may be necessary for to realign node naming with 
 
 ### Reactive Replace
 
-When a node has failed following an incident, the ndoe can still be recovered back to its previous state without requiring a backup.
+When a node has failed following an incident, the node can still be recovered back to its previous state without requiring a backup.
 
 There are three stages to replace and recover the node:
 
-- ensuring the node is downed;
-- forcing the replace;
-- repairing the new node.
+- [ensuring the node is downed](#administratively-downing-a-node);
+- [forcing the replace](#forcing-a-replace);
+- [repairing the new node](#completing-a-repair).
 
 #### Administratively Downing a Node
 
@@ -82,21 +95,11 @@ The combination of `repair_span = double_pair, repair_deferred = enabled` is pro
 
 Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
 
-### Repair key ranges
+### Repair an individual leveled store
 
-There may be circumstances where incidents have impacted the status of particular buckets, key ranges, or objects within a certain range of modified dates.  To repair in these circumstances, a read repair for a range can be triggered across the whole cluster.
+The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.  As the journal is the source of truth, the ledger can be rebuilt from the journal, and leveled will do this automatically on startup when the ledger is missing.
 
-Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
-
-The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queues log outputs.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
-
-Repair key ranges is especially powerful for repairing keys across a cluster following a known incident with a given time range, and may prove to be quicker in some circumstances that awaiting for the delta to heal via active anti-entropy.
-
-### Repair a leveled ledger
-
-The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.
-
-There exists the (very rare) potential for a ledger to be corrupted.  There are also circumstances where following an update the ledger is not fully efficient until it is rebuilt.  In these circumstances a rebuild or repair of the ledger can be forced by:
+There exists the (very rare) potential for a ledger to be corrupted.  There are also circumstances where following an update the ledger is not fully efficient until it is rebuilt.  As a missing ledger is rebuilt automatically on startup, rebuilding of the ledger can simply be prompted by deleting it:
 
 - Stopping the node;
 - Deleting the ledgers in the impacted partitions (under each vnode's leveled store there should be a ledger folder);
@@ -104,15 +107,31 @@ There exists the (very rare) potential for a ledger to be corrupted.  There are 
 
 On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster (the riak_kv application will not complete startup until the rebuilds are complete).  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
 
+Previous versions of Riak had an option to repair secondary index entries through a specific anti-entropy recovery process.  This is no longer supported.  If there are detected issues with inconsistency between objects and their index entries, then this should be addressed by the simple approach of deleting the ledger (which contains the index entries) to force a rebuild on restart of the vnode.
+
 ### Repair an individual vnode
 
-Storage backends make use of CRC checks to detect and respond to corruption (by impacting individual objects not the whole store).  This means that a corrupted store should still be started, and still be repairable via anti-entropy.  If a storage backend is corrupted in an unexpected way, and cannot be re-started, the individual vnode can simply be repaired from the other vnodes in the preflist:
+Storage backends make use of CRC checks to detect and respond to corruption (by impacting individual objects not the whole store).  If an object, or a block of keys, becomes corrupted due to an issue with file storage then this should be detected by CRC checks.  The result of a failed CRC check, will be to respond as if the object in question is missing, rather than trigger a failure of the whole vnode.
+
+Where such corruption is limited to a leveled ledger, then [a repair via leveled rebuild](#repair-an-individual-leveled-store) can be used to recover.  However, in other backends, or with a corruption in the leveled journal - it may be preferable to repair a whole vnode rather than wait for other anti-entropy processes to eventually resolve the impact of the corruption (by repairing the object). 
+
+The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  the vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
 
 ```bash
 riak eval "riak_kv_vnode:repair(<partition_number>)."
 ```
 
 The repair node will replace any object which the store does not presently hold.  However, following corruption that validation may not be accurate - the store may incorrectly report presence.  So it is normally better to delete all the data on the vnode following corruption before triggering the repair.  Data will always be repaired eventually, deleting the store first ensures the time to repair is bounded and not dependent on long-running background recovery jobs.
+
+### Repair key ranges
+
+Outside of the circumstances covered in the previous sections, it is not expected that there should be a need for operator intervention in the recovery from failure.  There is though an additional process for handling any unexpected scenarios, to allow for cluster wide repair of key ranges.  There `repair_key_range` operation is targeted at a specific bucket, potentially combined with a key range or last modified date range: and triggers via an AAE fold the read repair process within the cluster for that range.
+
+Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
+
+The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
+
+Repair key ranges is especially powerful for repairing keys across a cluster following a known incident with a given time range, and may prove to be quicker in some circumstances that awaiting for the delta to heal via active anti-entropy.
 
 ## Remote Console
 
@@ -162,7 +181,9 @@ riak eval "riak_client:repair_node()."
 
 ### Using advanced.config
 
-The advanced.config file, found within the `/etc` folder can be used to supply environment variables to Riak which are not currently covered by the riak.conf schema files.  The variables need to represented as an Erlang object, which is a list of mappings between an application and a list of key/value pairs.
+The advanced.config file is found within the `platform_etc_dir` (a location configured within `riak.conf`), which is normally the system `/etc/riak` folder when Riak is built from packages.  The file bypasses the Riak-specific configuration mechanism, and uses the native Erlang method for passing configuration into an Erlang application.  The file may be used for advanced configuration purposes, to supply environment variables to Riak which are not currently covered by the riak.conf schema files.
+
+The variables need to represented as an Erlang object, which is a list of mappings between an application and a list of key/value pairs, as [described in the Erlang documentation](https://www.erlang.org/doc/apps/kernel/config.html).
 
 e.g.
 
@@ -311,7 +332,7 @@ To understand more about the data being held in the cluster, information can be 
 
 ## Volume and performance testing
 
-The volume and performance testing of databases is challenging because of the number of variables relevant to performance tests, which when set incorrectly will result in unrealistic results.  Common problems to consider when building up a database non-functional test suite:
+The volume and performance testing of databases is challenging because of the number of variable factors relevant to performance tests, which when set incorrectly will result in unrealistic results.  Common factors to consider when building up a database non-functional test suite:
 
 - Objects being inserted should be suitably live-like, especially with regards to;
   - the size of the object,
@@ -346,7 +367,7 @@ Before considering backups, it is worth noting that as a distributed database th
 
 The Riak is designed to operate as both resilient clusters and a broader system of resilience gained by clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.  Major changes to the database will often occur in the application not the database, as the application is in control of the data schema, and hence the migration of objects between schema versions.  Self-healing is used to handle repair scenarios - i.e. recovering data from peers within the cluster, and the system is designed to perform predictably during the healing process.
 
-Production users of Riak commonly have very lightweight backup and recovery strategies when compared to traditional database management systems.  However, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
+Production users of Riak commonly have relatively lightweight backup and recovery strategies when compared to traditional database management systems; eventual consistency allows the global recovery of state without the need to focus on recovering state first back to a point in time.  In general, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
 If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use the `repair` process to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
 

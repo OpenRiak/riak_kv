@@ -2,7 +2,7 @@
 
 Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  When choosing between APIs, consider that:
 
-- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5 and 15%;
+- The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5% and 15% in terms of request latency;
   - improving relative HTTP performance is key goal of Riak development for future releases.
 - The HTTP API is generally quicker to develop against due to the ubiquity of HTTP-based tooling, and the ability for developers to switch to command line tools (e.g. curl) or graphical tools.
   - The HTTP API is not strictly standards complaint, in that it uses HTTP request headers to describe the object rather than the request.  It is not possible to describe the API using standard tooling (e.g. OpenAPI).
@@ -35,7 +35,7 @@ The Riak object Identifier is split into three parts:
 - Bucket;
 - Key.
 
-Internally within Riak all three elements are binary identifiers,  With the Object HTTP API these elements are represented within the URL e.g. `/types/BucketType/buckets/Bucket/keys/Key`.  Although it is possible to use non-URL-safe identifiers using the Protocol Buffer API, it is strongly recommended not to do so - as any object using a non-URL safe identifier will not be accessible via the HTTP API, as there is no encoding of non-Alphanumeric identifier parts.
+Internally within Riak all three elements are binary identifiers,  With the Object HTTP API these elements are represented within the URL e.g. `/types/BucketType/buckets/Bucket/keys/Key`.  Although it is possible to use non-URL-safe identifiers using the Protocol Buffer API, it is important not to do so - as any object using a non-URL safe identifier will not be accessible via the HTTP API, as there is no encoding of non-Alphanumeric identifier parts.
 
 The Bucket Type is used to describe the properties of the object.  Properties are associated with a Bucket Type, and all Objects in the Buckets under that type will inherit those properties. The Bucket is a namespace, and a Bucket Type is allowed to have an arbitrary number of Buckets.  A Bucket cannot be moved between Bucket Types, but it the properties of an individual Bucket may be changed to override that of the Bucket Type.  Keys are unique identifiers of an object within a Bucket.
 
@@ -88,7 +88,7 @@ Riak carries metadata about an object, primarily:
 
 ### Index Entries
 
-Index entries consist of multiple index fields, where each index field may have multiple values. The field names must have a suffix of either `_bin` or `_int` - where `_bin` indicates the value will be a binary, and `_int` indicates the value is an integer.  Although the value of an index entry may be a binary type, as it is passed in HTTP headers it is [restricted to visible ASCII text](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2), and field names are required to be handled in a case-insensitive way: so using only lower-case alphanumeric index field names is strongly recommended.
+Index entries consist of multiple index fields, where each index field may have multiple values. The field names must have a suffix of either `_bin` or `_int` - where `_bin` indicates the value will be a binary, and `_int` indicates the value is an integer.  Although the value of an index entry may be a binary type, as it is passed in HTTP headers it is [restricted to visible ASCII text](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2), and field names are required to be handled in a case-insensitive way: so using only lower-case alphanumeric index field names is recommended to avoid future compatibility issues between APIs.
 
 An object will always be presented (in a GET response) with all its index entries, and when updating an object all index entries must be passed - an update requires all entries, not a delta.
 

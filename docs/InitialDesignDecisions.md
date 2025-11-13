@@ -17,12 +17,12 @@ In addition to making a choice, it is also necessary to consider how to transiti
 
 ### Database backend - making a choice
 
-A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and proving access to the data.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
+A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and providing access to the data.  What backends are to Riak, are what storage engines are to MySQL.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
 
 The following choices exist:
 
-- **leveled** (default from Riak 3.4)
-- **bitcask** (default prior to Riak 3.4)
+- **leveled** (recommended for Riak 3.4)
+- **bitcask** (default)
 - eleveldb (deprecated as of Riak 3.4)
 - in-memory (deprecated as of Riak 3.4)
 - **multi-backend** (supported only in limited use cases, specifically as a multi-bitcask backend)
@@ -147,7 +147,9 @@ The target settings are used by the cluster claim algorithm, which is used whene
 
 Using a `target_location_n_val` in conjunction with version 4 of the claim algorithm, may lead to substantial calculation times on cluster changes. To discover what combinations may be supported given a cluster (given a count of nodes and distribution of nodes around locations), then the [offline ring calculator](https://github.com/OpenRiak/ring_calculator) may be used.  The bigger the `target_n_val` and `target_location_n_val` chosen, the more efficient and resilient the eventual cluster setup will be.  Failure to meet targets during cluster claim will lead to visual warnings when cluster change operations are requested - but not to failures.  If visual warnings are returned the ring calculator can be used to determine a supportable combination of settings.
 
-As well as the cluster n_val settings, there is a configurable option to allow for pro-active reconciliation and repair of data within a cluster.  By default, there is no reconciliation within a cluster to ensure that data has been consistently replicated - it is done on a per-item basis when each item is read by the application, and so unread data may have un-repaired issues with resilience.  To enable pro-active reconciliation the `tictacaae_active` configuration should be enabled; it is strongly recommended when using leveled to enable this rather than the legacy `anti_entropy` mechanism.  This will enforce continuous reconciliation between vnodes, and gradual repair of any deltas.
+As well as the cluster n_val settings, there is a configurable option to allow for pro-active reconciliation and repair of data within a cluster.  By default, there is no reconciliation within a cluster to ensure that data has been consistently replicated - it is done on a per-item basis when each item is read by the application, and so unread data may have un-repaired issues with resilience.  To enable pro-active reconciliation the `tictacaae_active` configuration should be set to `active`.  There is an alternative, legacy, anti-entropy mechanism configured using `anti_entropy` option, which should generally be set to `passive`.
+
+The `tictacaa_active` setting will enforce continuous reconciliation between vnodes in the same preflist, and then trigger the gradual repair of any deltas.
 
 Enabling `tictacaae_active` has additional benefits: it is a pre-requisite for inter-cluster reconciliation; and it also allows for the use of aae folds which provide important information to operators about the data within the cluster (e.g. list buckets, find average object size, find objects in sibling state, find very large objects etc).  The overheads of running `tictacaae_active` differ based on backend choice, with the lowest relative impact being with the leveled backend.
 
@@ -197,7 +199,7 @@ Safe deletion of data within eventually consistent databases is surprisingly com
 
 The complexity of deletion with eventual consistency is that it is an underlying requirement in a distributed system to compare potentially differing results between different locations for an object (i.e. between vnodes or between clusters).  If location A has an object, and location B doesn't; there is a need to differ between the situation where location B is correct (due to a deletion not being replicated), or location A is correct (due to an insertion not being replicated) - as these circumstances require opposing actions.  There are secondary consequences if keys are reused following deletion, whereby data could be potentially lost if an old deleted object is resurrected and appears to be more recent.
 
-For deletion there are three modes with which a cluster can be run: `keep`, `immediate` and `time-interval`.  It is strongly recommended to where possible use the `keep` based method, especially where the intention is to run multiple inter-connected clusters.  The `keep` method is a configuration whereby no object is directly deleted, it is replaced instead by a special `tombstone` object that has no value (and will appear as not found when fetched via the API), but retains a reference to its change history (the vector clock) so that it can be correctly assessed for recency when comparing with an undeleted version of the object, or a replacement of the tombstone.
+For deletion there are three modes with which a cluster can be run: `keep`, `immediate` and `time-interval`.  For protection against data loss, the safest mode to use is the `keep` based method, especially where the intention is run multiple inter-connected clusters or where an application may reuse a previous key for a new object.  The `keep` method is a configuration whereby no object is directly deleted, it is replaced instead by a special `tombstone` object that has no value (and will appear as not found when fetched via the API), but retains a reference to its change history (the vector clock) so that it can be correctly assessed for recency when comparing with an undeleted version of the object, or a replacement of the tombstone.
 
 Tombstones have no significant cost in terms of disk space, as they have no value, but they exist as a key; and this represents an overhead for background operations and the memory footprint of the store.  It is good practice therefore to periodically reap old tombstones, where the tombstones have existed for a long-enough period to be sure no lingering problems of stale data exist for that key (e.g. tombstones > 1 month old).  If running multiple clusters and scheduling reap jobs, it is necessary to:
 
@@ -236,4 +238,6 @@ The most important design decision is how to map the data requirements in a proj
 
 ### Mapping data to objects - changing the choice
 
-Riak is designed to be agnostic to the format of the data, the schema belongs to the application and not the database.  It is therefore necessary to plan for schema migration within the application - detecting the schema version for an object, finding objects within a given schema version, updating a schema version in parallel to other application activity.  It is strongly recommended a lazy migration strategy is used whereby the application can roll forward each object to the latest version on GET, without necessarily updating the persisted version.  
+Riak is designed to be agnostic to the format of the data, the schema belongs to the application and not the database.  It is therefore necessary to plan for schema migration within the application - detecting the schema version for an object, finding objects within a given schema version, updating a schema version in parallel to other application activity.
+
+It is recommended to plan for a lazy migration strategy, whereby the application can roll forward each object to the latest version on GET, without necessarily updating the persisted version, and then only updating the schema for the object on update.  With a lazy migration strategy, at the point of change only freshly updated objects will change.  Eventually all objects may need to be changed, and planning for a batch process to touch all objects not updated since the migration point will be required.

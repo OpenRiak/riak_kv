@@ -41,6 +41,13 @@ There are also broader considerations to be made with regards to node choices, a
 - Scheduling of operational actions within Riak cluster should avoid concurrent running of resource-intensive activity e.g. array integrity checks in software RAID systems, solid-state disk trim jobs, or operational security software sweeps.
 - Some cloud providers offer special instance types design for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
 
+For the configuration of nodes, some general pointers:
+
+- File-system performance is important to Riak performance, generally the use of an XFS file system is recommended, and thorough testing is recommended should alternatives be desired.
+- Operating system configuration options that optimise for performance are not recommended where they present a risk of unpredictable performance during relatively rare events - such as for garbage collection of realignment.
+  - It is recommended that `transparent_huge_pages` be disabled due to the risk of latency spikes.
+- Avoid file-system scheduler settings that re-order activity, normally a `noop`/`none` scheduler is preferred, but this advice may be superseded by OS or hardware-specific guidance.
+
 ### Network
 
 The following considerations should be made when selecting the network infrastructure for running Riak:
@@ -74,6 +81,9 @@ Non-functional tests of Riak are performed with requests distributed across the 
 - If enabling proactive health-checking of nodes, sending a `ping` request represents a weak check of availability, and a `status` request may have excessive costs.  It is better to use checks for the availability of sentinel objects instead (store specific objects in the cluster for the purpose of health-checks).
   - There is no mechanism for making objects permanent and immutable, so care must be taken to ensure sentinel objects are not accidentally deleted.
 - When sending requests via a proxy, it is recommended to avoid connection pooling (e.g. use a `connection_close` of equivalent directive).  Pooling and reusing long-lived connections will reduce response times by a small margin; however there will be failure conditions that may take a long time to be detected, especially without frequent proactive health-checks.
+  - Without connection pools it is necessary to ensure there is sufficient connection capacity to handle the required database load, and this will require the reuse of connections in a TIME_WAIT state.
+  - Reuse of connections in a TIME_WAIT state will require the PAWS protection described in [RFC 7323](https://www.rfc-editor.org/rfc/rfc7323).  Note that the TCP timestamps necessary for PAWS, may sometimes be disabled for security reasons, as some vulnerability scanning tools are not aware of the relevance of RFC 7323 to high performance environments.
+  - Note that a common signal of connection pool exhaustion is response times of close to 1s, 3s or 5s; the delays normally associated with a TCP retry.
 - A proxy for a Riak cluster will generally require a significant amount of bandwidth, especially where the cluster is supporting relatively large objects.  Scaling proxy bandwidth may require a step-change in underlying network technology compared to that of the individual nodes.
 - The `503` service unavailable message is used by Riak when sending a timeout.  However, such timeouts may occur because of poorly formed requests (such as overly complex queries).  It is therefore generally recommended that `503` errors should not be considered as server failures within the proxy configuration, so that nodes that coordinate complex queries are not marked as down.
 - If a node is marked as `down` by a proxy, either through failure detection or operator intervention, it should be noted that the node will still play an active role in the cluster unless it has been stopped.  Marking a node as `down` is not sufficient to remove a role from service.
@@ -94,7 +104,7 @@ With modern hardware, a simple configuration such as this can achieve a very hig
 
 The largest Riak users have o(1000) nodes, but these are generally split into different clusters serving different purposes or geographies.  It is rare to have individual clusters that scale beyond 50 nodes.
 
-A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring-size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
+A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
 
 For details of the cluster management commands:
 
@@ -103,6 +113,7 @@ riak admin cluster --help
 ```
 
 The process of joining, is a five stage process:
+
 - staging changes;
 - plan the change;
 - verify the plan;
@@ -121,7 +132,7 @@ As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
 - the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check your proposed configuration is possible before making the change.
-- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring-size can only be managed by replicating to a new cluster.
+- The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
 There are three supported cluster claim algorithm in riak, and the algorithm is an environment variable which can be set in `riak.conf`.

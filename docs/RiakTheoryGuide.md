@@ -1,6 +1,6 @@
 # Riak KV - Theory Guide
 
-this guide is a work in progress, and provided insight into the underlying theories and processes which underpin the function of a riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
+This guide is a work in progress, and provides insight into the underlying theories and processes which underpin the function of a riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
 
 - [The ring and how data is distributed in Riak](#the-ring---the-distribution-of-vnodes)
 - [Handling of requests](#handling-requests)
@@ -10,7 +10,7 @@ this guide is a work in progress, and provided insight into the underlying theor
 
 Riak is a set of smaller databases which are distributed across physical nodes.  The smaller databases are termed vnodes, and the vnode is a set of functions that are controlling a database backend - where the backend (either leveled or bitcask) does the work to modify and fetch serialised data from disk.
 
-The number of vnodes is the ring-size, which must be a factor of 2.  It is desirable for the RingSize  to be much greater than the number of nodes (i.e. actual devices).  The ring-size must be a factor of 2, because each key will be hashed to a given position in the ring, by taking a sha hash of the Bucket and Key, and using an equivalent function to: `Hash band (RingSize - 1)`.  This will give each key a position between `0` and `RingSize - 1`, i.e. zero-indexed position in the vnodes.
+The number of vnodes is the ring size, which must be a factor of 2.  It is desirable for the ring size  to be much greater than the number of nodes (i.e. actual devices).  The ring size must be a factor of 2, because each key will be hashed to a given position in the ring, by taking a sha hash of the Bucket and Key, and using an equivalent function to: `Hash band (RingSize - 1)`.  This will give each key a position between `0` and `RingSize - 1`, i.e. zero-indexed position in the vnodes.
 
 As the object should be stored in multiple places, normally 3 (which is our `n_val`).  An object is then mapped to the Position, and the `(Position + 1) mod RingSize` and `(Position + 2) mod RingSize`.  This position triple is called the preflist, or the set of primary vnodes for the key.
 
@@ -26,16 +26,16 @@ If the distribution in claim is correct, the full divergence of `n_val` resilien
 
 Each primary vnode will store the data from three preflists, and only the data for those preflists - a vnode is never both primary and fallback.  The keys that map to itself (M), and the keys that map to `(M - 1) mod RingSize` and `(M - 2) mod RingSize` are those preflists.  Fallback vnodes will contain keys for just one preflist - so every primary failure requires the starting of three fallbacks.
 
-In reality, the ring appears to be more confusing than it is, as it does not use simple integers `0`, `1`, `2`, `3` etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a RingSize of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named `0`, `1 bsl 152` (i.e. `5708990770823839524233143877797980545530986496`), `2 bsl 152` (i.e. `11417981541647679048466287755595961091061972992`)... etc, but the principle is still unchanged as if they were more simply `0`, `1`, `2`, `3` etc.
+In reality, the ring appears to be more confusing than it is, as it does not use simple integers `0`, `1`, `2`, `3` etc to represent the positions in the ring.  It actually uses the position from taking the hash bits from the high end of the hash not the low end i.e. for a ring size of 256 `Hash band (255 bsl 152)` is used rather than `Hash band 255`.  This causes all the vnodes to be instead named `0`, `1 bsl 152` (i.e. `5708990770823839524233143877797980545530986496`), `2 bsl 152` (i.e. `11417981541647679048466287755595961091061972992`)... etc, but the principle is still unchanged as if they were more simply `0`, `1`, `2`, `3` etc.
 
 ## Eventual Consistency
 
 Riak is designed to be eventually consistent, in that it is:
 
-- Permissive about accepting updates, even when the the current state of the data cannot be guaranteed;
+- Permissive about accepting updates, ensuring data is stored securely on behalf of the application, even when the current state of the data relative to the update cannot be guaranteed;
   - either because some state may be in geographically diverse location where waiting for verification of present state would unacceptably increase latency,
   - or because availability of individual components has limited visibility of the current state.
-- Definitive that all changes will eventually visible;
+- Definitive that all changes will eventually be visible;
   - not just because data is replicated between nodes and between clusters,
   - but also because it is continuously reconciled, with background process that efficiently analyse the overall system for discrepancies and proactively heal those deltas without operator intervention,
   - where that continuous reconciliation occurs both within and between clusters.
@@ -56,7 +56,7 @@ In general, most applications that depend on Riak evolve strategies to restrict 
 
 ### Quorum on Read, Write and Query
 
-All standard GET and PUT options are based on validating quorum within the cluster before returning a response to client.  So although Riak offers a guarantee that data will be eventually consistent, within a single, stable cluster results will generally be immediately consistent.  A read that follows a write will see the most up-to-date value.
+The default GET and PUT options are based on validating quorum within the cluster before returning a response to client.  Quorum meaning that a majority of vnodes within a preflist must have provided acknowledged input to the transaction.  So although Riak offers a guarantee that data will be eventually consistent, within a single, stable cluster results will generally be immediately consistent.  A read that follows a write will see the most up-to-date value, as a read must consult a majority of vnodes, and a write must update a majority of vnodes for that key.
 
 Quorum is the default for the GET of an object, but not the default for a query run across multiple objects.
 
@@ -66,9 +66,17 @@ It is possible to use inverted indexes for queries within Riak, so that queries 
 
 ## Handling requests
 
+There are three core APIs, which have their own process for handling requests:
+
+- [the object API](#object-api);
+- [the query API](#query-api);
+- [the AAE fold API](#aae-fold-api).
+
+Common across the API is the concept of [dotted version vectors](#version-vectors), which is used through Riak to track the change history of an individual object.
+
 ### Object API
 
-When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change - where coordination is just updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining primaries (or fallbacks should their be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
+When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining available primaries (or fallbacks should their be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
 
 Handling a forwarded PUT is less expensive than coordinating a PUT, but not by an order of magnitude.
 
@@ -82,7 +90,7 @@ Within the object API load distribution is first based on consistent hashing (to
 
 ### Query API
 
-When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. approximately `RingSize div n_val`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  the coverage planner which determines the vnodes which are required to supply a complete answer, attempts to balance the load by randomising the answer it produces to avoid excessive load on certain vnodes.
+When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  the coverage planner which determines the vnodes which are required to supply a complete answer, attempts to balance the load by randomising the answer it produces to avoid excessive load on certain vnodes.
 
 Unlike the Object API, the query API will be impacted by the longest wait for any vnode in the coverage plan.  Under extreme stress, query latency will be more volatile in the cluster than individual object latency.
 
@@ -114,6 +122,12 @@ All query types have a hard timeout, when the snapshot will be released regardle
 
 ## Background processes
 
+Riak has a number of background processes:
+
+- The primary background process in Riak, when configured, is [the tictacaae active anti-entropy](#anti-entropy), the continuous reconciliation process used to ensure all vnodes are eventually consistent.
+- There are a [number of queue based](#disk-backed-queues) background processes, through which non-urgent activity can be deferred, to manage the impact of this activity on the performance of externally prompted requests.
+- Maintenance of the distributed knowledge of the cluster state is managed by [background processes within the riak_core application](#riak-core-cluster-management).
+
 ### Anti-Entropy
 
 Riak tracks the current state of the Version Vectors across all the key space to perform anti-entropy, to recover an object to its most up-to-date value if a vnode has a stale or missing entry.  Anti-entropy can be used both within and between clusters, using special cached and mergeable merkle trees; these trees allow entropy to be tracked across large key spaces highly efficiently.  There are also a number of other mechanisms that repair in reaction to the detection of failure (read repair), or in update vnodes following cluster changes (handoff for both repair, cluster change and recovery of fallbacks).
@@ -137,7 +151,7 @@ There exists the possibility that some event might cause the tree cache to becom
 
 When running Anti-entropy in parallel mode, there is also a need for periodic rebuilds of the key store.  These may be expensive events, depending on the size and type of the store.  The rebuild jobs use random factors to try and prevent coordination of rebuilds between stores, and rebuilds are also queued using the node worker pool to prevent excessive concurrency of rebuilds.
 
-Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring-sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using thr `xor` operation.  Coverage queries are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
+Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using thr `xor` operation.  Coverage queries are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
 
 The cost of resolving entropy inter-cluster is higher than with intra-cluster entropy - and so the throttling of that resolution is generally stricter.
 
@@ -145,11 +159,7 @@ The cost of resolving entropy inter-cluster is higher than with intra-cluster en
 
 > TODO - i.e. replication queue, reaper, eraser, reader
 
-### Capabilities
-
-> TODO - perhaps point to riak_core wiki?
-
-### Gossip
+### Riak Core cluster management
 
 > TODO - perhaps point to riak_core wiki?
 

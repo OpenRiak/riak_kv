@@ -117,18 +117,22 @@ When starting a first cluster to experiment, the following configuration items a
 
 There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
 
-Configuration items of notable importance are:
+Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
 - `leveled.compression_method`; should be set to zstd, unless objects are sent to Riak compressed, in which case this should be configured as `none`.
-  - in testing `zstd` is by far the most efficient choice.
+  - in testing `zstd` has been demonstrated to be the most efficient available option (when compared to `native` which uses zlib compression, or `lz4`).
 - `leveled.ledger_compression`; if `compression_method` is set to `none`, then compression should still be enabled here e.g. set to `zstd`.
-  - it is strongly recommended to use some form of compression on the ledger, even when all values are pre-compressed.
+  - the ledger does not store object values, but stores the object keys and metadata in blocks by key order.
+  - it is recommended to use some form of compression on the ledger, even when all values are pre-compressed.  The ledger blocks are generally highly compressible, even when the values are not. 
 - `leveled.compaction_runs_perday`; refer to the [operations guide](/docs/OperationsAndTroubleshootingGuide.md#leveled-compaction-highlow-hour) for more on leveled compaction.
-- `leveled.log_level`; leveled logs are verbose, but useful for monitoring as well as troubleshooting, so careful consideration is required before moving to an alternate log level.
+
+The leveled logs are relatively verbose, when compared to log activity across Riak as a whole.  These logs can be tuned using:
+
+- `leveled.log_level`; the info-level logs are useful for monitoring as well as troubleshooting, so careful consideration is required before moving to an alternate log level.
 
 ### Configuration of Riak - bitcask backend
 
-There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
+There are a number of configurable options within the bitcask backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
 
 Configuration items of notable importance are:
 
@@ -158,7 +162,7 @@ A number of "defaults" for bucket properties are configurable via `riak.conf` e.
 
 Configuring these defaults will impact only non-typed buckets.  So any bucket name used where no type is specified will inherit these defaults, but any typed bucket created will NOT inherit these configured defaults - typed buckets instead have fixed, pre-defined defaults.
 
-Two pre-defined defaults changed with the introduction of typed buckets (the merge strategy aka `dvv_enabled`, and the `allow_mult` configuration), it is strongly recommended to configure your clusters to have the new default properties for non-typed buckets to avoid confusion with non-typed buckets having different defaults i.e. by adding to your `riak.conf`:
+Two pre-defined defaults changed with the introduction of typed buckets (the merge strategy aka `dvv_enabled`, and the `allow_mult` configuration).  Having this delta in behaviour is a common cause of confusion in application developers using Riak, and so it is recommended to configure your clusters to have the same default properties for non-typed buckets as with typed buckets.  This can be achieved by adding to your `riak.conf`:
 
 > buckets.default.merge_strategy = 2
 > buckets.default.allow_mult = true
@@ -186,7 +190,7 @@ The `allow_mult` bucket property has a default value of `true`, for any typed bu
 
 The internal workings of Riak are identical for the two allow_mult settings, with the exception of the case when an unresolvable conflict is discovered in the object change history.  In this case: if `{allow_mult, true}`, all conflicting versions are returned to the client to resolve (on the next GET); if `{allow_mult, false}` only the object with the most recent last_modified_date is returned.
 
-The last_modified_date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match for conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  When using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is strongly recommended.   
+The last_modified_date is a timestamp that depends on the accuracy of the clock on the node processing the update.  Time timestamp is recorded to a microsecond level, although it is only visible to an accuracy of one second when read via the HTTP Object API.  If conflicting versions of the same object have the matching timestamps, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  Due to the potential use of timestamps to make comparisons when using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is recommended.
 
 When using conflict-free replicated data types, `{allow_mult, true}` must always be used.
 
@@ -269,7 +273,7 @@ It is recommended to set `notfound_ok` to `false`, so that a vnode with a missin
 
 The `pr` and `pw` bucket properties default to `0`, and are used to require primary vnodes to be involved in reads and writes.  This may prevent writing to minority partitions, however when `{n_val, 3}` this will probably lead to intermittent failures when only two nodes fail in a cluster.  As clusters grow the probability of two concurrent failures will increase significantly.
 
-It is strongly recommended to consider using `node_confirms`, `sync_on_write` or token-based conditional PUTs to achieve controls in preference to configuring `pr`/`pw` to values greater than 1.
+Although configuring `pr`/`pw` to values greater than 1 may be used to indirectly set stronger data reliability guarantees, or to adjust consistency guarantees - there are better ways of achieving this in Riak, which have fewer negative side effects.  Consider using [`node_confirms`](#property---node_confirms) or [`sync_on_write`](#property---sync_on_write) to manage data reliability.  The use or [token-based conditional PUTs](/docs/ObjectAPI.md#conditional-requests) is the preferred approach, rather than `pr`/`pw` adjustments for tuning consistency.
 
 It is normally best practice to configure either `{pr, 1}` or `{notfound_ok, false}`, rather than rely on defaults.  Otherwise there is a potential issue when at least two nodes have failed and for some objects 2 of the 3 vnodes are unpopulated fallbacks.  In this case, without changing defaults, the two unpopulated fallback vnodes can return `not_found` and the GET request can achieve quorum and return a false not_found to the client.  By configuring either `{pr, 1}` or `{notfound_ok, false}`, when there is only one populated/primary vnode, the GET request must wait for this vnode to respond.
 
@@ -281,4 +285,6 @@ If using the mutli-backend, the bucket property `backend` can be used to map buc
 
 #### Property - General read/write parameters
 
-There are a number of configurable read/write parameters - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  It is strongly recommended to stick to default quorum settings.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+There are a number of configurable read/write parameters - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  In general, read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+
+There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the root cause of these deltas between vnode busyness should be addressed.
