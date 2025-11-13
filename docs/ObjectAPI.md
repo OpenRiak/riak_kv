@@ -53,7 +53,7 @@ Within Riak, object values are generally opaque to Riak.  The schema of the valu
 
 Riak is not optimised for small values, although there is no lower limit to the size of the value.  Typically values stored in Riak are between o(1KB) and o(1MB) in size, but are not constrained by these limits.
 
-Although generally opaque, Riak does have support for data-types - specially formatted values where the handling of conflict is defined and managed within the database.  Although continued use of existing types is still supported, the use of such types for new use cases is not currently recommended, as the concept is intended to be evolved in Riak 4.0.
+To Riak object values are generally opaque, but Riak does have support for data-types - specially formatted values where the handling of conflict is defined and managed within the database.  Although continued use of existing types is still supported, the use of such types for new use cases is not currently recommended, as the concept is intended to be evolved in Riak 4.0.
 
 ## Object Meta Content - the request and response headers
 

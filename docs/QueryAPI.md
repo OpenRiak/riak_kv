@@ -51,7 +51,9 @@ Queries are requested by posting a JSON object which defines the query to the HT
 
 The Query can pass `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client, or to avoid difficulty with escaping special characters embedded within query elements.
 
-In the development of Riak, it is assumed that in most production Riak systems, less than 1% of all transactions are secondary index queries, and this is reflected in the transaction mix of pre-release non-functional testing.  A secondary index query is generally 2 orders of magnitude more expensive in terms of CPU cost across the cluster than a standard GET, to fetch just a single index term.  To complete a query, it is necessary to complete an operation in at least `RingSize div n_val` vnodes, rather than `n_val` vnodes for a GET.  It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
+In the development of Riak, it is assumed that in most production Riak systems, less than 1% of all transactions are secondary index queries, and this is reflected in the transaction mix of pre-release non-functional testing.  A secondary index query will normally be between 1 order and 2 orders of magnitude more expensive in terms of CPU cost, spread across the cluster, than a standard GET.  This is true even when fetching just a single index entry.  To complete a query it is necessary to complete an operation in at least `RingSize div n_val` vnodes, rather than `n_val` vnodes for a GET.
+
+It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
 
 There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for CPU resource to complete the query, there is no constraint on how many CPU cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will generally negotiate fair use between queries and other user requests.
 
@@ -260,7 +262,7 @@ To produce this set of projected attributes to be passed to the filter expressio
 
 ## Example (2) - An Alternative People Search
 
-An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - this then supports a search for people based on both the present information, and also the information at a given date.
+An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - this then supports a search for people based on both the present information, and also the information at a given date in the past.
 
 In this example there will be three indexes:
 
@@ -572,11 +574,13 @@ Testing is currently only undertaken on ascii-based index terms, although filter
 
 ### Performance and Efficiency
 
-Index entries are stored in the leveled ledger (or key store).  The index entries are packed into blocks of 64 entries, and to query a given vnode backend each level of the key store must be checked and compared (to ensure entries at a lower level have not been replaced by those awaiting compaction at a higher level).  The query is distributed across `RingSize div n_val` vnodes in parallel.  So with a ring size of 512, and a `n_val` of 3 there will be 171 parallel queries running across the cluster to complete the query.
+Index entries are stored in the leveled ledger (or key store).  The index entries are packed into blocks of up to 64 entries, and to query a given vnode backend each level of the key store must be checked and compared (to ensure entries at a lower level have not been replaced by those awaiting compaction at a higher level).  The query is distributed across `RingSize div n_val` vnodes in parallel.  So with a ring size of 512, and a `n_val` of 3 there will be 171 parallel queries running across the cluster to complete the query.
 
 Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For a smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
 
-There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring size does not help the long-term scalability of a cluster.  If, for example, 1% of requests are complex 2i queries, there can be a 10-20% CPU utilisation cost for every doubling of the ring size.
+There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  If, for example, 1% of requests are complex 2i queries, there can be a 10-20% CPU utilisation cost for every doubling of the ring size.
+
+However, reducing the ring size does not help the long-term scalability of a cluster, and improve other operations.  Reducing the planned ring size, simply to optimise query performance, would not normally be recommended.
 
 If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally between 10%  and 50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportional to the number of keys in the sort key range (not the number of keys that are deserialised).
 

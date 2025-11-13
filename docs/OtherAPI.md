@@ -34,10 +34,10 @@ Some considerations on the efficiency of AAE Folds:
 
 ### Node worker pools
 
-AAE folds use node worker pools.  These pools are defined to constrain concurrency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler. The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
+AAE folds use node worker pools.  These pools are defined to constrain concurrency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler for that core. The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
 
 - none; do not use node worker pools.
-  - aae_folds and other operational work will be fairly scheduled by the erlang scheduler equally with other activity.
+  - aae_folds and other operational work will be fairly scheduled by the erlang scheduler alongside other activity.
 - single; use a single pool of work for all operational work.
   - This means the whole bandwidth for operational work cna be consumed by any operational work.
   - No segmentation, so one set of jobs may prevent other work from finding available capacity.

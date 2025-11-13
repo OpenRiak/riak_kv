@@ -76,9 +76,9 @@ Common across the API is the concept of [dotted version vectors](#version-vector
 
 ### Object API
 
-When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating of the version history of the object (the version vector), storing the object and prompting replication to other clusters where required. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
+When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating of the version history of the object (the version vector), storing the object and prompting replication to other clusters where required. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure), to be stored at those vnodes if the version history indicates this change is more recent that the currently stored object.
 
-Handling a forwarded PUT is less expensive than coordinating a PUT, but not by an order of magnitude.
+Handling a forwarded PUT is marginally less expensive than coordinating a PUT.
 
 When a request is made to GET an object in Riak, the metadata (containing the vector of the version history) for that object is fetched from each vnode in the preflist.  The first vnode to respond is tasked with fetching the value, and the remaining responses are used to determine whether the fetched value represents the most recent version (and if it is it may be returned to the client as the response).  If a replacement (later) version is available, then that is fetched as the value instead.  If analysis of the version vector and the version of the values, cannot determine which value is up-to-date the full history of unreconciled values is returned as "siblings".
 
@@ -90,7 +90,7 @@ Within the object API load distribution is first based on consistent hashing (to
 
 ### Query API
 
-When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  The coverage planner, which determines the vnodes which are required to supply a complete answer, attempts to balance the load by randomising the answer it produces to avoid excessive load on certain vnodes.
+When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  The coverage planner, which determines the vnodes which are required to supply a complete answer to the query, attempts to balance the load by randomising the plans it produces.
 
 Unlike the Object API, the query API will be impacted by the longest wait for any vnode in the coverage plan.  Under extreme stress, query latency will be more volatile in the cluster than individual object latency.
 
@@ -151,7 +151,7 @@ There exists the possibility that some event might cause the tree cache to becom
 
 When running Anti-entropy in parallel mode, there is also a need for periodic rebuilds of the key store.  These may be expensive events, depending on the size and type of the store.  The rebuild jobs use random factors to try and prevent coordination of rebuilds between stores, and rebuilds are also queued using the node worker pool to prevent excessive concurrency of rebuilds.
 
-Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using the `xor` operation.  Coverage queries are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
+Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using the `xor` operation.  Special coverage queries known as AAE folds, are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
 
 The cost of resolving entropy inter-cluster is higher than with intra-cluster entropy - and so the throttling of that resolution is generally stricter.
 
