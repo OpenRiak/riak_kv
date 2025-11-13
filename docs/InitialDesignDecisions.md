@@ -17,7 +17,7 @@ In addition to making a choice, it is also necessary to consider how to transiti
 
 ### Database backend - making a choice
 
-A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and providing access to the data.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
+A Riak database cluster is a collection of smaller databases (known as vnodes).  Each vnode has a backend which is responsible for storing, and providing access to the data.  What backends are to Riak, are what storage engines are to MySQL.  The choice of backend is important to the performance of the solution, but also critical to the features which are available to use.
 
 The following choices exist:
 

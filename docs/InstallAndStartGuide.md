@@ -120,7 +120,7 @@ There are a number of configurable options within the leveled backend, that can 
 Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
 - `leveled.compression_method`; should be set to zstd, unless objects are sent to Riak compressed, in which case configure as `none`.
-  - in testing `zstd` has been demonstrated to be, the most efficient available option (when compared to `native` which uses zlib compression, or `lz4`).
+  - in testing `zstd` has been demonstrated to be the most efficient available option (when compared to `native` which uses zlib compression, or `lz4`).
 - `leveled.ledger_compression`; if `compression_method` is set to `none`, then compression should still be enabled here e.g. set to `zstd`.
   - the ledger does not store object values, but stores the object keys and metadata in blocks by key order.
   - it is recommended to use some form of compression on the ledger, even when all values are pre-compressed.  The ledger blocks are generally highly compressible, even when the values are not. 
@@ -190,7 +190,7 @@ The `allow_mult` bucket property has a default value of `true`, for any typed bu
 
 The internal workings of Riak are identical for the two allow_mult settings, with the exception of the case when an unresolvable conflict is discovered in the object change history.  In this case: if `{allow_mult, true}`, all conflicting versions are returned to the client to resolve (on the next GET); if `{allow_mult, false}` only the object with the most recent last_modified_date is returned.
 
-The last_modified_date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match of conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  Due to the potential use of timestamps to make comparisons when using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is recommended.
+The last_modified_date is a timestamp that depends on the accuracy of the clock on the node processing the update.  Time timestamp is recorded to a microsecond level, although it is only visible to an accuracy of one second when read via the HTTP Object API.  If conflicting versions of the same object have the matching timestamps, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  Due to the potential use of timestamps to make comparisons when using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is recommended.
 
 When using conflict-free replicated data types, `{allow_mult, true}` must always be used.
 

@@ -1,6 +1,6 @@
 # Riak KV - Theory Guide
 
-This guide is a work in progress, and provided insight into the underlying theories and processes which underpin the function of a riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
+This guide is a work in progress, and provides insight into the underlying theories and processes which underpin the function of a riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
 
 - [The ring and how data is distributed in Riak](#the-ring---the-distribution-of-vnodes)
 - [Handling of requests](#handling-requests)
@@ -32,7 +32,7 @@ In reality, the ring appears to be more confusing than it is, as it does not use
 
 Riak is designed to be eventually consistent, in that it is:
 
-- Permissive about accepting updates, ensuring data is stored securely on behalf of the application, even when the current state of the data relative tot he update cannot be guaranteed;
+- Permissive about accepting updates, ensuring data is stored securely on behalf of the application, even when the current state of the data relative to the update cannot be guaranteed;
   - either because some state may be in geographically diverse location where waiting for verification of present state would unacceptably increase latency,
   - or because availability of individual components has limited visibility of the current state.
 - Definitive that all changes will eventually be visible;
@@ -56,7 +56,7 @@ In general, most applications that depend on Riak evolve strategies to restrict 
 
 ### Quorum on Read, Write and Query
 
-All standard GET and PUT options are be default based on validating quorum within the cluster before returning a response to client.  Quorum meaning that a majority of vnodes within a preflist must have provided acknowledged input to the transaction.  So although Riak offers a guarantee that data will be eventually consistent, within a single, stable cluster results will generally be immediately consistent.  A read that follows a write will see the most up-to-date value, as a read must consult a majority of vnodes, and a write must update a majority of vnodes for that key.
+The default GET and PUT options are based on validating quorum within the cluster before returning a response to client.  Quorum meaning that a majority of vnodes within a preflist must have provided acknowledged input to the transaction.  So although Riak offers a guarantee that data will be eventually consistent, within a single, stable cluster results will generally be immediately consistent.  A read that follows a write will see the most up-to-date value, as a read must consult a majority of vnodes, and a write must update a majority of vnodes for that key.
 
 Quorum is the default for the GET of an object, but not the default for a query run across multiple objects.
 

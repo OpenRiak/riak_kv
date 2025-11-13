@@ -102,7 +102,7 @@ Riak can be configured to operate in one of [three possible delete modes](/docs/
 - Keep;
 - Immediate.
 
-When running replication, it is recommended to change from the default setting, and use to the delete mode of `keep`.  Using an alternative delete mode, is tested, but there will be a significantly increased probability of false-negative reconciliation events, that may consume resource on the cluster.
+When running replication, it is recommended to change from the default setting and use to the delete mode of `keep`.  Using an alternative delete mode is tested, but there will be a significantly increased probability of false-negative reconciliation events that may consume resource on the cluster.
 
 ### Configure real-time replication
 
