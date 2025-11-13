@@ -51,7 +51,7 @@ In general, most applications that depend on Riak evolve strategies to restrict 
 - Separating immutable and mutable data into different objects.
 - Using application conditions to direct updates to clusters to avoid conflicting cross-cluster updates on the same object.
 - Use sharding within the application or Riak's conditional PUT controls to avoid intra-cluster conflicts.
-  - Potentially following a event sourcing CQRS-type pattern, to first secure capture of the data and then retry updates to queryable stores, so that refusing a write downstream will not induce a risk of data-loss.
+  - Potentially adopt an event sourcing CQRS-type pattern, to first secure capture of the data and then retry updates to queryable stores, so that refusing a write downstream will not induce a risk of data-loss.
 - Adding metadata to objects to allow deterministic resolution in either all cases, or just common cases.
 
 ### Quorum on Read, Write and Query
@@ -62,7 +62,7 @@ Quorum is the default for the GET of an object, but not the default for a query 
 
 Queries are distributed to a single "covering" set of primary vnodes, and all index updates within a vnode are transactional to the object change; so Riak is different to some other distributed databases in that queries in a single, stable cluster will generally immediately reflect the latest update.  There is no post-update delay for indices to be updated. However, these index queries are checking only one replica - so if a primary vnode is active but not up-to-date (i.e. due to a recent recovery from failure or corruption), query results are not validated by checking results between replicas.  A query is not equivalent to a GET, it has a higher probability of failing to return up-to-date data.  This can be partially mitigated by relying on operator intervention during recovery (using the  `participate_in_coverage` setting to block a recovering node from participating in queries).
 
-It is possible to use inverted indexes for queries within Riak, so that queries can also use quorum reads.  However, using inverted indexes in Riak 3.4 requires management from within the application not the database.
+It is possible to use inverted indexes for queries within Riak, so that queries can also use quorum reads.  However, using inverted indexes in Riak 3.4 requires management from within the application, not the database.
 
 ## Handling requests
 
@@ -76,27 +76,27 @@ Common across the API is the concept of [dotted version vectors](#version-vector
 
 ### Object API
 
-When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining available primaries (or fallbacks should their be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
+When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
 
 Handling a forwarded PUT is less expensive than coordinating a PUT, but not by an order of magnitude.
 
-When a request is made to GET an object in Riak, the metadata (containing the vector of the version history) of for that object is fetched from each vnode in the preflist.  The first vnode to respond is tasked with fetching the value, and the remaining responses are used to determine whether the fetched value represents the most recent version (and if it is it may be returned to the client as the response).  If a replacement (later) version is available, then that is fetched as the value instead.  If analysis of the version vector and the version of the values, cannot determine which value is up-to-date the full history of unreconciled values is returned as "siblings".
+When a request is made to GET an object in Riak, the metadata (containing the vector of the version history) for that object is fetched from each vnode in the preflist.  The first vnode to respond is tasked with fetching the value, and the remaining responses are used to determine whether the fetched value represents the most recent version (and if it is it may be returned to the client as the response).  If a replacement (later) version is available, then that is fetched as the value instead.  If analysis of the version vector and the version of the values, cannot determine which value is up-to-date the full history of unreconciled values is returned as "siblings".
 
 Handling the value fetch on vnode is an order of magnitude more expensive than simply handling the request for metadata.
 
-Each vnode has a single queue through which all requests are received.  There is no priority on this queue, a request cannot be processed until all previous requests have been handled.  Latency on a very busy Riak cluster is generally governed by the vnode queue sizes.  The GET and PUT process are designed to ensure that request performance are never governed by the pace of the longest queue.  Activity cna proceed with a quorum of answers, and work is dynamically reduced so that vnodes with longer queues do less work until there queues realign with other vnodes.
+Each vnode has a single queue through which all requests are received.  There is no priority on this queue, a request cannot be processed until all previous requests have been handled.  Latency on a very busy Riak cluster is generally governed by the vnode queue sizes.  The GET and PUT process are designed to ensure that request performance is never governed by the pace of the longest queue.  Activity can proceed with a quorum of answers, and work is dynamically reduced so that vnodes with longer queues do less work until those queues realign with other vnodes.
 
 Within the object API load distribution is first based on consistent hashing (to find the preflist of vnodes), but the race to support the value fetch in `GET` operations, and also the selection of the coordinator of a `PUT` operation is designed to try and rebalance load discrepancies within a preflist of vnodes.
 
 ### Query API
 
-When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  the coverage planner which determines the vnodes which are required to supply a complete answer, attempts to balance the load by randomising the answer it produces to avoid excessive load on certain vnodes.
+When a query is made to Riak, the index entries for the objects are spread across all the vnodes, but due to replication between vnodes a complete answer can be obtained by asking approximately a third of the vnodes (i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`).  The query server distributes the query across this set of vnodes, and compiles the pre-filtered results returned to be passed back to the client.  The coverage planner, which determines the vnodes which are required to supply a complete answer, attempts to balance the load by randomising the answer it produces to avoid excessive load on certain vnodes.
 
 Unlike the Object API, the query API will be impacted by the longest wait for any vnode in the coverage plan.  Under extreme stress, query latency will be more volatile in the cluster than individual object latency.
 
 When a query request is processed by a vnode, it is not run directly.  A rapid snapshot is taken of the vnode, which is passed to an async worker to run the actual fold - so that other requests in the vnode are not delayed by the fold.  Each vnode has its own dedicated pool of workers for running these folds on the snapshots.
 
-The Query implementation is highly parallel.  It is quick to return 1,000 index entries from a vnode, but as keys will be fetched from `RingSize div n_val` vnodes concurrently - it can be nearly as quick to return 100,000 index entries from a cluster.  The filtering of index entries (using regular of filter expressions) is also distributed.  Queries will make heavy use of available CPU resource across the cluster - and the fairness of that use is controlled by the Erlang scheduler, not directly by Riak.
+The Query implementation is highly parallel.  It is quick to return 1,000 index entries from a vnode, but as keys will be fetched from `RingSize div n_val` vnodes concurrently - it can be nearly as quick to return 100,000 index entries from a cluster.  The filtering of index entries (using regular expressions or filter expressions) is also distributed.  Queries will make heavy use of available CPU cores across the cluster - and the fairness of that use is controlled by the Erlang scheduler, not directly by Riak.
 
 Result collation, when a list of keys or terms and keys, happens on the coordinating node - the one to which the application sent the query request.  Sorting and serialising large sets of results is not parallelised and will impact just that node.
 
@@ -134,7 +134,7 @@ Riak tracks the current state of the Version Vectors across all the key space to
 
 The active anti-entropy process is designed to be highly efficient, and very quick, when confirming no deltas exist.  The work to discover and repair deltas is relatively expensive - but is throttled in default configuration to avoid overloading the database.  As there are other anti-entropy mechanisms (e.g. quorum reads with read repair); slow repair is preferred to high repair-related resource utilisation.
 
-The anti-entropy trees have 1,024 branches, and each branch has 1,024 leaves.  Each key in the store is mapped by a hash algorithm into a given leaf.  The hash value of that leaf is by taking the a hash of both the Key and version vector for the object - and then performing an `xor` operation on all the objects within that leaf.  The has value for each branch is the hash of each leaf in the branch combined using `xor`.
+The anti-entropy trees have 1,024 branches, and each branch has 1,024 leaves.  Each key in the store is mapped by a hash algorithm into a given leaf.  The hash value of that leaf is calculated by taking the a hash of both the Key and version vector for the object - and then performing an `xor` operation on all the objects within that leaf.  The hash value for each branch is the hash of each leaf in the branch combined using `xor`.
 
 Each vnode has a cached tree for each preflist the vnode supports (with a single `n_val` in the cluster there will be `n_val` preflists in each vnode, and hence `n_val` cached trees). The cached tree represents the state for the whole preflist on the vnode.  When an object is modified, then the object key and the both the previous and current version vector is sent to the `aae_controller` for the vnode; which will update the correct preflist's tree cache, using a double xor operation (in effect one to remove the previous hash, and one to add the new hash).
 
@@ -151,7 +151,7 @@ There exists the possibility that some event might cause the tree cache to becom
 
 When running Anti-entropy in parallel mode, there is also a need for periodic rebuilds of the key store.  These may be expensive events, depending on the size and type of the store.  The rebuild jobs use random factors to try and prevent coordination of rebuilds between stores, and rebuilds are also queued using the node worker pool to prevent excessive concurrency of rebuilds.
 
-Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using thr `xor` operation.  Coverage queries are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
+Inter-cluster reconciliation uses the same principles as intra-cluster reconciliation.  For inter-cluster reconciliation the state of the clusters must be compared, not the state of the vnodes - two clusters may have different ring sizes, so a vnode-to-vnode reconciliation would not necessarily work.  To find the state of the cluster, the trees for all preflists can be merged into one tree using the `xor` operation.  Coverage queries are used to either merge tree components, or to find Keys and Version Vectors across the cluster.
 
 The cost of resolving entropy inter-cluster is higher than with intra-cluster entropy - and so the throttling of that resolution is generally stricter.
 

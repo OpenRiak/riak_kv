@@ -1,6 +1,6 @@
 # Riak KV - Query API
 
-Riak supports a query language for secondary indexes, whereby range queries can be run on indexes, with the index entries containing projected attributes, which cna be filtered using a filter expression language.
+Riak supports a query language for secondary indexes, whereby range queries can be run on indexes, with the index entries containing projected attributes, which can be filtered using a filter expression language.
 
 - [Adding Index Entries to Objects](#secondary-indexes---adding-index-entries-to-an-object)
 - [Overview of querying those index entries](#secondary-indexes---querying-index-entries-overview)
@@ -31,7 +31,7 @@ Index terms can be extended by projecting additional attributes onto the sort ke
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
-There is no pre-defined way of how to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  There are mechanisms available within Riak to extract, filter-on and return projected attributes at query time - and is is a requirement of application design to ensure that projected attributes are appended in a way that is both flexible and efficient (within Riak).
+There is no pre-defined way of how to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  There are mechanisms available within Riak to extract, filter-on and return projected attributes at query time - and it is a requirement of application design to ensure that projected attributes are appended in a way that is both flexible and efficient (within Riak).
 
 ## Secondary Indexes - Querying Index Entries Overview
 
@@ -43,7 +43,7 @@ A query consists of the following components:
 - An evaluation expression (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
 - A filter expression (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (using a filter expression).
 - A regular expression (optional); a potentially less flexible, but commonly more performant alternative to evaluation and filter expressions - where a regular expression match against a term is used to filter the term in or out.
-- A result aggregation method (optional); a mechanism for describing the type of results required, and how should they be sorted (e.g. just matching object keys, terms and keys, keys by specific attribute).
+- A result aggregation method (optional); a mechanism for describing the type of results required, and how they should be sorted (e.g. just matching object keys, terms and keys, keys by specific attribute).
 
 Queries can be sent individually, but it is also possible to send multiple queries along with an aggregation expression to define how the query results will be combined (e.g. using `INTERSECT`, `UNION`, `NOT`) - where Riak will provide a single set of results as a response based on the aggregation expression.
 
@@ -51,7 +51,7 @@ Queries are requested by posting a JSON object which defines the query to the HT
 
 The Query can pass `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client, or to avoid difficulty with escaping special characters embedded within query elements.
 
-In the development of Riak, it is assumed that in most production Riak systems, less than 1% of all transactions are secondary index queries, and this is reflected in the transaction mix of pre-release non-functional testing.  A secondary index query is generally 2 orders of magnitude more expensive in terms of CPU cost across the cluster than a standard GET, to fetch just a single index term.  To complete a query, it is necessary to complete an operation in at least `RingSize div n_val` vnodes, rather then `n_val` vnodes for a GET.  It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
+In the development of Riak, it is assumed that in most production Riak systems, less than 1% of all transactions are secondary index queries, and this is reflected in the transaction mix of pre-release non-functional testing.  A secondary index query is generally 2 orders of magnitude more expensive in terms of CPU cost across the cluster than a standard GET, to fetch just a single index term.  To complete a query, it is necessary to complete an operation in at least `RingSize div n_val` vnodes, rather than `n_val` vnodes for a GET.  It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
 
 There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for CPU resource to complete the query, there is no constraint on how many CPU cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will generally negotiate fair use between queries and other user requests.
 
@@ -119,9 +119,9 @@ e.g. the substitution of `{"qfn", : "SMITH", "qgn", "ANNE"}` will translate the 
 
 The query list in this case contains only one query, and that identifies the index field ("index_name"), and the start and end terms.  Note that as the projected attributes are appended the sort key, although the query is for an exact sort key it must be range query which covers all possible projected attributes (in this case by appending to the end_term a character "~" that has a value higher than the delimiter "|" in the ascii table).
 
-The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and then up to four elements as will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
+The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and then up to four elements will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
 
-So in this term there are two delimiters, one `|` which splits up a fixed number of attributes, and some evaluated with the `delim` function which outputs elements directly into the mpa of attributes.  There is then a second delimiter `.` which splits one of those attributes, the given name attribute into individual given names.  As there is variable number of given names supported, the `split` function is used to output an attribute whose value is a list.  In this case the output name of the attribute `$gn` is the same as the input, so this alters the value in the attribute map rather than creating a new one.
+So in this term there are two delimiters, one `|` which splits up a fixed number of attributes, and this is evaluated with the `delim` function which outputs elements directly into the map of attributes.  There is then a second delimiter `.` which splits one of those attributes, the given name attribute, into individual given names.  As there is a variable number of given names supported, the `split` function is used to output an attribute whose value is a list.  In this case the output name of the attribute `$gn` is the same as the input, so this alters the value in the attribute map rather than creating a new one.
 
 After applying the evaluation expression, the filter_expression will receive a map of projected attributes like this (for this specific index entry):
 
@@ -174,7 +174,7 @@ Building such optimisations into queries can add significant complications to ap
 
 ### Example (1) - Inexact Match
 
-If for the same query it is require to have an inexact match (e.g. Born between between 1965 and 1970, birthday of 1st May, Family name of SM*, Given name of ANNE), the following query could be used:
+If for the same query it is required to have an inexact match (e.g. Born between between 1965 and 1970, birthday of 1st May, Family name of SM*, Given name of ANNE), the following query could be used:
 
 ```json
     {
@@ -207,14 +207,16 @@ The evaluation expression language supports a number of different comparisons on
 There are three possible alternatives should a more complex match be required on such a sub-list:
 
 - Use the alternative `accumulation_option` of `term_with_keys` to the default (which is `keys`), and this will return a list of term/key tuples to filter in the application (rather than just a list of primary keys).  By default the whole term will be returned, but a specific projected attribute and be returned as the term using the `accumulation_term` option as long as the value of that expected attribute is a string.  Filtering in the database is generally quicker than filtering in the application though - due to the increased parallelism of the database filter, and the reduced serialisation and sorting costs. 
-- Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceeding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
+- Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
 - Use a regular expression filter rather than an evaluation and filter expression.  Regular expression filters are PCRE-style regular expressions which will return a result which matches on the regular expression.  These are generally more performant than applying filter and evaluation expressions.
 
 ### Example (1) - Wildcards within terms
 
-Wildcard style queries against individual string attributes are only supported directly using the regular expression filter type.  When using evaluation and filter expressions, then filter expression functions `begins_with`, `ends_with` and `between` are to be used to support internal wildcards within terms.  For example to match on family names of `SM*KOWSKI` where `*` represents one or more characters a filter expression of `begins_with($fn, "SM") AND ends_with($fn, "KOWSKI") NOT ($fn = "SMKOWSKI)` can apply this filter. 
+Wildcard style queries against individual string attributes are only supported directly using the regular expression filter type.
 
-There exists a regex based evaluation function that can be used as a pseudo filter function, where the power of regular expressions is required in a specific point without the need to adopt regular expression as a generic approach.  The regex evaluation function extracts matches, only when the expected number of matches is found - so non-matching regular expressions will result in attributes not existing in the projected attribute map.
+When using evaluation and filter expressions, the filter expression functions `begins_with`, `ends_with` and `between` are to be used to support internal wildcards within terms.  For example to match on family names of `SM*KOWSKI` where `*` represents one or more characters - a filter expression of `begins_with($fn, "SM") AND ends_with($fn, "KOWSKI") NOT ($fn = "SMKOWSKI)` would be required.
+
+There exists a regex based evaluation function that can be used as a pseudo filter function, where the power of regular expressions is required in a specific part of the query.  The regex evaluation function extracts matches, but only when the expected number of matches is found - so non-matching regular expressions will result in attributes not existing in the projected attribute map.
 
 This query should filter family names based on a "fn_regex" provided in the substitutions. 
 
@@ -238,7 +240,7 @@ This query should filter family names based on a "fn_regex" provided in the subs
 
 It is possible to reduce the pre-defined structure in an index entry by using KV pairs in the index entry.
 
-For example, the above index entry could be stored in a Key=Value form, and note that we here differentiate for extra clarity between the primary given name (pgn), and the secondary given names:
+For example, the above index entry could be stored in a Key=Value form, and note that we here differentiate for extra clarity between the primary given name (`pgn`), and the secondary given names (`sgn`):
 
 `peoplefinder_bin: 19650501|fn=SMITH#pgn=ANNE#sgn=MARIE.ANNE-MARIE#pc=LS9_0TW`
 
@@ -258,7 +260,7 @@ To produce this set of projected attributes to be passed to the filter expressio
 
 ## Example (2) - An Alternative People Search
 
-An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - allowing to search for people based on both present information, and also information at a given date.
+An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - this then supports a search for people based on both the present information, and also the information at a given date.
 
 In this example there will be three indexes:
 
@@ -292,7 +294,7 @@ This strategy requires more index entries, but potentially simpler and more powe
     }
 ```
 
-The query definition above will search for every SMITH born in the first 6 months of 1964.  Note that the delimiter chosen ("|") is after all the standard text characters in the ASCII table (char 124), so that this will match on only the complete name SMITH, where as `"start_term" : "SMITH"` would also match on any surname starting SMITH.
+The query definition above will search for every SMITH born in the first 6 months of 1964.  Note that the delimiter chosen ("|") is after all the standard text characters in the ASCII table (char 124), so that this will match on only the complete name SMITH, whereas `"start_term" : "SMITH"` would also match on any surname starting SMITH.
 
 ```json
     {
@@ -350,7 +352,7 @@ When using an `aggregation_expression` it is not possible to also use an `accumu
 
 As well as returning keys, and term/key tuples, when using individual queries it is also possible to return counts, and counts by term to assist in reporting.
 
-For this example we assume all the people exist in a heirarchy.  Each person is assigned to a GP Provider, and every GP Provider belongs to a Strategic Health Authority (and these are represented by fixed-width codes).  People have a Date of Birth (from which we can calculate age), but also a series of characteristics which can be expressed in single character flags (e.g. administrative gender code, smoking status, death status, alcohol dependency etc).  This information is then required to do organisation, and population level reporting.
+For this example we assume all the people exist in a hierarchy.  Each person is assigned to a GP Provider, and every GP Provider belongs to a Strategic Health Authority (and these are represented by fixed-width codes).  People have a Date of Birth (from which we can calculate age), but also a series of characteristics which can be expressed in single character flags (e.g. administrative gender code, smoking status, death status, alcohol dependency etc).  This information is then required to do organisation, and population level reporting.
 
 For this a single index is used:
  - `healthreport_bin : <SHA><GP><DOB><STATUS_FLAGS>`
@@ -398,7 +400,7 @@ If the same results are required, but this time a count by age at today's date (
 
 ## Performance Expectation
 
-> TODO - stats on relative performance using the different appraoches to querying
+> TODO - stats on relative performance using the different approaches to querying
 
 > TODO - Note on the lack of optimisation for aggregation expressions 
 
@@ -471,7 +473,7 @@ The functions that can be used in a pipeline are:
 
 delim ( IN_ID identifier , DELIM string , OUT_ID_LIST identifier_list )
 
-- take a value associated with IN_ID and split it using the delimeter DELIM.  The parts are matched to the identifiers in OUT_ID_LIST.  If there are only N values following the application of the delimiter where N is less than the length of the OUT_ID_LIST, then only then only the first N identifiers in OUT_ID_LIST are assigned a value.  Any overhanging elements (i.e. where N is greater than the length of the OUT_ID_LIST) are ignored.
+- take a value associated with IN_ID and split it using the delimiter DELIM.  The parts are matched to the identifiers in OUT_ID_LIST.  If there are only N values following the application of the delimiter where N is less than the length of the OUT_ID_LIST, then only then only the first N identifiers in OUT_ID_LIST are assigned a value.  Any overhanging elements (i.e. where N is greater than the length of the OUT_ID_LIST) are ignored.
 
 join ( IN_ID_LIST identifier_list , DELIM string , OUT_ID identifier )
 
@@ -481,7 +483,7 @@ join ( IN_ID_LIST identifier_list , DELIM string , OUT_ID identifier )
 
 split ( IN_ID identifier , DELIM string , OUT_ID identifier )
 
-- works as with the delim function, but the output (a list of strings) is assigned to a single OUT_ID identifier.
+- works as with the `delim` function, but the output (a list of strings) is assigned to a single OUT_ID identifier.
 
 slice ( IN_ID identifier , LENGTH pos_integer , OUT_ID identifier )
 
@@ -497,11 +499,11 @@ kvsplit ( IN_ID identifier , PAIR_DELIM string , KV_DELIM string )
 
 regex ( IN_ID identifier , REGEX string , OUT_ID_LIST identifier_list )
 
-- use a regular expression to extract new projected attributes as Key/Value pairs, where the REGEX must match the value of IN_ID and extract named capture groups that align with the attribute keys in the OUT_ID_LIST.  All expected captures must exist in the input value for the projected attributes to be updated, otherwise the function passed on the map of projected attributes on unchanged.
+- use a regular expression to extract new projected attributes as Key/Value pairs, where the REGEX must match the value of IN_ID and extract named capture groups that align with the attribute keys in the OUT_ID_LIST.  All expected captures must exist in the input value for the projected attributes to be updated, otherwise the function will pass on the map of projected attributes unchanged.
 
 map ( IN_ID identifier , COMP comparator , MAP_LIST mappings_list , DEFAULT operand , OUT_ID identifier )
 
-- to classify the value of an projected attribute the map function is used.  The MAP_LIST is a list of pairs, where the first element of the pair is a value to compare with, and the second element is a classification for a match against this  pair (the output value).  The comparison between the value and the first element is done using the comparator COMP.  If no element of the MAP_LIST returns a match against the input value, then the DEFAULT classification is used as the output value.  The output value is added to the projected attributes using the OUT_ID identifier as the key.
+- to classify the value of a projected attribute the map function is used.  The MAP_LIST is a list of pairs, where the first element of the pair is a value to compare with, and the second element is a classification for a match against this  pair (the output value).  The comparison between the value and the first element is done using the comparator COMP.  If no element of the MAP_LIST returns a match against the input value, then the DEFAULT classification is used as the output value.  The output value is added to the projected attributes using the OUT_ID identifier as the key.
 - this is generally used with term-based aggregators in queries (e.g. to create a combined term to count by).
 
 to_integer ( IN_ID identifier , OUT_ID identifier )
@@ -527,7 +529,7 @@ The final map of projected attributes will be passed as the input to the Filter 
 
 The Filter expression takes the projected attributes as an input, and the output is either `true` (the term is a match) or `false`.
 
-In the definition an `operand` can either be a `key` of a projected attributed (where the value of that attribute will be used when applying the expression), or a fixed value provided within the expression.
+In the definition an `operand` can either be a `key` of a projected attribute (where the value of that attribute will be used when applying the expression), or a fixed value provided within the expression.
 
 ```
 condition-expression ::=
@@ -562,7 +564,7 @@ function ::=
 
 ### Siblings
 
-Riak supports the `allow_mult = true` state, whereby the history of changes to an object is retained when concurrent updates are made to the same object.  In this mode, any unresolved history are considered to be "sibling" versions of the same object.  In the sibling state, all index entries on all versions of the object are active from a query perspective.
+Riak supports the `allow_mult = true` state, whereby the history of changes to an object is retained when concurrent updates are made to the same object.  In the sibling state, all index entries on all versions of the object are active from a query perspective.
 
 ### Unicode support
 
@@ -570,13 +572,13 @@ Testing is currently only undertaken on ascii-based index terms, although filter
 
 ### Performance and Efficiency
 
-Index entries are stored in the leveled ledger (or key store).  The index entries are packed into blocks of 64 entries, and to query a given vnode backend each leveled of the key store must be checked and compared (to ensure entries at a lower level have not been replaced by those awaiting compaction at a higher level).  The query is distributed across `RingSize div n_val` vnodes in parallel.  So with a ring size of 512, and a `n_val` of 3 there will be 171 parallel queries running across the cluster to complete the query.
+Index entries are stored in the leveled ledger (or key store).  The index entries are packed into blocks of 64 entries, and to query a given vnode backend each level of the key store must be checked and compared (to ensure entries at a lower level have not been replaced by those awaiting compaction at a higher level).  The query is distributed across `RingSize div n_val` vnodes in parallel.  So with a ring size of 512, and a `n_val` of 3 there will be 171 parallel queries running across the cluster to complete the query.
 
-Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
+Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For a smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
 
-There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size, will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring size does not help the long-term scalability of a cluster.  With 1% of work being complex 2i queries, there can be a 10-20% capacity constraint for every doubling of the ring size.
+There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring size does not help the long-term scalability of a cluster.  With 1% of work being complex 2i queries, there can be a 10-20% capacity constraint for every doubling of the ring size.
 
-If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally about 20-50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportionate to the number of keys in the sort key range (not the number of keys that are deserialised).
+If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally about 20-50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportional to the number of keys in the sort key range (not the number of keys that are deserialised).
 
 Aggregation of queries is performed at a vnode-level, before results are returned to be aggregated for the client - so even when cross-cluster result sets are large the aggregation operations are sub-divided into relatively small set operations.
 

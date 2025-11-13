@@ -11,7 +11,7 @@ This guide is split into two parts:
 
 A Riak cluster is built up of multiple individual compute nodes.  Those nodes are expected to be distinct servers, or cloud instances.
 
-> Riak is designed to scale-out system across _inexpensive_ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention required at inconvenient hours.
+> Riak is designed as a scale-out system across _inexpensive_ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention required at inconvenient hours.
 
 It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
 
@@ -19,32 +19,32 @@ When making server or instance choices, the following guidance should be conside
 
 - There are production use cases of Riak with rigid zero-data-loss requirements that use ephemeral storage components due to the reliability and repair capability within a Riak cluster, and between replicating clusters in diverse locations.
   - It is best to cost-optimise for speed and capacity with node storage, rather than for resilience.
-- All the memory of the system will be used to improve performance, any memory not be taken by Riak should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
+- All the memory of the system will be used to improve performance, any memory not used by Riak should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
 - The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised to make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.
   - There are production deployments of Riak on both ARM and Intel-based CPUs.
   - The Erlang VM which has JIT optimisations for both architectures.
   - Extremely high core counts per node (e.g. > 40) may require specific Erlang VM tuning to fully realise the benefits of additional capacity.
 - The Riak system is tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwidth or disk contention.  Running Riak close to these limits for extended periods should not lead to volatile outcomes.
-- The Riak system will fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits.  There is no management of activity to prevent breaches when close to these limits.  It is is critical to monitor against these limits and have additional nodes available to scale out the cluster should breaching space limits become a threat.
+- The Riak system will fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits.  There is no management of activity to prevent breaches when close to these limits.  It is critical to monitor against these limits and have additional nodes available to scale out the cluster should breaching space limits become a threat.
   - Riak will open a large volume of file descriptors, to it is important to ensure that the Riak process has a sufficiently large ulimit set.  Generally this will need to be at least 256K, but a ulimit of over 1M may be required on large-scale nodes.
 
 There are also broader considerations to be made with regards to node choices, and the overall organisation of nodes across a cluster, and when planning to operate a cluster:
 
 - The Riak system will spread load evenly through the cluster, data is sharded across individual vnodes by consistent hashing, and vnodes are allocated to nodes so that each node will have either X or X + 1 vnodes.  All nodes should therefore have, wherever possible, equal capacity.
-  - Riak has internal mitigation to the problem of individual nodes that are temporarily running slower than other nodes in the cluster; the job of fetching data blocks are balanced so that the work is generally performed on the fastest nodes (i.e those with available resource).  Also client responses are returned at the speed of a quorum of nodes, without waiting for the slowest response.  However, PUT and Query workloads will eventually be slowed to the pace of the slowest node.
+  - Riak has internal mitigation to the problem of individual nodes that are temporarily running slower than other nodes in the cluster; the job of fetching data blocks is balanced so that the work is generally performed on the fastest nodes (i.e those with available resources).  Also client responses are returned at the speed of a quorum of nodes, without waiting for the slowest response.  However, PUT and Query workloads will eventually be slowed to the pace of the slowest node.
   - Where individual nodes are undergoing long-running system tasks that may cause local slowness (e.g. RAID rebuild activity), it may be better for the nodes to be stopped (and therefore out of the active cluster), rather than acting as a slow node within the cluster.
 - The design of Riak handles failure of individual nodes, however if the design of the underlying infrastructure can cause multiple nodes to fail concurrently (e.g. in a cloud environment where multiple nodes may be provisioned on the same underlying hardware), then resilience should be provided by running multiple clusters or by identifying in the Riak cluster groups of nodes with shared failure modes as "locations".  A location may be aligned in cloud environments with placement-groups or availability zones, with racks that have common network components in physical environments, or with maintenance groups where efficient operations require multiple-nodes to be updated concurrently.
   - The Riak cluster claim algorithm will allocate data so replicas are split across locations, so that sufficient copies of the data are always available.
 - Riak performance testing of high-intensity database operations has demonstrated situations where virtualised cloud instances have performed up to 2.7 times worse than equivalent physical hardware.  Where possible abstraction between Riak the Operating System and the underlying hardware should be avoided.
-  - Riak is designed to deployed as a single package where, other than monitoring and security software, Riak is the only package present on the node.
+  - Riak is designed to be deployed as a single package where, other than monitoring and security software, Riak is the only package present on the node.
   - It is recommended to automate operational activity on Riak nodes through scripting tools (e.g. Ansible) rather than abstraction layers (e.g. Docker).
-- Scheduling of operational actions within Riak cluster should avoid concurrent running of resource-intensive activity e.g. array integrity checks in software RAID systems, solid-state disk trim jobs, or operational security software sweeps.
+- Scheduling of operational actions within a Riak cluster should avoid concurrent running of resource-intensive activity e.g. array integrity checks in software RAID systems, solid-state disk trim jobs, or operational security software sweeps.
 - Some cloud providers offer special instance types design for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
 
 For the configuration of nodes, some general pointers:
 
 - File-system performance is important to Riak performance, generally the use of an XFS file system is recommended, and thorough testing is recommended should alternatives be desired.
-- Operating system configuration options that optimise for performance are not recommended where they present a risk of unpredictable performance during relatively rare events - such as for garbage collection of realignment.
+- Operating system configuration options that optimise for performance are not recommended where they present a risk of unpredictable performance during relatively rare events - such as for garbage collection or realignment.
   - It is recommended that `transparent_huge_pages` be disabled due to the risk of latency spikes.
 - Avoid file-system scheduler settings that re-order activity, normally a `noop`/`none` scheduler is preferred, but this advice may be superseded by OS or hardware-specific guidance.
 
@@ -59,11 +59,11 @@ The following considerations should be made when selecting the network infrastru
 - Riak is partition tolerant, in that during partition events data can still be stored securely across multiple nodes, and values can be merged (potentially forming siblings where conflicts cannot be resolved) when partitions heal.  Read events (both Object and Query API calls) may still not succeed correctly during partitions, particularly on minority partitions.  So although there exists aspects of partition tolerance, it is still important to design networks running Riak clusters so that partition events are rare.
 - It is assumed in the design and development of Riak that network round-trip times within a cluster are o(1) ms or better.  At higher latencies network delays will tend to become the most significant proportion of the overall user response delay.
   - There is no assumption of minimal network latency between clusters, so resilience across geographically diverse locations with long round-trip times should be managed by running multiple clusters.
-- For every GET from Riak, the value will normally be fetched once within the cluster (the majority of the time from within the same location) generating a intra-cluster network bandwidth requirement.  For every PUT the value will normally be sent three times within the cluster.  Between replicating clusters GETs do not create network bandwidth needs, but each PUT requires a single transfer of the value.
-  - These facts may change depending on choice of both n_val and storage backend.
+- For every GET from Riak, the value will normally be fetched once within the cluster (the majority of the time from within the same location) generating an intra-cluster network bandwidth requirement.  For every PUT the value will normally be sent three times within the cluster.  Between replicating clusters GETs do not create network bandwidth needs, but each PUT requires a single transfer of the value.
+  - These facts may change depending on the choice of both n_val and storage backend.
 - The Riak API uses either protocol buffers (PB) or HTTP, and both interfaces can be converted to require TLS encryption - by configuring an additional listener for HTTPS and by negotiation on the in-clear listener with PB.
   - To ensure full protection from network eavesdropping, TLS enablement must also be enforced in the [Erlang Distribution Protocol](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html).  TLS enablement must also be separately configured in the `riak.conf` file to ensure protection of handoff communication, and of replicated traffic.
-  - Access controls with TLS enablement can be made via certificate or username/password identification with the PB API, but is only tested with username/password authentication via the HTTPS API.
+  - Access controls with TLS enablement can be made via certificate or username/password identification with the PB API, but it is only tested with username/password authentication via the HTTPS API.
 - Riak has the option to enforce compression in the storage backend, but this will not lead to generic enablement of object compression for intra-cluster communication - the network must support the bandwidth necessary to transmit uncompressed objects within the cluster, and back to clients.
   - Compression of objects replicating between clusters may be enabled via configuration.
 
@@ -74,13 +74,13 @@ Non-functional tests of Riak are performed with requests distributed across the 
 - For full use of proxy functionality, use of the HTTP API is preferable.  Though some load-balancers will support load-balancing of general TCP connections, which can in-turn allow for load-balancing of PB connections, such solutions will likely constrain proxy functionality:
   - the proxy may not be able to log the details of individual requests or provide WAF-like features (no access bucket/query to information in URL or request methods);
   - the proxy many not be able to use proactive health-checks (e.g. in scripting non-HTTP server validation checks);
-  - the proxy may not be able to use use reactive health-checks (as errors cannot be detected via HTTP response codes).
+  - the proxy may not be able to use reactive health-checks (as errors cannot be detected via HTTP response codes).
 - When making extensive use of secondary indexes on objects, those indexes are stored as HTTP request/response headers.  Some load-balancing proxies (and HTTP client software) may apply limits to the size of both individual HTTP headers and the overall size of all HTTP headers - and without re-configuration those sizes could be breached with either large or numerous secondary index entries.
   - A proxy may also restrict the use of underscores, so it may be necessary to specifically enable `underscores_in_headers` to prevent requests including 2i headers with underscores from being blocked.
 - Some legacy Riak clients will attempt to implement their own health-checking and load-balancing across configured destinations.  This should be disabled when using a proxy, as it may lead to unexpected failure propagation e.g. a client determining a proxy has failed because it load-balanced a request to a node that has failed.
 - If enabling proactive health-checking of nodes, sending a `ping` request represents a weak check of availability, and a `status` request may have excessive costs.  It is better to use checks for the availability of sentinel objects instead (store specific objects in the cluster for the purpose of health-checks).
   - There is no mechanism for making objects permanent and immutable, so care must be taken to ensure sentinel objects are not accidentally deleted.
-- When sending requests via a proxy, it is recommended to avoid connection pooling (e.g. use a `connection_close` of equivalent directive).  Pooling and reusing long-lived connections will reduce response times by a small margin; however there will be failure conditions that may take a long time to be detected, especially without frequent proactive health-checks.
+- When sending requests via a proxy, it is recommended to avoid connection pooling (e.g. use a `connection_close` or equivalent directive).  Pooling and reusing long-lived connections will reduce response times by a small margin; however there will be failure conditions that may take a long time to be detected, especially without frequent proactive health-checks.
   - Without connection pools it is necessary to ensure there is sufficient connection capacity to handle the required database load, and this will require the reuse of connections in a TIME_WAIT state.
   - Reuse of connections in a TIME_WAIT state will require the PAWS protection described in [RFC 7323](https://www.rfc-editor.org/rfc/rfc7323).  Note that the TCP timestamps necessary for PAWS, may sometimes be disabled for security reasons, as some vulnerability scanning tools are not aware of the relevance of RFC 7323 to high performance environments.
   - Note that a common signal of connection pool exhaustion is response times of close to 1s, 3s or 5s; the delays normally associated with a TCP retry.
@@ -131,11 +131,11 @@ The second stage is a `plan`.  In the plan stage, a claimant node, which will ha
 As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
-- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check your proposed configuration is possible before making the change.
+- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check the proposed configuration is possible before making the change.
 - The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
-There are three supported cluster claim algorithm in riak, and the algorithm is an environment variable which can be set in `riak.conf`.
+There are three supported cluster claim algorithms in Riak, and the algorithm is an environment variable which can be set in `riak.conf`.
 
 #### Join process - `choose_claim_v2`
 
@@ -147,9 +147,9 @@ The v3 claim algorithm which tries to find an optimal solution through a series 
 
 #### Join process - `choose_claim_v4`
 
-The v4 algorithm a brute-force algorithm which will attempt to solve a sufficient answer, potentially by exhausting all possibilities.  The v4 algorithm is the only effective algorithm for handling locations.  Because it seeks a sufficient answer, rather than an optimal one, the offline `ring_calculator` can be used to determine how far the target inputs can be pushed and still have a viable solution, before running the plan.
+The v4 algorithm is a brute-force algorithm which will attempt to solve a sufficient answer, potentially by exhausting all possibilities.  The v4 algorithm is the only effective algorithm for handling locations.  Because it seeks a sufficient answer, rather than an optimal one, the offline `ring_calculator` can be used to determine how far the target inputs can be pushed and still have a viable solution, before running the plan.
 
-Due to the length of time the brute-force algorithm may take, the `plan` command may timeout - however work in progress is cached, so pausing and re-running the plan should return a timely answer
+Due to the length of time the brute-force algorithm may take, the `plan` command may timeout - however work in progress is cached, so re-running the after a short wait plan should return a plan in a timely answer
 
 ### Join process - verify the plan
 
@@ -183,4 +183,4 @@ In these circumstances, if a node is under disk space pressure, inbound handoffs
 
 Cluster changes to sharing a cluster require the staging of `leave` requests.  These plans may result in two-phase transition plan - where in the first phase the leaving node simply offloads its vnodes to safe nodes (given the targets), and in the second phase the remaining nodes shuffle vnodes to ensure a better balance of load.
 
-If the first phase creates an unsafe situation, where a remaining node has higher proportion of the disk space than it can support, an alternative plan can be made by using the `full_rebalance_on_leave` configuration option.  With this option, a single-phase transition is planned based on an ideal plan for the new layout, and a broader shuffle will occur bypassing the first phase (although this will lead to more handoff events).  This should always be enabled when using `choose_claim_v4`.
+If the first phase creates an unsafe situation, where a remaining node has a higher proportion of the disk space than it can support, an alternative plan can be made by using the `full_rebalance_on_leave` configuration option.  With this option, a single-phase transition is planned based on an ideal plan for the new layout, and a broader shuffle will occur bypassing the first phase (although this will lead to more handoff events).  This should always be enabled when using `choose_claim_v4`.

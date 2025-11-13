@@ -27,23 +27,23 @@ Some considerations on the efficiency of AAE Folds:
 
 - Using a restricted key_range is the most reliable method of improving the speed and efficiency of aae folds;
 - A modified date range will reduce the volume of data to be processed and returned, but significant gains are only made when setting a "high" low modified date.  Old content below the low modified data can be skipped over without reading, but new content since the high modified date must still be read and deserialised.
-- The segment_filter can skip the reading and deserialising of slots (a slot carried 128 keys) by checking in the slot header, with approximately 99.6% of blocks skipped when checking for a single segment.
+- The segment_filter can skip the reading and deserialising of slots (each slot contains 128 keys) by checking in the slot header, with approximately 99.6% of blocks skipped when checking for a single segment.
 - The segment_filter can be used for sampling, or approximations.  With the standard tree size, there are a `1024 * 1024` segments, so choosing a random slice of 64 segments in that integer space will give results from `1 / (8 * 1024)`th of the key-space.
-  - Use a contiguous slice is more efficient than selecting random slices, as when checking Segments only the first 15 of the 20 bits (assuming standard tree size) in a segment ID are used.
-  - When folds are used with riak anti-entropy mechanisms, the `max_results` settings are used to control the size of the list of segment IDs passed into a fold.
+  - Use of a contiguous slice is more efficient than selecting random slices, as when checking Segments only the first 15 of the 20 bits (assuming standard tree size) in a segment ID are used.
+  - When folds are used with Riak anti-entropy mechanisms, the `max_results` settings are used to control the size of the list of segment IDs passed into a fold.
 
 ### Node worker pools
 
-AAE folds use node worker pools.  These pools are defined to constrained currency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler. The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
+AAE folds use node worker pools.  These pools are defined to constrain concurrency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler. The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
 
 - none; do not use node worker pools.
-  - aae_folds and other operational work will be fair scheduled by the erlang scheduler equally with other activity.
+  - aae_folds and other operational work will be fairly scheduled by the erlang scheduler equally with other activity.
 - single; use a single pool of work for all operational work.
   - This means the whole bandwidth for operational work cna be consumed by any operational work.
   - No segmentation, so one set of jobs may prevent other work from finding available capacity.
-- dscp; divides pools up into categories based on the network pooing strategy of differentiated services.
+- dscp; divides pools up into categories based on the network pooling strategy of differentiated services.
   - There is no Expedited Forwarding queue, this is assumed to be the `vnode_worker_pool`.
-  - There are four Assured Forwarding queues: AF1 (cached tree rebuilds, hot backups); AF2 (legacy key-listing); AF3 (AAE folds), AF4 (AAE folds).
+  - There are four Assured Forwarding queues: AF1 (cached tree rebuilds, hot backups); AF2 (legacy key-listing); AF3 (AAE folds); AF4 (AAE folds).
   - there is a single Best Endeavours queue, this is used for the rebuild of parallel aae store rebuilds.
 
 When queueing items via a fold (e.g. `repl_keys_range`, `repair_keys_range`, `find_tombs` and `reap_tombs`), if a smaller node worker pool is used, then items will be added to the queue in batches by vnode.  When items are dequeued, this may result in phases of concentrated activity on particular preflists.
@@ -72,19 +72,19 @@ For a given `n_val` and list of `branch_id`'s (normally deltas discovered after 
 
 #### fetch_clocks_nval
 
-For a given set of segment IDs return all the keys and clocks within those segments, potential constrained by a modified date range.
+For a given set of segment IDs return all the keys and clocks within those segments, potentially constrained by a modified date range.
 
 - If a full-sync manager process detects a false delta, it will temporarily set enable the `aae_fetchclocks_repair` option, and this will cause this query to repair the cached tree for the given segment IDs, as well as collect the results to return.
   - It is possible to force this repair option via configuration or environment variable change.
 - Uses the AF3 queue when running node worker pools in DSCP mode.
-  - Bypasses the pool when repair is required.
+  - These queries will bypass the pool, running immediately, when repair is required.
 
 #### merge_tree_range
 
 Outputs a full merkle tree representing the overall cluster state for a given bucket.
 
 - Relatively slow compared to `_nval` equivalent queries, as no cached trees can be used, requires a fold over the actual keys to calculate the tree.
-- Setting filters generally recommended to speed upn the query (unless buckets are small).
+- Setting filters is recommended to speed up the query (unless buckets are small).
 
 #### fetch_clocks_range
 
@@ -145,14 +145,14 @@ Returns a summary of stats for objects within the bucket, potentially limited by
 
 - Returns an output like `[{total_count, 1000}, {total_size, 1000000},  {sizes, [{1, 800}, {2, 180}, {3, 20}]},  {siblings, [{1, 1000}]}]`.
   - The sizes are the count of objects by order of magnitude in bytes (e.g. 1 is 10 -> 100 bytes, 2 is 100 -> 1000 bytes etc).
-  - the siblings are the count of objects with that count of siblings.
+  - The siblings are the count of objects with that count of siblings.
 - Uses the AF4 queue when running node worker pools in DSCP mode.
 
 #### list_buckets
 
 Returns a list of buckets, assuming the given n_val.
 
-- The list may be incomplete is the passed n_val is greater than the configured n_val of some buckets.
+- The list may be incomplete if the passed n_val is greater than the configured n_val of some buckets.
 - will only return buckets that contain objects.
 - Uses a skipping cursor in both `native` and the `leveled_ko` type of parallel store, so that the fold is much more efficient than folding over all keys.
 - Uses the AF4 queue when running node worker pools in DSCP mode.

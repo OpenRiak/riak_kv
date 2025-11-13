@@ -15,7 +15,7 @@ The replication solution works with these caveats:
 - no support for hierarchical replication (i.e. such as the spanning-tree protected replication available in the legacy `riak_repl` application);
 - relatively little production testing when using parallel mode AAE (i.e. when not exclusively using the leveled backend).
 
-Before starting, it is helpful to understand the underling concepts:
+Before starting, it is helpful to understand the underlying concepts:
 
 - [Queues and Workers](#concepts---queues-and-workers);
 - [Replication references](#concepts---replication-references);
@@ -38,8 +38,8 @@ The first building block for NextGen replication are replication queues, which e
 - Each replication event will be placed on all queues relevant to that event, but only on one node within the cluster.
 - Each queue is prioritised so that real-time events are consumed prior to any events related to batch or reconciliation activity.
 - Queues that grow beyond a configurable size are persisted to disk to manage the memory overhead of replication.
-- The queues are all temporary (even where persisting to disk); replication references will be lost on node failure or on node restart.
-- It is expected that real-time replication is always supported by inter-cluster reconciliation (i.e. such as that provide by NextGenRepl full-sync) to cover scenarios where references are lost.
+- The queues are all temporary (even when persisting to disk); replication references will be lost on node failure or on node restart.
+- It is expected that real-time replication is always supported by inter-cluster reconciliation (i.e. such as that provided by NextGenRepl full-sync) to cover scenarios where references are lost.
 
 A Sink cluster, one receiving replication events, must have sink workers configured to read from a remote queue on Source clusters.
 
@@ -48,7 +48,7 @@ A Sink cluster, one receiving replication events, must have sink workers configu
 - Each node will have a configurable number of sink workers, which will be distributed across the source peer nodes (either configured or discovered).  The number of workers can be adjusted via the `remote_console` at run-time.
 - There is an overhead of a sink making requests on the source, so each sink worker will backoff if a request results in no replication events being discovered.
 - The sink worker pool does not auto-expand.  It is an operator responsibility to ensure there are sufficient sink workers to keep-up with real-time replication. There is some protection from over-provisioning but not from under provisioning.
-- A sink worker can fetch only one object at a time, and must push that object into the Sink cluster before returning to fetch the next available replication event. 
+- A sink worker can fetch only one object at a time, and must push that object into the sink cluster before returning to fetch the next available replication event. 
 - A sink-worker will never prompt re-replication.  No hierarchies of replication are supported, each cluster which is to receive replication events must be directly configured as a sink for that source.
 
 Configuring and enabling source queues and sink workers is sufficient to enable real-time replication.  Other replication features (such as full-sync reconciliation) depend on the queues and workers to operate, but require additional configuration.
@@ -75,7 +75,7 @@ It is theoretically possible to prompt NextGen replication events through other 
 
 A full-sync process can be used to reconcile between two clusters which have configured real-time replication.  The purpose is to quickly determine if the two clusters are in sync, and if they are not in sync identify some keys to be repaired.
 
-Full-sync with NextGen replication is dependent on tictacaae active anti-entropy, there is no key-listing form of reconciliation or synchronisation.
+Full-sync with NextGen replication is dependent on tictacaae active anti-entropy; there is no key-listing form of reconciliation or synchronisation.
 
 The tictacaae solution uses special merkle trees to represent the state of a partition (a subset of a vnode), these merkle trees are not cryptographically secure, however they can:
 
@@ -102,7 +102,7 @@ Riak can be configured to operate in one of [three possible delete modes](/docs/
 - Keep;
 - Immediate.
 
-When running replication, it is recommended to change from the default setting and use to the delete mode of `keep`.  Using an alternative delete mode is tested, but there will be a significantly increased probability of false-negative reconciliation events that may consume resource on the cluster.
+When running replication, it is recommended to change from the default setting and use the delete mode of `keep`.  Using an alternative delete mode is tested, but there will be a significantly increased probability of false-negative reconciliation events that may consume resources on the cluster.
 
 ### Configure real-time replication
 
@@ -113,7 +113,7 @@ For a node on cluster_a, the following configuration is required.
 > replrtq_enablesrc = enabled
 > replrtq_srcqueue = cluster_b:any|cluster_c:any
 
-This configuration enables the node to be a source for changes to replicate, and replicates `any` change to queues named `cluster_b` and `cluster_c` - and this queue will need to be configured as the source for updates on the sink cluster.  The configuration is required on each and every node in the source cluster.  Once a node has been enabled as a source, all PUTs that node coordinated will be passed to the queue process to be assessed against the replrtq_srcqueue configuration, and potentially be queued.
+This configuration enables the node to be a source for changes to replicate, and replicates `any` change to queues named `cluster_b` and `cluster_c` - and this queue will need to be configured as the source for updates on the sink cluster.  The configuration is required on each and every node in the source cluster.  Once a node has been enabled as a source, all PUTs that node coordinates will be passed to the queue process to be assessed against the replrtq_srcqueue configuration, and potentially be queued.
 
 For more complicated configurations further queue names can be used, with different filters - filters can be on bucket, bucket-type or bucket prefix.
 
@@ -160,7 +160,7 @@ To use the full-sync mechanisms, and the operational tools then TictacAAE must b
 
 > tictacaae_active = active
 
-This can be enabled, and the cluster run in 'parallel' mode - where backend other than leveled is used.  However, for optimal replication performance Tictac AAE is best run in `native` mode with a leveled backend.  When enabling tictacaae for the first time, it will not be usable by full-sync until all trees have been built.  Trees will periodically rebuild, and full-sync should continue to operate as expected during rebuilds.
+This can be enabled, and the cluster run in 'parallel' mode - when a backend other than leveled is used.  However, for optimal replication performance Tictac AAE is best run in `native` mode with a leveled backend.  When enabling tictacaae for the first time, it will not be usable by full-sync until all trees have been built.  Trees will periodically rebuild, and full-sync should continue to operate as expected during rebuilds.
 
 Full-sync replication requires the existence of source queue definitions and sink worker configurations.  The same configurations can be used as for real-time replication.  If there is a need to have only full-sync replication without allowing for real-time replication - then the `block_rtq` keyword can be used instead of `any` on the source queue definition.
 
@@ -174,7 +174,7 @@ To enable full-sync replication on a cluster, for all the data in the cluster, t
 >
 > ttaaefs_cluster_slice = 1
 
-A node can only be configured to full-sync with one other cluster, so if there is a need to full-sync with multiple clusters different nodes must be use different configurations to point at those different clusters.  So for the backup cluster, cluster C node 1 would use:
+A node can only be configured to full-sync with one other cluster, so if there is a need to full-sync with multiple clusters, different nodes must use different configurations to point at those different clusters.  So for the backup cluster, cluster C node 1 would use:
 
 > ttaaefs_scope = all
 > ttaaefs_queuename = cluster_a
@@ -204,7 +204,7 @@ Then to configure a peer relationship:
 > ttaaefs_peerport = 8087
 > ttaaefs_peerprotocol = pb
 
-Unlike when configuring a real-time replication sink, each node can only have a single peer relationship with another node in the remote cluster.  Note though, that all full-sync commands run across the whole cluster.  If a single peer relationship dies, some full-sync capacity is lost, but other peer relationships between different nodes will still cover the whole data set.  It is only necessary to have one working peer relationship to confirm clusters are in-sync.  If there are multiple active peer relationships between two clusters, some simple offset-based scheduling is done to space out the full-sync requests - but this is no single coordinating scheduler for full-sync within the cluster.
+Unlike when configuring a real-time replication sink, each node can only have a single peer relationship with another node in the remote cluster.  Note though, that all full-sync commands run across the whole cluster.  If a single peer relationship dies, some full-sync capacity is lost, but other peer relationships between different nodes will still cover the whole data set.  It is only necessary to have one working peer relationship to confirm clusters are in-sync.  If there are multiple active peer relationships between two clusters, some simple offset-based scheduling is done to space out the full-sync requests - but there is no single coordinating scheduler for full-sync within the cluster.
 
 Once there are peer relationships, a schedule is required, and a capacity must be defined.
 
@@ -227,13 +227,13 @@ When using `ttaaefs_autocheck` with a scope of `all` every comparison is between
 
 There may be circumstances when non-recent deltas have been uncovered.  It may be that historic data appears to have been lost (perhaps due to resurrection of old data on a remote cluster), or a disk corruption has just been detected following a tree rebuild.  In these cases the exchange will result in `{clock_compare, 0}` - a tree delta was discovered, but not key deltas given the range limit.  This node will then be set to check all keys on its next run.  When it next checks all keys, it will use the high/low modified date range discovered in future checks.  Running key comparisons across all buckets and over all time is expensive, even when restricting the segments using max_results.  So the `autocheck` full-sync process will always look to learn clues about where (in terms of bucket, or modified range) the delta exists to make this more efficient.
 
-It is possible to restrict the escalation to chekcing all keys, so that it will only occur if the time is in an off-peak window - outside of the window, the escalation will simply be to a `ttaaefs_daycheck`.  Use of `ttaaefs_allcheck.policy = window` is discouraged, as the results are potentially confusing to any operator wihtout detailed knowledge of how full-sync works.  The window option is likely to be removed in a future release.
+It is possible to restrict the escalation to checking all keys, so that it will only occur if the time is in an off-peak window - outside of the window, the escalation will simply be to a `ttaaefs_daycheck`.  Use of `ttaaefs_allcheck.policy = window` is discouraged, as the results are potentially confusing to any operator without detailed knowledge of how full-sync works.  The window option is likely to be removed in a future release.
 
-The `all`, `day` and `hour` check's restrict the modified date range used in the full-sync comparison to all time, the past day or the past hour.  the `ttaaefs_rangecheck` uses information gained from previous queries to dynamically determine in which modified time range a problem may have occurred (and when the previous check was successful it assumes any delta must have occurred since that previous check).
+The `all`, `day` and `hour` checks restrict the modified date range used in the full-sync comparison to all time, the past day or the past hour.  the `ttaaefs_rangecheck` uses information gained from previous queries to dynamically determine in which modified time range a problem may have occurred (and when the previous check was successful it assumes any delta must have occurred since that previous check).
 
 It is normally preferable to under-configure the schedule.  When over-configuring the schedule, i.e. setting too much repair work than capacity of the cluster allows, there are protections to queue those schedule items there is no capacity to serve, and proactively cancel items once the manager falls behind in the schedule.  However, those cancellations will reset range_checks and so may delay the overall time to recover.
 
-Each check is constrained by `ttaaefs_maxresults`, so that it only tries to resolve issues in a subset of broken leaves in the tree of that scale (there are o(1M) leaves to the tree overall).  However, the range checks will try and resolve more (as they are constrained by the range) - this will be the multiple of `ttaaefs_maxresults` and `ttaaefs_rangeboost`.
+Each check is constrained by `ttaaefs_maxresults`, so that it only tries to resolve issues in a subset of broken leaves in the tree of that scale (there are o(1M) leaves to the tree overall).  However, the range checks will bosst the size of max results (as they are constrained by the range, and so more efficient).  The max results by a range check will be the multiple of `ttaaefs_maxresults` and `ttaaefs_rangeboost`.
 
 It is possible to enhance the speed of recovery when there is capacity by manually requesting additional checks, or by temporarily overriding `ttaaefs_maxresults` and/or `ttaaefs_rangeboost`.  This can be done from remote_console using `application:set_env(riak_kv, ttaaefs_maxresults, 64)` for example, or `application:set_env(riak_kv, ttaaefs_rangeboost, 4)`.
 
@@ -254,23 +254,23 @@ To help space out queries between clusters - i.e. stop two clusters with identic
 
 ### Configure Full-Sync Reconciliation and Replication (Per-Bucket)
 
-The `ttaaefs_scope` can be set to a specific bucket.  The non-functional characteristics of the solution change when using per-bucket full-sync.  There is no per-bucket caching of AAE trees, so the AAE trees will need to be re-calculated by scanning the whole bucket for every full-sync check (subject to other restrictions on check type).  So the cost of checking full-sync for an individual bucket in happy-day scenarios is considerbaly higher than using a scope of `all`.  When deltas are discovered in trees, the scanning required to compare keys and clocks will be limited to the bucket, and so this may be faster.
+The `ttaaefs_scope` can be set to a specific bucket.  The non-functional characteristics of the solution change when using per-bucket full-sync.  There is no per-bucket caching of AAE trees, so the AAE trees will need to be re-calculated by scanning the whole bucket for every full-sync check (subject to other restrictions on check type).  So the cost of checking full-sync for an individual bucket in happy-day scenarios is considerably higher than using a scope of `all`.  When deltas are discovered in trees, the scanning required to compare keys and clocks will be limited to the bucket, and so this may be faster.
 
-The rules of the `ttaaefs_<sync_type>check` configuration are followed with per-bucket synchronisation.  So using `ttaaefs_autocheck` when a previous check succeeded will scan only recently modified items to build the tree for comparison.  This does mean that non-recently modified variations within the bucket (such as resurrected objects or tombstones) will not be detected by `ttaaefs_autocheck` as when `ttaaefs_scope = all`.  When using per-bucket full-sync, it may be wise to occassionally schedule a `ttaaefs_allcheck` to cover this scenario.
+The rules of the `ttaaefs_<sync_type>check` configuration are followed with per-bucket synchronisation.  So using `ttaaefs_autocheck` when a previous check succeeded will scan only recently modified items to build the tree for comparison.  This does mean that non-recently modified variations within the bucket (such as resurrected objects or tombstones) will not be detected by `ttaaefs_autocheck` as when `ttaaefs_scope = all`.  When using per-bucket full-sync, it may be wise to occasionally schedule a `ttaaefs_allcheck` to cover this scenario.
 
-Note that a scheduled run of an `ttaaefs_allcheck` will occur regardless of whether the current time is within or outside of the allcheck.window.  The window is related only to the running of `ttaaefs_autocheck` and it limits the `ttaaefs_autocheck` so that it can only being uplifted to a `ttaaefs_allcheck` within the window, outside of the window it will only be ` ttaaefs_daycheck`.
+Note that a scheduled run of an `ttaaefs_allcheck` will occur regardless of whether the current time is within or outside of the allcheck.window.  The window is related only to the running of `ttaaefs_autocheck` and it limits the `ttaaefs_autocheck` so that it can only being uplifted to a `ttaaefs_allcheck` within the window.
 
-When using per-bucket full-sync, and performing a rolling upgrade ro Riak 3.2.3 or 3.4.0, there may be errors merging buckets.  To prevent these errors during the rolling upgrade, then either disable full-sync for the period of the upgrade, or use the configuration option to force the new nodes to use legacy format trees:
+When using per-bucket full-sync, and performing a rolling upgrade to Riak 3.2.3 or 3.4.0, there may be errors merging buckets.  To prevent these errors during the rolling upgrade, then either disable full-sync for the period of the upgrade, or use the configuration option to force the new nodes to use legacy format trees:
 
 > legacyformat_tictacaae_tree = enabled
 
-There are significant memory improvements related ot the new tree format, so the configuration should be reversed after the rolling upgrade has completed.  There are no inter-cluster issues with tree versions, it is only an issue when merging trees within a cluster.
+There are significant memory improvements related to the new tree format, so the configuration should be reversed after the rolling upgrade has completed.  There are no inter-cluster issues with tree versions, it is only an issue when merging trees within a cluster.
 
 ### Replication API
 
 All real-time and full-sync operations are available via the Riak API, and supported by the Riak erlang clients (both PB and HTTP).  They have been used in different systems for replicating and synchronising with third party databases, such as OpenSearch or DynamoDB.
 
-It is recommended, where possible to use the PB API for performance reasons, and also as TLS security can be enabled via this API.  The HTTP API is slower, but maybe useful where it is easier to set up peer relationships with a HTTP-based load-balancer rather than an individual node.
+It is recommended to use the PB API for both performance and security reasons (as TLS can be enabled via this API for replication).  The HTTP API is slower, but maybe useful where it is easier to set up peer relationships with a HTTP-based load-balancer rather than an individual node.
 
 The replication API consists of [the AAE fold API](/docs/OtherAPI.md#aae-fold-api) and the [fetch API required to access replication queues](/docs/OtherAPI.md#the-fetch-api).
 
@@ -282,7 +282,7 @@ Full-sync exchanges will go through the following states:
 
 `root_compare` - a comparison of the roots of the two cluster AAE trees.  This comparison will be repeated until a consistent number of repeated differences is seen.  If there are no repeated differences, we consider the clusters to be in_sync - otherwise run `branch_compare`.
 `branch_compare` - repeats the root comparison, but now looking at the leaves of those branches for which there were deltas in the `root_compare`.  If there are no repeated differences, we consider the clusters to be in_sync - otherwise run `clock_compare`.
-`clock_compare` - will run a fetch_clocks_nval or fetch_clocks_range query depending on the scheduled work item.  This will be constrained by the maximum number of broken segments to be fixed per run (`ttaaefs_maxresults`).  This list of keys and clocks from each cluster will be compared, to look for keys and clock where the source of the request has a more advanced clock - and these keys will be sent for read repair.
+`clock_compare` - will run a fetch_clocks_nval or fetch_clocks_range query depending on the scheduled work item.  This will be constrained by the maximum number of broken segments to be fixed per run (`ttaaefs_maxresults`).  This list of keys and clocks from each cluster will be compared, to look for keys and clockc where the source of the request has a more advanced clock - and these keys will be sent for read repair.
 
 At clock_compare stage, a log will be generated for each bucket where repairs were required, with the low and high modification dates associated with the repairs:
 
@@ -321,7 +321,7 @@ Individual full-syncs between clusters can be triggered outside the standard sch
 riak_client:ttaaefs_fullsync(all_check).
 ```
 
-The `all_check` can be replaced with `hour_check`, `day_check` or `range_check` as required.  The request will uses the standard max_results and range_boost for the node.
+The `all_check` can be replaced with `hour_check`, `day_check` or `range_check` as required.  The request will use the standard max_results and range_boost for the node.
 
 ### Configure and Monitor work queues
 
@@ -332,7 +332,7 @@ There are two per-node worker pool sizes which have particular relevance to full
 > af1_worker_pool_size = 2
 > af3_worker_pool_size = 4
 
-The AF1 pool is used by rebuilds of the AAE tree cache, and AF3 pool is used for key/clock fetches when using cluster-wide reconciliation.
+The AF1 pool is used for rebuilds of the AAE tree cache, and the AF3 pool is used for key/clock fetches when using cluster-wide reconciliation.
 
 If the full-sync processes are taking too long (perhaps as max_results or range_boost are set too aggressively) then the worker pools may backup.  At some stage there may develop a situation where all full-sync queries will time out as the queries will take too long to reach the front of the queue, and hence all the effort associated with the queries will be wasted.
 
@@ -349,13 +349,13 @@ application:set_env(riak_kv, ttaaefs_rangeboost, 16).
 
 Individual repair queries will do more work as these numbers are increased, but will repair more keys per cycle.  This can be used along with prompted checks (especially range checks) to rapidly resolve a delta.
 
-The fetching of keys and clocks will require a scan across the key-store, which is divided into blocks of roughly 24 keys, where every block has a potentially-cached array of 15-bit hashes, one hash for each key in the block.  The hashes used in this array is 15 sub-bits of the segment ID for the key, so if none of the hashes match any of the segment IDs the block does not need to be read from disk - and reading a block has a relatively significant CPU cost (to decompress and deserialise the block).  Doubling the max results, will double the number of blocks that need to be read and deserialised, and double the number of keys and clocks to be compared, but other factors in the scan (such as the number of hash comaprisons) will remain roughly constant.  The actual impact of tuning this value is context-specific.
+The fetching of keys and clocks will require a scan across the key-store, which is divided into blocks of roughly 24 keys, where every block has a potentially-cached array of 15-bit hashes, one hash for each key in the block.  The hashes used in this array is 15 sub-bits of the segment ID for the key, so if none of the hashes match any of the segment IDs the block does not need to be read from disk - and reading a block has a relatively significant CPU cost (to decompress and deserialise the block).  Doubling the max results, will double the number of blocks that need to be read and deserialised, and double the number of keys and clocks to be compared, but other factors in the scan (such as the number of hash comparisons) will remain roughly constant.  The actual impact of tuning this value is context-specific.
 
-It should be noted, that if the number of segment IDs being checked goes significantly over 1000, then the number of blocks that can be skipped will start to tend towards zero.  So the combined value of maxresults * rangeboost should generlaly be kept to a value less than or equal to 1024.
+It should be noted, that if the number of segment IDs being checked goes significantly over 1000, then the number of blocks that can be skipped will start to tend towards zero.  So the combined value of maxresults * rangeboost should be kept to a value less than or equal to 1024.
 
 ### Overriding the range
 
-When a query successfully repairs a significant number of keys, it will set the range property to guide any future range queries on that node.  This range can be temporarily overridden, if, for example there exists more specific knowledge of what the range should be.  It may also be necessary to override the range when an even erroneously wipes the range (e.g. falling behind in the schedule will remove the range to force range_checks to throttle back their activity).
+When a query successfully repairs a significant number of keys, it will set the range property to guide any future range queries on that node.  This range can be temporarily overridden, if for example, there exists more specific knowledge of what the range should be.  It may also be necessary to override the range when an event erroneously wipes the range (e.g. falling behind in the schedule will remove the range to force range_checks to throttle back their activity).
 
 To override the range (for the duration of one request):
 
@@ -363,7 +363,7 @@ To override the range (for the duration of one request):
 riak_kv_ttaaefs_manager:set_range({Bucket, KeyRange, ModifiedRange}).
 ```
 
-Bucket can be a specific bucket (e.g. `{<<"Type">>, <<"Bucket">>}` or `<<"Bucket">>`) or the keyword `all` to check all buckets (if nval full-sync is configured for this node). The KeyRange may also be `all` or a tuple of StartKey and EndKey.
+Bucket can be a specific bucket (e.g. `{<<"Type">>, <<"Bucket">>}` or `<<"Bucket">>`) or the keyword `all` to check all buckets (if n_val full-sync is configured for this node). The KeyRange may also be `all` or a tuple of StartKey and EndKey.
 
 To remove the range:
 
@@ -381,7 +381,7 @@ The aae_fold `repl_keys_range` will replicate any key within the defined range t
 
 The full-sync comparisons between clusters are based on coverage plans - a plan which returns a set of vnode to give r=1 coverage of the whole cluster.  When a node is known not to be in a good state (perhaps following a crash), it can be rejoined to the cluster, but made ineligible for coverage plans by using the `participate_in_coverage` configuration option.
 
-This can be useful when tree caches have not been rebuilt after a crash. The `participate_in_coverage` option can also be controlled without a re-start via the `riak remote_console`:
+This can be useful when tree caches have not been rebuilt after a crash. The `participate_in_coverage` option can also be controlled without a restart via the `riak remote_console`:
 
 ```erlang
 riak_client:remove_node_from_coverage()
@@ -410,7 +410,7 @@ riak_kv_ttaaefs_manager:resume()
 
 These run-time changes are relevant to the local node only and its peer relationships.  The node may still participate in full-sync operations prompted by a remote cluster even when full-sync is paused locally.
 
-When using auto-checks it also possible to suppress a fixed number of checks.  By default if there are timeouts on queries, the full-sync manager will assume there is excess pressure in the system and enable auto_check_suppress automatically.  This will disable the next two auto-checks.
+When using auto-checks it is also possible to suppress a fixed number of checks.  By default if there are timeouts on queries, the full-sync manager will assume there is excess pressure in the system and enable auto_check_suppress automatically.  This will disable the next two auto-checks.
 
 This can be triggered manually from remote_console `riak_kv_ttaaefs_manager:autocheck_suppress()`.
 
@@ -423,11 +423,11 @@ When an `all_check` is prompted due to a `{clock_compare, 0}` result, there are 
 - the cached trees differ but the differences lie outside the previous range;
 - the cached trees differ due to a bad tree cache, and there are no actual differences.
 
-For the second case, it is necessary to repair the trees, so when an `all_check` is triggered it will also prompt for trees to be repaired on this node (for the identified mismatched segments only) then next time there is a keys and clocks fetch.  The triggering should have a log of:
+For the second case, it is necessary to repair the trees, so when an `all_check` is triggered it will also prompt for trees to be repaired on this node (for the identified mismatched segments only) then next time there is a fetch for keys and clocks.  The triggering should have a log of:
 
 `Setting node to repair trees as unsync'd all_check had no repairs - count of triggered repairs for this node is ~w`
 
-The triggering of tree repairs increases the cost of the fetching of keys and clocks.  Each trigger is coordinated so that it is only fired once and once only (per trigger event) on each vnode.  Usually there is a single vnode with a bad tree cache, but it may take a full cycle of checks for the trigger to be enbaled and enacted on the correct node.  This assumes that full-sync is bi-directional and configured across all nodes, so eventually each node will see the bad state and trigger the repair mode.  If this isn't the case manual intervention may be required.  
+The triggering of tree repairs increases the cost of the fetching of keys and clocks.  Each trigger is coordinated so that it is only fired once and once only (per trigger event) on each vnode.  Usually there is a single vnode with a bad tree cache, but it may take a full cycle of checks for the trigger to be enabled and enacted on the correct node.  This assumes that full-sync is bi-directional and configured across all nodes, so eventually each node will see the bad state and trigger the repair mode.  If this isn't the case manual intervention may be required.  
 
 To force a node to enter into the tree repair state, then the following functions can be called via `remote_console`.
 
@@ -440,7 +440,7 @@ Bad caches are normally discovered via tree rebuilds, as tree rebuilds correct t
 
 Handling of tree repairs differs by version of Riak:
 
-- version < 3.0.10 => there is no workaround other than to rebuild trees entriely that are in need of repair, and the complete repair must be manually triggered (the trigger_tree_repairs/0 function is not available). In these versions this requires a restart of each node, wiping the tree cache from disk whilst it is stopped - or simply waiting for the next scheduled rebuild to complete.  It is recommended to upgrade to at least 3.0.10 before runnning full-sync with nextgenrepl because of this issue.
-- version < 3.2.3 => there is an automatic workaround, in that full-sync will call trigger_tree_repairs automatically; however it is inefficient (in that some vnodes may unnecessarily rebuild for the broken segments on mulitple occasions).
+- version < 3.0.10 => there is no workaround other than to rebuild trees entirely that are in need of repair, and the complete repair must be manually triggered (the trigger_tree_repairs/0 function is not available). In these versions this requires a restart of each node, wiping the tree cache from disk whilst it is stopped - or simply waiting for the next scheduled rebuild to complete.  It is recommended to upgrade to at least 3.0.10 before running full-sync with nextgenrepl because of this issue.
+- version < 3.2.3 => there is an automatic workaround, in that full-sync will call trigger_tree_repairs automatically; however it is inefficient (in that some vnodes may unnecessarily rebuild for the broken segments on multiple occasions).
 - version < 3.2.5 => there is a relatively efficient workaround.
 - version >= 3.2.5 => it is expected that the root cause has been fixed, but the workaround remains in place.
