@@ -45,7 +45,7 @@ The leveled backend has the following characteristics and features:
 - Pure erlang log-structured-merge (LSM) tree backend, designed and developed specifically for use within Riak.
   - Implementation in Erlang simplifies resource management as CPU scheduling of all Riak activity is under the control of the Erlang virtual machine.  
 - Differs from most other LSM implementations in that values are set-aside in a sequence-ordered journal, and only keys and metadata are placed in the key-ordered LSM-based ledger.  This provides for lower cost and more efficient reads when only keys and metadata is required (internally within Riak this is usually the case, even when the external user requires the value).  It also reduces the overhead of write amplification, supporting larger object sizes with greater efficiency.
-- Internal optimisations to increase efficiency within Riak for Tictac-based method of anti-entropy and inter-cluster reconciliation.
+- Internal optimisations to increase efficiency within Riak for the Tictac-based method of anti-entropy and inter-cluster reconciliation.
 - Supports index entries as well as objects in the key-ordered ledger, to allow full use of the Riak query API.
 - Is the priority backend used within the OpenRiak community for both functional and non-functional testing of new releases.
 - Generally requires significantly less memory than the total size of all the keys.
@@ -57,11 +57,11 @@ The leveled backend has the following characteristics and features:
 
 The bitcask backend has the following characteristics and features:
 
-- A simple low-code, journal based key-value store, originally design and developed by the Riak team; that has been used as a general implementation model for other such stores.
+- A simple low-code, journal based key-value store, originally designed and developed by the founding Riak team at Basho; that has been used as a general implementation model for other such stores.
 - Written primarily in Erlang, but including around 3K lines of C code to provide the in-memory database of keys.  Access to C-code is generally for short-lived functions, which limits the impact on the scheduling requirements of the BEAM.  The C-code is also extremely stable, and is low-risk in terms of overheads associated with platform evolution.
 - Supports for pure objects only, no support for index entries and any part of the Riak Query API.
 - Requires an out-of-hours merge window to be available and configured, for compaction of mutated objects.  Merging under database load may lead to highly unpredictable performance.
-- Requires a separate key-store backend if anti-entropy of inter-cluster reconciliation features are required.
+- Requires a separate key-store backend if anti-entropy or inter-cluster reconciliation features are required.
 - All keys are kept in-memory, and so sufficient memory is required as the number of keys expand.
   - Guarding against out-of-memory errors is an operator responsibility.  The cluster should be expanded as the memory limit is reached, the per-vnode memory overhead will not be proactively reduced.
 - No current support for optimised HEAD requests, which can have significant impact on overall efficiency within Riak.
@@ -76,7 +76,7 @@ The eleveldb backend has the following characteristics and features:
 - Supports secondary index entries, but will not support the full Riak Query API.
 - Potentially faster and more efficient than leveled when values are small.
 - Moves the majority of CPU and memory management away from the BEAM, to be managed directly within the C++ code.
-  - This provides some additional capabilities, in particular the ability to fix the percentage of memory used used across all vnodes on a node.
+  - This provides some additional capabilities, in particular the ability to fix the percentage of memory used across all vnodes on a node.
   - This has some long-term maintenance overheads, which the OpenRiak community will not continue to support after the release of Riak 3.4.
 
 #### In-memory (deprecated)
@@ -92,7 +92,7 @@ The in-memory backend has the following characteristics and features:
 
 The multi-backend has the following characteristics and features:
 
-- Allows different data buckets to be mapped to different backends, so that different buckets can utilise the different capabilities of those backends.
+- Allows different data buckets to be mapped to different backends, so that different buckets can use the different capabilities of those backends.
 - Generally only recommended for production use when running multiple bitcask backends (e.g. with different TTL, or storage paths).
 
 Testing of Riak is focused on single-backend solutions, but multi-backend (bitcask) is a combination well-tested within large-scale production deployments.
@@ -113,7 +113,7 @@ Starting with a large ring size is helpful as:
 
 - It provides greater potential for future scalability of the service, as for efficient use of hardware there should always be at least one vnode per CPU core within the cluster.
 - It provides for more even distribution of load, as if `RingSize div NodeCount = K` each node will have either `K` or `K + 1` vnodes - and the relative delta between the size of `K` and `K + 1` decreases as the RingSize increases (e.g. with a node count of 6, there is a 10% difference between the resource required for a busy vs quiet node with a Ring Size of 64, but just a 2.3% difference with a Ring Size of 256).
-- Background database activity is split by vnode, so increasing the number of vnodes has smoothing impact on that load making it more predictable.
+- Background database activity is split by vnode, so increasing the number of vnodes has a smoothing impact on that load making it more predictable.
 
 Starting with a smaller ring size is helpful as:
 
@@ -140,7 +140,7 @@ A Riak cluster is a set of nodes (e.g. physical servers or virtual cloud instanc
 There are three configurable elements that control the resilience of the data distribution with a cluster:
 
 - `n_val`; the replication value for the data items within the cluster, i.e how many copies of the data should exist within the cluster.  The n_val should preferably be consistent across all buckets.  This is normally set to 3, but in some circumstances this may be changed to 1 (e.g. backup clusters, or development environments) or 5 (e.g. for larger clusters looking to guarantee quorum reads in the presence of triple failures) - although in theory any positive integer value may be supported.
-- `target_n_val`; the target for the distribution guarantee.  The `target_n_val` should always be consistently defined across nodes.  This is normally set to 4 (for a `n_val` of 3).  If the target is equal to the n_val, then all copies of the data stored within Riak in a healthy cluster will be guaranteed to be on separate nodes. If the target is greater n_val, then the integer difference represents how many failures can be tolerated before the guarantee fails. 
+- `target_n_val`; the target for the distribution guarantee.  The `target_n_val` should always be consistently defined across nodes.  This is normally set to 4 (for a `n_val` of 3).  If the target is equal to the n_val, then all copies of the data stored within Riak in a healthy cluster will be guaranteed to be on separate nodes. If the target is greater than the n_val, then the integer difference represents how many failures can be tolerated before the guarantee fails. 
 - `target_location_n_val`; the target for the distribution guarantee from the perspective of locations not nodes.  The `target_location_n_val` should always be consistently defined across nodes. This is normally set to 3.  When a `target_location_n_val` and `target_n_val` are both configured then the cluster change process will attempt to uphold both guarantees.  The use of locations is optional within Riak.
 
 The target settings are used by the cluster claim algorithm, which is used whenever a cluster is formed or changed (e.g. joining or leaving a node) to redistribute the vnodes around the cluster where required.  There are three usable versions of the cluster claim algorithm - versions 2, 3 and 4.  To use both `target_location_n_val` and `target_n_val` the cluster claim algorithm should be changed from version 2 (the default) to version 4.  When a `target_location_n_val` is not used a more optimal distribution may be achieved by using version 3 of the claim algorithm (in comparison to version 2) - but use of version 3 requires some expert operator assessment of the produced plans before a plan is chosen.
@@ -149,7 +149,7 @@ Using a `target_location_n_val` in conjunction with version 4 of the claim algor
 
 As well as the cluster n_val settings, there is a configurable option to allow for pro-active reconciliation and repair of data within a cluster.  By default, there is no reconciliation within a cluster to ensure that data has been consistently replicated - it is done on a per-item basis when each item is read by the application, and so unread data may have un-repaired issues with resilience.  To enable pro-active reconciliation the `tictacaae_active` configuration should be enabled; it is strongly recommended when using leveled to enable this rather than the legacy `anti_entropy` mechanism.  This will enforce continuous reconciliation between vnodes, and gradual repair of any deltas.
 
-Enabling `tictacaae_active` has additional benefits: it is a pre-requisite for inter-cluster reconciliation; and it also allows for the use of aae folds which provide important information ot operators about the data within the cluster (e.g. list buckets, find average object size, find objects in sibling state, find very large objects etc).  The overheads of running `tictacaae_active` differ based on backend choice, with the lowest relative impact being with the leveled backend.
+Enabling `tictacaae_active` has additional benefits: it is a pre-requisite for inter-cluster reconciliation; and it also allows for the use of aae folds which provide important information to operators about the data within the cluster (e.g. list buckets, find average object size, find objects in sibling state, find very large objects etc).  The overheads of running `tictacaae_active` differ based on backend choice, with the lowest relative impact being with the leveled backend.
 
 ### Intra-cluster data resilience - changing the choice
 
@@ -157,7 +157,7 @@ The `n_val` is in theory configurable by bucket, which allows for multiple n_val
 
 Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
 
-The `target_n_val` and `target_location_n_val` configuration is used each time a cluster change is planned (i.e. adding or removing a node).  So using a new value will take affect once the next change is made within a cluster.
+The `target_n_val` and `target_location_n_val` configuration is used each time a cluster change is planned (i.e. adding or removing a node).  So using a new value will take effect once the next change is made within a cluster.
 
 Both anti-entropy mechanisms can be deployed in parallel to help with transition.  Enabling anti-entropy takes time to take effect (as caches are built).  Disabling it is immediate, although garbage collecting any legacy on-disk overhead is a manual operator task.
 
@@ -177,9 +177,9 @@ It is possible to control the possibility of consistency issues using conditiona
 
 It is necessary to make design choices between using locations for resilience and using clusters.  For instance, in a cloud environment one could choose:
 
-- to deploy two clusters (`n_val` 3), one each in two separate availability zones, and a backup (`n_val` 1) cluster in a third availability zone - with locations aligned to placement groups for the nodes in the data-resilient clusters.  This provides that ability to switch the application between availability zones on failure without loss of resilience, and provides a total of 7 copies of the data all guaranteed to be in separate physical zones.
+- to deploy two clusters (`n_val` 3), one each in two separate availability zones, and a backup (`n_val` 1) cluster in a third availability zone - with locations aligned to placement groups for the nodes in the data-resilient clusters.  This provides the ability to switch the application between availability zones on failure without loss of resilience, and provides a total of 7 copies of the data all guaranteed to be in separate physical zones.
 - to deploy a single cluster (`n_val` 5) spread across three availability zones (with locations aligned with availability zones).  This means that one cluster can be used to manage consistency (e.g. using conditional PUTs with token-based consensus), whilst guaranteeing there will always be at least two copies of the data available even if an entire Availability Zone is lost.  It would also be likely in this scenario that object GETs would generally not require the object value to traverse across availability zones (when using the leveled backend).
-- to add to the above an additional cluster in alternative cloud provider or cloud region.
+- to add to the above an additional cluster in an alternative cloud provider or cloud region.
 
 Topologies of clusters are possible.  Topologies With nextgenrepl are constrained in that it is not possible to forward updates through clusters - each cluster must subscribe to updates from every other cluster, so a full mesh is generally required.
 
@@ -187,7 +187,7 @@ When splitting a cluster across physical locations, it should be noted that the 
 
 ### Interconnecting multiple clusters - changing the choice
 
-Adding new clusters is a simple process assuming that tictacaae is enabled, but may be time-consuming based on the volume of data.  A new cluster can have real-time replication enabled to being to receive all new changes, then be seeded by using the `range_repl` aae_fold.  The seeding process needs to be throttled by controlling the number of sink workers on the new cluster to prevent the source cluster from being overloaded.  Once the `range_repl` process has completed, covering all the buckets, the reconciliation (aka full-sync) process can be enabled to detect any remaining deltas.  Not that the reconciliation process should NOT be used for bulk migration of data, as it is not designed ot efficiently handle large deltas.
+Adding new clusters is a simple process assuming that tictacaae is enabled, but may be time-consuming based on the volume of data.  A new cluster can have real-time replication enabled to being to receive all new changes, then be seeded by using the `range_repl` aae_fold.  The seeding process needs to be throttled by controlling the number of sink workers on the new cluster to prevent the source cluster from being overloaded.  Once the `range_repl` process has completed, covering all the buckets, the reconciliation (aka full-sync) process can be enabled to detect any remaining deltas.  Not that the reconciliation process should NOT be used for bulk migration of data, as it is not designed to efficiently handle large deltas.
 
 ## Deleting data
 
@@ -195,11 +195,11 @@ Adding new clusters is a simple process assuming that tictacaae is enabled, but 
 
 Safe deletion of data within eventually consistent databases is surprisingly complicated.  There are two aspects of deletion to be considered, dynamic deletion of individual objects, and the scheduled deletion of expired objects.
 
-The complexity of deletion with eventual consistency is that it is an underlying requirement in a distributed system to compare potentially differing results between different locations for an object (i.e. between vnodes or between clusters).  If location A has an object, and location B doesn't; there is a need to differ between the situation where location B is correct (due to a deletion not being replicated), or location A is correct (due to an insertion not being replicated) - as these circumstances require opposing actions.  There are secondary consequences if keys are reused following deletion; whereby data could be potentially lost if an old deleted object is resurrected and appears to be more recent.
+The complexity of deletion with eventual consistency is that it is an underlying requirement in a distributed system to compare potentially differing results between different locations for an object (i.e. between vnodes or between clusters).  If location A has an object, and location B doesn't; there is a need to differ between the situation where location B is correct (due to a deletion not being replicated), or location A is correct (due to an insertion not being replicated) - as these circumstances require opposing actions.  There are secondary consequences if keys are reused following deletion, whereby data could be potentially lost if an old deleted object is resurrected and appears to be more recent.
 
-For deletion there are three modes with which a cluster can be run: `keep`, `immediate` and `time-interval`.  It is strongly recommended to where possible use the `keep` based method, especially where the intention is run multiple inter-connected clusters.  The `keep` method is a configuration whereby no object is directly deleted, it is replaced instead by a special `tombstone` object that has no value (and will appear as not found when fetched via the API), but retains a reference to its change history (the vector clock) so that it can be correctly assessed for recency when comparing with an undeleted version of the object, or a replacement of the tombstone.
+For deletion there are three modes with which a cluster can be run: `keep`, `immediate` and `time-interval`.  It is strongly recommended to where possible use the `keep` based method, especially where the intention is to run multiple inter-connected clusters.  The `keep` method is a configuration whereby no object is directly deleted, it is replaced instead by a special `tombstone` object that has no value (and will appear as not found when fetched via the API), but retains a reference to its change history (the vector clock) so that it can be correctly assessed for recency when comparing with an undeleted version of the object, or a replacement of the tombstone.
 
-Tombstones have no significant cost in terms of disk space, as they have no value, but they exist as a key; and this represents an overhead for background operations and the memory footprint of the store.  It is good practice therefor to periodically reap old tombstones, where the tombstones have existed for a long-enough period to be sure no lingering problems of stale data exist for that key (e.g. tombstones > 1 month old).  If running multiple clusters and scheduling reap jobs, it is necessary to:
+Tombstones have no significant cost in terms of disk space, as they have no value, but they exist as a key; and this represents an overhead for background operations and the memory footprint of the store.  It is good practice therefore to periodically reap old tombstones, where the tombstones have existed for a long-enough period to be sure no lingering problems of stale data exist for that key (e.g. tombstones > 1 month old).  If running multiple clusters and scheduling reap jobs, it is necessary to:
 
 - use the nextgenrepl replication system;
 - enable the configuration of `repl_reap` so that reaps are replicated;
@@ -212,7 +212,7 @@ The `time-interval` method of deletion essentially attempts to automate the job 
 
 It is also possible to manage deletion through the use of a Time To Live.  However, using TTL is impractical when also using anti-entropy, and so this is not recommended unless there is permanent intention never to use anti-entropy or the related services (e.g. inter-cluster replication).  TTL will be supported as of Riak 3.4 on a per-bucket basis in-conjunction with the `aae_exclude` bucket property  - so that the disadvantages of not having anti-entropy are limited to those buckets with TTLs.  It is expected that this will be used for buckets which are specifically expected to be short-lived, and not requiring full reliability against data loss i.e. it is expected to be used for exceptional cases within a database, not as a general answer to deletion.
 
-As well as support via aae_fold for reap jobs, there is likewise support for erase jobs.  Erase and reap jobs, can be limited by bucket (mandatory), key range (optional) and last-modified-date range (optional).  It is recommended that scheduled erase jobs be used to handle garbage collection of temporary objects (using the last-modified-date range) in preference to TTL configuration.
+As well as support via aae_fold for reap jobs, there is likewise support for erase jobs.  Erase and reap jobs can be limited by bucket (mandatory), key range (optional) and last-modified-date range (optional).  It is recommended that scheduled erase jobs be used to handle garbage collection of temporary objects (using the last-modified-date range) in preference to TTL configuration.
 
 ### Deleting data - changing the choice
 
@@ -224,7 +224,7 @@ The delete mode is a per-node configuration which needs to be applied consistent
 
 The most important design decision is how to map the data requirements in a project to objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions - but there is some general guidance that tends to be helpful in most cases:
 
-- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is is to fetch multiple objects to fulfill a single application data demand - where possible make the most common read requests fulfilled via a single object read request.
+- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is to fetch multiple objects to fulfill a single application data demand - where possible make the most common read requests fulfilled via a single object read request.
 - By default when using mutable objects, always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`, unless immutability is guaranteed - all objects are create once, update never.
 - Eventually parallel writes will occur, and siblings will exist.  Siblings can be minimised using conditional PUTs, if sibling resolution is complex or requires manual intervention.  Use aae_folds feeding operator dashboards ot track the generation of siblings.  To auto-resolve siblings CRDTs (conflict-free replicated data types) can be used, and third-party client-side libraries are generally a better long-term option than using Riak's internal CRDTs.
 - Values can be large, especially when using the leveled backend.  Objects significantly in excess of 1MB are not in themselves likely to cause a direct performance issue.  Values are compressed before being persisted to disk (unless compression is disabled), when using the leveled-backend, so pre-compression is not necessary unless network bandwidth is a significant factor.
