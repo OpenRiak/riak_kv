@@ -119,7 +119,7 @@ There are a number of configurable options within the leveled backend, that can 
 
 Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
-- `leveled.compression_method`; should be set to zstd, unless objects are sent to Riak compressed, in which case this should be configured as `none`.
+- `leveled.compression_method`; should be set to zstd, unless objects are sent to Riak compressed, in which case the compression method should be configured as `none`.
   - in testing `zstd` has been demonstrated to be the most efficient available option (when compared to `native` which uses zlib compression, or `lz4`).
 - `leveled.ledger_compression`; if `compression_method` is set to `none`, then compression should still be enabled here e.g. set to `zstd`.
   - the ledger does not store object values, but stores the object keys and metadata in blocks by key order.
@@ -174,7 +174,7 @@ In general, setting bespoke bucket properties should be done using typed buckets
 
 Default changes made via riak.conf need to be set consistently across a cluster.  No bucket properties are gossipped between clusters, so properties are cluster-specific.  In general any cluster setting related to vector clocks MUST be configured consistently across replicating clusters e.g. `dvv_enabled`, `old_vclock`, `young_vclock`, `big_vclock` and `small_vclock`.  Other properties can be different between clusters. 
 
-Some changes can be applied using GET/PUT specific parameters, which will override the default bucket property i.e. a bucket could be configured to use `{sync_on_write, one}` but a specific PUT can override this by setting `{sync_on_write, all}`.  Although the use of GET/PUT specific parameters is supported, it is not recommended.  Operation-specific parameters that override defaults are not logged, and can considerably increase the operator challenges when troubleshooting intermittent problems.
+Some changes can be applied using GET/PUT specific parameters, which will override the default bucket property i.e. a bucket could be configured to use `{sync_on_write, one}`, but a specific PUT can override this by setting `{sync_on_write, all}`.  Although the use of GET/PUT specific parameters is supported, it is not recommended.  Operation-specific parameters that override defaults are not logged, and can considerably increase the operator challenges when troubleshooting intermittent problems.
 
 #### Property - dvv_enabled
 
@@ -200,7 +200,7 @@ Unless the non-existence of an object can be guaranteed by the application using
 
 The `last_write_wins` bucket property has a default value of `false`.  It should only ever be changed when the `allow_mult` bucket property is set to `false`.
 
-In general, the default should be used, even when `{allow_mult, false}`.  Setting `{last_write_wins, true}` changes the behaviour on PUT, so that an incoming write is assumed to be superior to an existing write without checking the change history of the existing object.  Internally within Riak, the actual order with which PUTs are applied is non-deterministic, and there are many situations (replication, anti-entropy, handoffs) where old PUTs may be received after new PUTs.  In these cases setting `{last_write_wins, true}` may have unexpected consequences
+In general, the default should be used, even when `{allow_mult, false}`.  Setting `{last_write_wins, true}` changes the behaviour on PUT so that an incoming write is assumed to be superior to an existing write, without checking the change history of the existing object.  Internally within Riak, the actual order with which PUTs are applied is non-deterministic, and there are many situations (replication, anti-entropy, handoffs) where old PUTs may be received after new PUTs.  In these cases setting `{last_write_wins, true}` may have unexpected consequences
 
 If, and only if, the bitcask backend is used, and objects are being updated and not simply inserted, and there is no use of tictac anti-entropy, then there is a small performance advantage from setting `{last_write_wins, true}`.  For other backends and scenarios there is no performance benefit.
 
@@ -208,7 +208,7 @@ It is recommended that `{last_write_wins, true}` only be used when for once-only
 
 #### Property - n_val
 
-The `n_val` bucket property has a default value of `3`, and can be set to any positive integer: though in general only values of `1`, `3` and `5` are in common use.
+The `n_val` bucket property has a default value of `3`, and can be set to any positive integer: though only values of `1`, `3` and `5` are commonly used.
 
 Setting distinct `n_val`s on a per-bucket basis is not recommended, it is preferable to have a consistent `n_val` across a cluster.  This is because:
 
@@ -253,7 +253,7 @@ If a bucket is configured to `{aae_tree_exclude, true}` then the keys in that bu
 
 The preferred long-term strategy for temporary objects is to use the eraser and reaper processes to garbage collect objects, rather than relying on backend TTL.  However when migrating from a multi-backend store with TTL-based backends, the migration should be easier if: those temporary buckets are excluded from aae trees, are replicated separately using range_repl, and reconciled using bucket-specific aae full-sync jobs.
 
-The `aae_tree_exclude` bucket property may be cached by processes within a cluster, so changing the property will not have immediate effect.  If changing the property it should be coordinated with a rolling restart.
+The `aae_tree_exclude` bucket property may be cached by processes within a cluster, so changing the property will not have immediate effect.  A change to the `aae_tree_exclude` property should be coordinated with a rolling restart.
 
 #### Property - small_vclock
 
@@ -267,7 +267,7 @@ Other vclock settings - `old_vclock`, `young_vclock`, `big_vclock` - should not 
 
 The `notfound_ok` bucket property has a default value of `true`, and this means when calculating the `r` value of a read, a response from an individual vnode of `not_found` will count as a valid read, and so will count towards quorum being reached.
 
-It is recommended to set `notfound_ok` to `false`, so that a vnode with a missing value will not count towards quorum, especially when the application never expects to read keys that are not present, and so not_found is definitively a failure.  However, if the applictaion purposefuly reads before a write to confirm that an object is not present - then configuring `notfound_ok` to `true` would be preferred.
+It is recommended to set `notfound_ok` to `false`, so that a vnode with a missing value will not count towards quorum, especially when the application never expects to read keys that are not present, and so not_found is definitively a failure.  However, if the application purposefuly reads before a write to confirm that an object is not present - then configuring `notfound_ok` to `true` would be preferred.
 
 #### Property - pr and pw
 

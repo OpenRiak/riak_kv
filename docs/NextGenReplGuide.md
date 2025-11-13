@@ -156,11 +156,11 @@ The mean_repltime is a measure of the delta between the last-modfied-date on the
 
 ### Configure Full-Sync Reconciliation and Replication (All)
 
-To use the full-sync mechanisms, and the operational tools then TictacAAE must be enabled:
+To use the full-sync mechanisms, and the operational tools then Tictac AAE must be enabled:
 
 > tictacaae_active = active
 
-This can be enabled, and the cluster run in 'parallel' mode - when a backend other than leveled is used.  However, for optimal replication performance Tictac AAE is best run in `native` mode with a leveled backend.  When enabling tictacaae for the first time, it will not be usable by full-sync until all trees have been built.  Trees will periodically rebuild, and full-sync should continue to operate as expected during rebuilds.
+This can be enabled, and the cluster run in 'parallel' mode - when a backend other than leveled is used.  However, for optimal replication performance Tictac AAE is best run in `native` mode with a leveled backend.  When enabling Tictac AAE for the first time, it will not be usable by full-sync until all trees have been built.  Trees will periodically rebuild, and full-sync should continue to operate as expected during rebuilds.
 
 Full-sync replication requires the existence of source queue definitions and sink worker configurations.  The same configurations can be used as for real-time replication.  If there is a need to have only full-sync replication without allowing for real-time replication - then the `block_rtq` keyword can be used instead of `any` on the source queue definition.
 
@@ -204,7 +204,7 @@ Then to configure a peer relationship:
 > ttaaefs_peerport = 8087
 > ttaaefs_peerprotocol = pb
 
-Unlike when configuring a real-time replication sink, each node can only have a single peer relationship with another node in the remote cluster.  Note though, that all full-sync commands run across the whole cluster.  If a single peer relationship dies, some full-sync capacity is lost, but other peer relationships between different nodes will still cover the whole data set.  It is only necessary to have one working peer relationship to confirm clusters are in-sync.  If there are multiple active peer relationships between two clusters, some simple offset-based scheduling is done to space out the full-sync requests - but there is no single coordinating scheduler for full-sync within the cluster.
+Unlike when configuring a real-time replication sink, each node can only have a single peer relationship with another node in the remote cluster.  Note though, that all full-sync commands run across the whole cluster.  If a single peer relationship dies, some full-sync capacity is lost, but other peer relationships between different nodes will still cover the whole data set.  It is only necessary to have one working peer relationship to confirm clusters are in-sync.  If there are multiple active peer relationships between two clusters, some simple offset-based scheduling is managed by Riak to space out the full-sync requests - there is no single coordinating scheduler for full-sync within the cluster.
 
 Once there are peer relationships, a schedule is required, and a capacity must be defined.
 
@@ -233,7 +233,7 @@ The `all`, `day` and `hour` checks restrict the modified date range used in the 
 
 It is normally preferable to under-configure the schedule.  When over-configuring the schedule, i.e. setting too much repair work than capacity of the cluster allows, there are protections to queue those schedule items there is no capacity to serve, and proactively cancel items once the manager falls behind in the schedule.  However, those cancellations will reset range_checks and so may delay the overall time to recover.
 
-Each check is constrained by `ttaaefs_maxresults`, so that it only tries to resolve issues in a subset of broken leaves in the tree of that scale (there are o(1M) leaves to the tree overall).  However, the range checks will bosst the size of max results (as they are constrained by the range, and so more efficient).  The max results by a range check will be the multiple of `ttaaefs_maxresults` and `ttaaefs_rangeboost`.
+Each check is constrained by `ttaaefs_maxresults`, so that a check only tries to resolve issues in a (max results sized) subset of broken leaves.  There are o(1M) leaves to the tree overall, so the `ttaaefs_maxresults` will represent a small fraction of the data.  However, range checks will automatically boost the size of max results (as they are constrained by the range, and so naturally more efficient).  The max results of a range check will be the multiple of `ttaaefs_maxresults` and `ttaaefs_rangeboost`.
 
 It is possible to enhance the speed of recovery when there is capacity by manually requesting additional checks, or by temporarily overriding `ttaaefs_maxresults` and/or `ttaaefs_rangeboost`.  This can be done from remote_console using `application:set_env(riak_kv, ttaaefs_maxresults, 64)` for example, or `application:set_env(riak_kv, ttaaefs_rangeboost, 4)`.
 
@@ -258,13 +258,13 @@ The `ttaaefs_scope` can be set to a specific bucket.  The non-functional charact
 
 The rules of the `ttaaefs_<sync_type>check` configuration are followed with per-bucket synchronisation.  So using `ttaaefs_autocheck` when a previous check succeeded will scan only recently modified items to build the tree for comparison.  This does mean that non-recently modified variations within the bucket (such as resurrected objects or tombstones) will not be detected by `ttaaefs_autocheck` as when `ttaaefs_scope = all`.  When using per-bucket full-sync, it may be wise to occasionally schedule a `ttaaefs_allcheck` to cover this scenario.
 
-Note that a scheduled run of an `ttaaefs_allcheck` will occur regardless of whether the current time is within or outside of the allcheck.window.  The window is related only to the running of `ttaaefs_autocheck` and it limits the `ttaaefs_autocheck` so that it can only being uplifted to a `ttaaefs_allcheck` within the window.
+Note that a scheduled run of an `ttaaefs_allcheck` will occur regardless of whether the current time is within or outside of the `allcheck.window`.  The window is related only to the running of `ttaaefs_autocheck` and it limits the `ttaaefs_autocheck` so that it can only being uplifted to a `ttaaefs_allcheck` within the window.
 
-When using per-bucket full-sync, and performing a rolling upgrade to Riak 3.2.3 or 3.4.0, there may be errors merging buckets.  To prevent these errors during the rolling upgrade, then either disable full-sync for the period of the upgrade, or use the configuration option to force the new nodes to use legacy format trees:
+When using per-bucket full-sync, and performing a rolling upgrade to Riak 3.2.3 or 3.4.0 (from earlier releases than Riak 3.2.3), there may be errors merging trees.  To prevent these errors during the rolling upgrade, then either disable full-sync for the period of the upgrade, or use the configuration option to force the new nodes to use legacy format trees:
 
 > legacyformat_tictacaae_tree = enabled
 
-There are significant memory improvements related to the new tree format, so the configuration should be reversed after the rolling upgrade has completed.  There are no inter-cluster issues with tree versions, it is only an issue when merging trees within a cluster.
+There are significant memory improvements related to the new tree format, so the configuration should be reversed after the rolling upgrade has completed.  There are no inter-cluster issues with tree versions, it is only an issue when merging trees within a cluster to provide a cluster-wide view of a tree.
 
 ### Replication API
 
@@ -282,7 +282,7 @@ Full-sync exchanges will go through the following states:
 
 `root_compare` - a comparison of the roots of the two cluster AAE trees.  This comparison will be repeated until a consistent number of repeated differences is seen.  If there are no repeated differences, we consider the clusters to be in_sync - otherwise run `branch_compare`.
 `branch_compare` - repeats the root comparison, but now looking at the leaves of those branches for which there were deltas in the `root_compare`.  If there are no repeated differences, we consider the clusters to be in_sync - otherwise run `clock_compare`.
-`clock_compare` - will run a fetch_clocks_nval or fetch_clocks_range query depending on the scheduled work item.  This will be constrained by the maximum number of broken segments to be fixed per run (`ttaaefs_maxresults`).  This list of keys and clocks from each cluster will be compared, to look for keys and clockc where the source of the request has a more advanced clock - and these keys will be sent for read repair.
+`clock_compare` - will run a fetch_clocks_nval or fetch_clocks_range query depending on the scheduled work item.  This will be constrained by the maximum number of broken segments to be fixed per run (`ttaaefs_maxresults`).  This list of keys and clocks from each cluster will be compared, to look for keys and clocks where the source of the request has a more advanced clock - and these keys will be re-replicated.
 
 At clock_compare stage, a log will be generated for each bucket where repairs were required, with the low and high modification dates associated with the repairs:
 
@@ -423,11 +423,11 @@ When an `all_check` is prompted due to a `{clock_compare, 0}` result, there are 
 - the cached trees differ but the differences lie outside the previous range;
 - the cached trees differ due to a bad tree cache, and there are no actual differences.
 
-For the second case, it is necessary to repair the trees, so when an `all_check` is triggered it will also prompt for trees to be repaired on this node (for the identified mismatched segments only) then next time there is a fetch for keys and clocks.  The triggering should have a log of:
+For the second case, it is necessary to repair the trees, so when an `all_check` is triggered it will also prompt for trees to be repaired on this node (for the identified mismatched segments only) the next time there is a fetch for keys and clocks.  The triggering should have a log of:
 
 `Setting node to repair trees as unsync'd all_check had no repairs - count of triggered repairs for this node is ~w`
 
-The triggering of tree repairs increases the cost of the fetching of keys and clocks.  Each trigger is coordinated so that it is only fired once and once only (per trigger event) on each vnode.  Usually there is a single vnode with a bad tree cache, but it may take a full cycle of checks for the trigger to be enabled and enacted on the correct node.  This assumes that full-sync is bi-directional and configured across all nodes, so eventually each node will see the bad state and trigger the repair mode.  If this isn't the case manual intervention may be required.  
+The triggering of tree repairs increases the cost of the fetching of keys and clocks.  Each trigger is coordinated so that it is only fired once and once only (per trigger event) on each vnode.  Usually there is a single vnode with a bad tree cache, but it may take a full cycle of checks for the trigger to be enabled and enacted on the correct node.  This assumes that full-sync is bi-directional and configured across all nodes, so eventually each node will see the bad state and trigger the repair mode.  If this isn't the case, manual intervention may be required.  
 
 To force a node to enter into the tree repair state, then the following functions can be called via `remote_console`.
 

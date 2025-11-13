@@ -19,7 +19,7 @@ When making server or instance choices, the following guidance should be conside
 
 - There are production use cases of Riak with rigid zero-data-loss requirements that use ephemeral storage components due to the reliability and repair capability within a Riak cluster, and between replicating clusters in diverse locations.
   - It is best to cost-optimise for speed and capacity with node storage, rather than for resilience.
-- All the memory of the system will be used to improve performance, any memory not used by Riak should be consumed by the file-system page cache and increase throughput potential by reducing IO throughput and latency.  Over-provisioning memory is generally of value.
+- All the memory of the system will be used to improve performance, as any memory not used by Riak should be consumed by the file-system page cache.  The page cache will increase throughput potential by reducing the latency of disk reads, and also by keeping disk activity below IO constraints.  Over-provisioning memory is generally of value.
 - The Erlang/OTP platform used by Riak, and the design of Riak itself, is optimised to make use of multi-core architectures; more CPU cores should generally be preferred to faster CPU cores.
   - There are production deployments of Riak on both ARM and Intel-based CPUs.
   - The Erlang VM which has JIT optimisations for both architectures.
@@ -131,7 +131,7 @@ The second stage is a `plan`.  In the plan stage, a claimant node, which will ha
 As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
-- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check the proposed configuration is possible before making the change.
+- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is a [ring calculator](https://github.com/OpenRiak/ring_calculator) where you can check the proposed configuration is possible before planning a cluster expansion.
 - The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
@@ -149,7 +149,7 @@ The v3 claim algorithm which tries to find an optimal solution through a series 
 
 The v4 algorithm is a brute-force algorithm which will attempt to solve a sufficient answer, potentially by exhausting all possibilities.  The v4 algorithm is the only effective algorithm for handling locations.  Because it seeks a sufficient answer, rather than an optimal one, the offline `ring_calculator` can be used to determine how far the target inputs can be pushed and still have a viable solution, before running the plan.
 
-Due to the length of time the brute-force algorithm may take, the `plan` command may timeout - however work in progress is cached, so re-running the after a short wait plan should return a plan in a timely answer
+Due to the length of time the brute-force algorithm may take, the `plan` command may timeout - however work in progress is cached, so re-running the plan after a short wait should return a plan in a timely manner, as the previous calculations will be reused.
 
 ### Join process - verify the plan
 

@@ -133,7 +133,7 @@ Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for inform
 
 The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
 
-Repair key range operations are especially powerful for repairing keys across a cluster following a known incident with a given time range, and may prove to be quicker in some circumstances than waiting for the delta to heal via active anti-entropy.
+Repair key range operations are a potentially efficient method for repairing keys across a cluster following a known incident, the impact of which was restricted to a given time range; and may prove to be quicker in some circumstances than waiting for the delta to heal via active anti-entropy.
 
 ## Remote Console
 
@@ -162,8 +162,8 @@ Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for inform
 There are a number of administration commands that are available [via the riak_client module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_client.erl).  These include:
 
 - `participate_in_coverage/1`, `remove_node_from_coverage/0`, `reset_node_for_coverage/0` - used to change the `participate_in_coverage` status of the node.  When a node is known to have a potential data issue (i.e. it is being recovered from a failure), it can be removed from coverage, and reset back into coverage once the data has been proven to be fully populated.
-- `replrtq_reset_all_peers/1` - used to force all up nodes in the cluster to reset their peer discovery (used in real-time repl), to be used after adding a new node to a remote cluster.
-- `replrtq_reset_all_workercounts/2` - used to force all up nodes to change their worker counts and per-peer limits, which may be required when a sink cluster cannot keep up fetching the remote replication traffic and so requires more sink workers (or sink workers per peer).
+- `replrtq_reset_all_peers/1` - used to force all active and available nodes in the cluster to reset their peer discovery (used in real-time repl), to be used after adding a new node to a remote cluster.
+- `replrtq_reset_all_workercounts/2` - used to force all active and available nodes to change their worker counts and per-peer limits, which may be required when a sink cluster cannot keep up fetching the remote replication traffic and so requires more sink workers (or sink workers per peer).
 
 ### Hanging console sessions
 
@@ -220,7 +220,7 @@ In general, never change an environment variable at run-time via `remote_console
 
 From the command line it is possible to view the current description of a configuration option using `riak admin describe <option_name>` e.g. `riak admin describe conditional_put_mode `.
 
-Note that the result of `describe` request is the current schema documentation of an option; whereas if a `riak.conf` file has been kept in place between upgrades, that `riak.conf` file may not have the up to date description.  The command-line `describe` is a more reliable way of understanding the present advice for the option.
+Note that the result of `describe` request is the current schema documentation of an option; whereas if a `riak.conf` file has been kept in place between upgrades, that `riak.conf` file may not have the up to date description.  The command-line `describe` is a more reliable way of understanding the present advice for a configuration option.
 
 ## Logging and Statistics
 
@@ -367,7 +367,9 @@ For performance testing Riak [`basho_bench`](https://github.com/OpenRiak/basho_b
 
 Before considering backups, it is worth noting that as a distributed database there is no single commit position that represents a point of truth.  Therefore there is no way to effectively backup at a point, and restore to a point.  The overall state is eventually consistent.
 
-The Riak is designed to operate as both resilient clusters and a broader system of resilience gained by clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.  Major changes to the database will often occur in the application, not the database.  The application is in control of the data schema, and hence the migration of objects between schema versions.  Self-healing is used to handle repair scenarios - i.e. recovering data from peers within the cluster, and the system is designed to perform predictably during the healing process.
+- The Riak is designed to operate as a resilient cluster, and also as a broader system of resilience from having multiple clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.
+- Major changes to the database will often occur in the application, not the database.  The application is in control of the data schema, and hence the migration of objects between schema versions.
+- Self-healing is used to handle repair scenarios - i.e. recovering data from peers within the cluster, and the system is designed to perform predictably during the healing process.
 
 Production users of Riak commonly have relatively lightweight backup and recovery strategies when compared to traditional database management systems; eventual consistency allows the global recovery of state without the need to focus on recovering state first back to a point in time.  In general, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
@@ -377,9 +379,9 @@ Note that in cloud environments, if an inefficient backup method is chosen (e.g.
 
 ### Backup - the preferred building block
 
-As part of the replication approach of Riak it is possible to replicate, and reconcile between clusters with different `n_val`'s, different node counts, different vnode_counts and different storage backends.  It is common in Riak production systems to maintain a single-node, `n_val=1` cluster, with a potentially lower ring size, that represents a backup; where that cluster may be in a diverse geographical occasion to the primary production clusters.
+As part of the replication approach of Riak it is possible to replicate, and reconcile between clusters with different `n_val`s, different node counts, different vnode counts (i.e. ring sizes) and different storage backends.  It is common in Riak production systems to maintain a single-node, `n_val=1` cluster, with a potentially lower ring size, that represents a backup; where that cluster may be in a diverse geographical occasion to the primary production clusters.
 
-Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.  Note that the real-time replication fetches use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. in this case the backup cluster) pause consumption.  After re-connecting, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful auto-resolving any unexpected deltas.
+Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.  Note that the real-time replication fetches use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. in this case the backup cluster) pause consumption.  After re-connecting, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful - with automatic resolution of any unexpected deltas.
 
 Backup clusters are not a prerequisite for taking backups, but they can be a flexible and efficient starting point; and in some cases act as an alternative.
 
@@ -446,7 +448,7 @@ All these functions take a single argument N (the N in Top N), though the `summa
 
 ### Microstate accounting
 
-To examine the spread of CPU-related work by scheduler (there should be one scheduler type for each CPU core), microstate accounting may be used.  The [erlang documentation](https://www.erlang.org/doc/apps/runtime_tools/msacc.html) gives basic information on analysing the output, but note that the functionality of microstate accounting may vary significantly between OTP releases.
+To examine the spread of CPU-related work by scheduler (there should be one standard erlang scheduler for each CPU core), microstate accounting may be used.  The [erlang documentation](https://www.erlang.org/doc/apps/runtime_tools/msacc.html) gives basic information on analysing the output, but note that the functionality of microstate accounting may vary significantly between OTP releases.
 
 To alter the configuration on the Erlang VM to adjust the operation of schedulers, see the `erlang.schedulers` options within the [riak schema file](https://github.com/OpenRiak/riak/blob/openriak-3.4/priv/riak.schema).  It is recommended to seek expert advice, and run realistic performance test exercises before adjusting any default settings.
 

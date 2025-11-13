@@ -1,6 +1,6 @@
 # Riak KV - Query API
 
-Riak supports a query language for secondary indexes, whereby range queries can be run on indexes, with the index entries containing projected attributes, which can be filtered using a filter expression language.
+Riak supports a query language for secondary indexes, whereby range queries can be run on indexes, with the index entries containing additional projected attributes beyond the sort key.  Queries can apply further filtering on the index entries within the range, by using a filter expression language on those projected attributes.
 
 - [Adding Index Entries to Objects](#secondary-indexes---adding-index-entries-to-an-object)
 - [Overview of querying those index entries](#secondary-indexes---querying-index-entries-overview)
@@ -31,7 +31,7 @@ Index terms can be extended by projecting additional attributes onto the sort ke
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
-There is no pre-defined way of how to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  There are mechanisms available within Riak to extract, filter-on and return projected attributes at query time - and it is a requirement of application design to ensure that projected attributes are appended in a way that is both flexible and efficient (within Riak).
+There is no pre-defined way to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  There are mechanisms available within Riak to extract, filter-on and return projected attributes at query time - and it is a requirement of application design to ensure that projected attributes are appended in a way that is both flexible and efficient when extracting and filtering.
 
 ## Secondary Indexes - Querying Index Entries Overview
 
@@ -43,7 +43,7 @@ A query consists of the following components:
 - An evaluation expression (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
 - A filter expression (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (using a filter expression).
 - A regular expression (optional); a potentially less flexible, but commonly more performant alternative to evaluation and filter expressions - where a regular expression match against a term is used to filter the term in or out.
-- A result aggregation method (optional); a mechanism for describing the type of results required, and how they should be sorted (e.g. just matching object keys, terms and keys, keys by specific attribute).
+- A result aggregation method (optional); a mechanism for describing the type of results required, and how those results should be sorted (e.g. just matching object keys, terms and keys, keys by specific attribute).
 
 Queries can be sent individually, but it is also possible to send multiple queries along with an aggregation expression to define how the query results will be combined (e.g. using `INTERSECT`, `UNION`, `NOT`) - where Riak will provide a single set of results as a response based on the aggregation expression.
 
@@ -576,9 +576,9 @@ Index entries are stored in the leveled ledger (or key store).  The index entrie
 
 Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For a smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
 
-There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring size does not help the long-term scalability of a cluster.  With 1% of work being complex 2i queries, there can be a 10-20% capacity constraint for every doubling of the ring size.
+There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  However, reducing the ring size does not help the long-term scalability of a cluster.  If, for example, 1% of requests are complex 2i queries, there can be a 10-20% CPU utilisation cost for every doubling of the ring size.
 
-If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally about 20-50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportional to the number of keys in the sort key range (not the number of keys that are deserialised).
+If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally between 10%  and 50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportional to the number of keys in the sort key range (not the number of keys that are deserialised).
 
 Aggregation of queries is performed at a vnode-level, before results are returned to be aggregated for the client - so even when cross-cluster result sets are large the aggregation operations are sub-divided into relatively small set operations.
 

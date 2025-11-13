@@ -76,7 +76,7 @@ Common across the API is the concept of [dotted version vectors](#version-vector
 
 ### Object API
 
-When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating the version history of the object (the version vector), storing the object and prompting replication to other clusters when configured. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
+When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is considered by cluster health-checks to be active, and it is currently reachable.  The coordination of a change is the updating of the version history of the object (the version vector), storing the object and prompting replication to other clusters where required. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure) to be stored, if the version history indicates this change is more recent that the currently stored object.
 
 Handling a forwarded PUT is less expensive than coordinating a PUT, but not by an order of magnitude.
 
@@ -134,7 +134,7 @@ Riak tracks the current state of the Version Vectors across all the key space to
 
 The active anti-entropy process is designed to be highly efficient, and very quick, when confirming no deltas exist.  The work to discover and repair deltas is relatively expensive - but is throttled in default configuration to avoid overloading the database.  As there are other anti-entropy mechanisms (e.g. quorum reads with read repair); slow repair is preferred to high repair-related resource utilisation.
 
-The anti-entropy trees have 1,024 branches, and each branch has 1,024 leaves.  Each key in the store is mapped by a hash algorithm into a given leaf.  The hash value of that leaf is calculated by taking the a hash of both the Key and version vector for the object - and then performing an `xor` operation on all the objects within that leaf.  The hash value for each branch is the hash of each leaf in the branch combined using `xor`.
+The anti-entropy trees have 1,024 branches, and each branch has 1,024 leaves.  Each key in the store is mapped by a hash algorithm into a given leaf.  The hash value of that leaf is calculated by taking the a hash of both the Key and version vector for the object - and then performing an `xor` operation on all the hashes within that leaf.  The hash value for each branch is the hash of each leaf in the branch combined using `xor`.
 
 Each vnode has a cached tree for each preflist the vnode supports (with a single `n_val` in the cluster there will be `n_val` preflists in each vnode, and hence `n_val` cached trees). The cached tree represents the state for the whole preflist on the vnode.  When an object is modified, then the object key and the both the previous and current version vector is sent to the `aae_controller` for the vnode; which will update the correct preflist's tree cache, using a double xor operation (in effect one to remove the previous hash, and one to add the new hash).
 

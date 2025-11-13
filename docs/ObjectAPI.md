@@ -139,11 +139,11 @@ There are four levels of strictness to the application of conditions:
   - the chance of duplicate grants in this scenario is very small, but non-zero;
   - there will be no failure to grant as long as there are no more than two nodes down or unreachable within the cluster.
 
-The levels of strictness are set for the entire cluster, using the `conditional_put_mode` and `token_request_mode` configuration items [within the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
+The level of strictness is set for the entire cluster, using the `conditional_put_mode` and `token_request_mode` configuration items [within the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
 A failure of a conditional request will result in a `412: Precondition Failed` response.  Note, that data is not secure at this point, and is vulnerable to the failure of the application, if it was not stored already in a Riak cluster prior to making the conditional change (e.g. when using Riak in an Event Source / CQRS model).
 
-Tests have verified that in non-exceptional scenarios, simple failure events and cluster administration changes will lead to the promise of consensus being upheld (with both basic and primary consensus). This however, is not equal to strong consistency, by any formal definition.  There will be complex and potentially unexpected scenarios where the condition will not be applied in a serialised way.  Riak remains an eventually consistent store, to protect data in all scenarios still requires the setting of `allow_mult = true` and the potential return of multiple (sibling) content values to an object read request.
+Tests have verified that in non-exceptional scenarios, simple failure events and cluster administration changes will lead to the promise of consensus being upheld (with both basic and primary consensus). This however, is not equal to strong consistency by any formal definition.  There will be complex and potentially unexpected scenarios where the condition will not be applied in a serialised way.  Riak remains an eventually consistent store, to protect data in all scenarios still requires the setting of `allow_mult = true` and the potential return of multiple (sibling) content values to an object read request.
 
 There are three scenarios where the conditional check will be weakened:
 
@@ -225,7 +225,7 @@ curl -v http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "Accept:
 
 Delete requests should be sent using the DELETE method.  As with PUT requests, DELETE requests should include the `x-riak-vclock` header with the value of the entry that was read.  
 
-Without providing version information, the delete will first read the current version of the object, and then attempt to delete the object using that version information.  This may not be the same version of the object that prompted the delete.  DELETE with no `x-riak-vclock` is "delete regardless", whereas with a `x-riak-vclock` it is a request to delete only the object at that version.
+Without providing version information, the delete will first read the current version of the object, and then attempt to delete the object using that discovered version information.  This may not be the same version of the object that prompted the delete request.  DELETE with no `x-riak-vclock` is "delete regardless", whereas with a `x-riak-vclock` it is a request to delete only the object at that version.
 
 Supported HTTP request headers for DELETE:
 
