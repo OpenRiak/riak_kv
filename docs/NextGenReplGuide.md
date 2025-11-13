@@ -96,15 +96,13 @@ For this getting started guide, it is assumed that the setup involves:
 
 ### Setting Delete Mode
 
-There are three possible delete modes for Riak:
+Riak can be configured to operate in one of [three possible delete modes](/docs/InstallAndStartGuide.md#configuration-of-riak---delete-mode):
 
 - Timeout (default 3s);
 - Keep;
 - Immediate.
 
-When running replication, it is strongly recommended to change from the default setting, and use to the delete mode of `keep`.  Running `keep` will retain semi-permanent tombstones after deletion, that are important to avoid issues of object resurrection when running bi-directional replication between clusters.
-
-Running an alternative delete mode, is tested, and will work, but there will be a significantly increased probability of false-negative reconciliation events, that may consume resource on the cluster.
+When running replication, it is recommended to change from the default setting, and use to the delete mode of `keep`.  Using an alternative delete mode, is tested, but there will be a significantly increased probability of false-negative reconciliation events, that may consume resource on the cluster.
 
 ### Configure real-time replication
 
@@ -248,7 +246,7 @@ In a cluster with 1bn keys, under a steady load including 2K PUTs per second, re
 
 Timings will vary depending on the total number of keys in the cluster, the rate of changes, the size of the delta and the precise hardware used.  Full-sync repairs tend to be relatively demanding of CPU (rather than disk I/O), so available CPU capacity is important.
 
-The `ttaaefs_queuename` is the name of the queue on this node, to which deltas should be written (assuming the remote cluster being compared has sink workers fetching from this queue).  If the `ttaaefs_queuename_peer` is set to disabled, when repairs are discovered, but it is the peer node that has the superior value, then these repairs are ignored.  It is expected these repairs will be picked up instead by discovery initiated from the peer.  Setting the `ttaaefs_queuename_peer` to the name of a queue on the peer which this node has a sink worker enabled to fetch from will actually trigger repairs when the peer cluster is superior.  It is strongly recommended to make full-sync repair bi-directionally in this way.
+The `ttaaefs_queuename` is the name of the queue on this node, to which deltas should be written (assuming the remote cluster being compared has sink workers fetching from this queue).  If the `ttaaefs_queuename_peer` is set to disabled, when repairs are discovered, but it is the peer node that has the superior value, then these repairs are ignored.  It is expected these repairs will be picked up instead by discovery initiated from the peer.  Setting the `ttaaefs_queuename_peer` to the name of a queue on the peer which this node has a sink worker enabled to fetch from will actually trigger repairs when the peer cluster is superior.  It is recommended to make full-sync repair bi-directionally in this way, as otherwise resource spent on reconciliation activity triggered by the cluster with inferior value will be wasted.
 
 If there are 24 sync events scheduled a day, and default `ttaaefs_maxresults` and `ttaaefs_rangeboost` settings are used, and an 8-node cluster is in use - repairs via ttaaefs full-sync will happen at a rate of about 100K per day.  It is therefore expected that where a large delta emerges it may be necessary to schedule a `range_repl` fold, or intervene to raise the `ttaaefs_rangeboost` to speed up the closing of the delta.
 
@@ -442,7 +440,7 @@ Bad caches are normally discovered via tree rebuilds, as tree rebuilds correct t
 
 Handling of tree repairs differs by version of Riak:
 
-- version < 3.0.10 => there is no workaround other than to rebuild trees entriely that are in need of repair, and the complete repair must be manually triggered (the trigger_tree_repairs/0 function is not available). In these versions this requires a restart of each node, wiping the tree cache from disk whilst it is stopped - or simply waiting for the next scheduled rebuild to complete.  It is strongly recommended to upgrade to at least 3.0.10 before runnning full-sync with nextgenrepl.
+- version < 3.0.10 => there is no workaround other than to rebuild trees entriely that are in need of repair, and the complete repair must be manually triggered (the trigger_tree_repairs/0 function is not available). In these versions this requires a restart of each node, wiping the tree cache from disk whilst it is stopped - or simply waiting for the next scheduled rebuild to complete.  It is recommended to upgrade to at least 3.0.10 before runnning full-sync with nextgenrepl because of this issue.
 - version < 3.2.3 => there is an automatic workaround, in that full-sync will call trigger_tree_repairs automatically; however it is inefficient (in that some vnodes may unnecessarily rebuild for the broken segments on mulitple occasions).
 - version < 3.2.5 => there is a relatively efficient workaround.
 - version >= 3.2.5 => it is expected that the root cause has been fixed, but the workaround remains in place.

@@ -162,7 +162,7 @@ A number of "defaults" for bucket properties are configurable via `riak.conf` e.
 
 Configuring these defaults will impact only non-typed buckets.  So any bucket name used where no type is specified will inherit these defaults, but any typed bucket created will NOT inherit these configured defaults - typed buckets instead have fixed, pre-defined defaults.
 
-Two pre-defined defaults changed with the introduction of typed buckets (the merge strategy aka `dvv_enabled`, and the `allow_mult` configuration).  Having this delta in behaviour is a common cause of confusion in application developers using Riak, and so it is strongly recommended to configure your clusters to have the same default properties for non-typed buckets as with typed buckets.  This can be achieved by adding to your `riak.conf`:
+Two pre-defined defaults changed with the introduction of typed buckets (the merge strategy aka `dvv_enabled`, and the `allow_mult` configuration).  Having this delta in behaviour is a common cause of confusion in application developers using Riak, and so it is recommended to configure your clusters to have the same default properties for non-typed buckets as with typed buckets.  This can be achieved by adding to your `riak.conf`:
 
 > buckets.default.merge_strategy = 2
 > buckets.default.allow_mult = true
@@ -190,7 +190,7 @@ The `allow_mult` bucket property has a default value of `true`, for any typed bu
 
 The internal workings of Riak are identical for the two allow_mult settings, with the exception of the case when an unresolvable conflict is discovered in the object change history.  In this case: if `{allow_mult, true}`, all conflicting versions are returned to the client to resolve (on the next GET); if `{allow_mult, false}` only the object with the most recent last_modified_date is returned.
 
-The last_modified_date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match of conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  Due to the potential use of timestamps to make comparisons when using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is strongly recommended.
+The last_modified_date is a microsecond-level timestamp, that depends on the accuracy of the local node's clock.  If the timestamps match of conflicting changes, then an arbitrary choice is made, although there is a preference for changes with values over deletions.  Due to the potential use of timestamps to make comparisons when using `{allow_mult, false}`, the use of reliable time sources to co-ordinate time within and across clusters is recommended.
 
 When using conflict-free replicated data types, `{allow_mult, true}` must always be used.
 
