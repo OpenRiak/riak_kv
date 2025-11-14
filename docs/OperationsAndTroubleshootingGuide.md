@@ -109,7 +109,7 @@ There exists the (very rare) potential for a ledger to be corrupted.  There are 
 - Deleting the ledgers in the impacted partitions (under each vnode's leveled store there should be a ledger folder);
 - Restarting the node.
 
-On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster - the `riak_kv` application which determines availability of a node, will not complete startup until all the rebuilds are complete.  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
+On restarting the node all missing ledgers will be rebuilt before the node becomes an active participant in the cluster - the `riak_kv` application which determines availability of a node, will not complete startup until all the rebuilds are complete.  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
 
 Previous versions of Riak had an option to repair secondary index entries through a specific anti-entropy recovery process.  This is no longer supported.  If there are detected issues with inconsistency between objects and their index entries, then this should be addressed by the simple approach of deleting the ledger (which contains the index entries) to force a rebuild on restart of the vnode.
 
