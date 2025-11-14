@@ -33,7 +33,7 @@ Some points to note when installing Erlang:
 - The OpenSSL 3.0 integration in OTP 24 is not currently considered to be production-ready and stable.
 - If using Riak KV 3.0.16 and OTP 22.3, Riak does not support Erlang/OTP running in [HIPE mode](https://www.erlang.org/docs/22/man/hipe_app).  HIPE is retired as of OTP 24.
 - There are significant performance advantages in running Riak on OTP 26, when compared with OTP 24.3.
-- The Erlang/OTP are team only committed to fixing issues in the three most recent major versions of Erlang.  Although Erlang 24.3 is mature and very stable, migrating forward to a Riak release running on a presently supported Erlang version is recommended.
+- The Erlang/OTP team are only committed to fixing issues in the three most recent major versions of Erlang.  Although Erlang 24.3 is mature and very stable, migrating forward to a Riak release running on a presently supported Erlang version is recommended.
 - It is not possible to migrate directly (using a rolling restart) from Riak KV 3.0 to Riak KV 3.4 due to breaking changes in the Erlang distribution protocol.  Migrating directly between these versions with zero down-time can only be managed using a cluster migration strategy with Riak `nextgenrepl`.
 
 ### Download Riak
