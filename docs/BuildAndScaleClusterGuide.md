@@ -39,7 +39,7 @@ There are also broader considerations to be made with regards to node choices, a
   - Riak is designed to be deployed as a single package where, other than monitoring and security software, Riak is the only package present on the node.
   - It is recommended to automate operational activity on Riak nodes through scripting tools (e.g. Ansible) rather than abstraction layers (e.g. Docker).
 - Scheduling of operational actions within a Riak cluster should avoid concurrent running of resource-intensive activity e.g. array integrity checks in software RAID systems, solid-state disk trim jobs, or operational security software sweeps.
-- Some cloud providers offer special instance types design for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
+- Some cloud providers offer special instance types designed for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
 
 For the configuration of nodes, some general pointers:
 
@@ -50,7 +50,9 @@ For the configuration of nodes, some general pointers:
 
 ### Network
 
-The following considerations should be made when selecting the network infrastructure for running Riak:
+As a distributed database, Riak may place significant demands on the underlying network infrastructure.
+
+For the high-level design of networks supporting Riak clusters, consideration is required of the following factors:
 
 - When using Riak to store and retrieve large (e.g. o(100KB) or bigger) objects, network bandwidth may be the bottleneck and in many systems bandwidth of more than 1 Gbps will be required.
 - TCP incast is a generic problem in distributed systems, where multiple nodes return the same object to a coordinating node concurrently.
@@ -59,13 +61,20 @@ The following considerations should be made when selecting the network infrastru
 - Riak is partition tolerant, in that during partition events data can still be stored securely across multiple nodes, and values can be merged (potentially forming siblings where conflicts cannot be resolved) when partitions heal.  Read events (both Object and Query API calls) may still not succeed correctly during partitions, particularly on minority partitions.  So although there exists aspects of partition tolerance, it is still important to design networks running Riak clusters so that partition events are rare.
 - It is assumed in the design and development of Riak that network round-trip times within a cluster are o(1) ms or better.  At higher latencies network delays will tend to become the most significant proportion of the overall user response delay.
   - There is no assumption of minimal network latency between clusters, so resilience across geographically diverse locations with long round-trip times should be managed by running multiple clusters.
+
+In assessing the bandwidth needs of Riak deployments, consideration is required of the following factors.
+
 - For every GET from Riak, the value will normally be fetched once within the cluster (the majority of the time from within the same location) generating an intra-cluster network bandwidth requirement.  For every PUT the value will normally be sent three times within the cluster.  Between replicating clusters GETs do not create network bandwidth needs, but each PUT requires a single transfer of the value.
   - These facts may change depending on the choice of both n_val and storage backend.
+Riak has the option to enforce compression in the storage backend, but this will not lead to generic enablement of object compression for intra-cluster communication - the network must support the bandwidth necessary to transmit uncompressed objects within the cluster, and back to clients.
+  - Compression of objects replicating between clusters may be enabled via configuration.
+
+Riak has the potential to use two different transport protocols - HTTP and PB.  For the security of communication in the environment, consideration is required of the following factors:
+
 - The Riak API uses either protocol buffers (PB) or HTTP, and both interfaces can be converted to require TLS encryption - by configuring an additional listener for HTTPS and by negotiation on the in-clear listener with PB.
   - To ensure full protection from network eavesdropping, TLS enablement must also be enforced in the [Erlang Distribution Protocol](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html).  TLS enablement must also be separately configured in the `riak.conf` file to ensure protection of handoff communication, and of replicated traffic.
   - Access controls with TLS enablement can be made via certificate or username/password identification with the PB API, but it is only tested with username/password authentication via the HTTPS API.
-- Riak has the option to enforce compression in the storage backend, but this will not lead to generic enablement of object compression for intra-cluster communication - the network must support the bandwidth necessary to transmit uncompressed objects within the cluster, and back to clients.
-  - Compression of objects replicating between clusters may be enabled via configuration.
+- It is common for Riak users to enforce network protection within the infrastructure, rather than within the database itself, for example through use of the AWS nitro system.
 
 ### Load-balancing
 
@@ -77,6 +86,9 @@ Non-functional tests of Riak are performed with requests distributed across the 
   - the proxy may not be able to use reactive health-checks (as errors cannot be detected via HTTP response codes).
 - When making extensive use of secondary indexes on objects, those indexes are stored as HTTP request/response headers.  Some load-balancing proxies (and HTTP client software) may apply limits to the size of both individual HTTP headers and the overall size of all HTTP headers - and without re-configuration those sizes could be breached with either large or numerous secondary index entries.
   - A proxy may also restrict the use of underscores, so it may be necessary to specifically enable `underscores_in_headers` to prevent requests including 2i headers with underscores from being blocked.
+
+As part of load-balancing, it is necessary for a load-balancing gateway to make a continuous determination of the the health of individual nodes, and react accordingly should a node become unavailable:
+
 - Some legacy Riak clients will attempt to implement their own health-checking and load-balancing across configured destinations.  This should be disabled when using a proxy, as it may lead to unexpected failure propagation e.g. a client determining a proxy has failed because it load-balanced a request to a node that has failed.
 - If enabling proactive health-checking of nodes, sending a `ping` request represents a weak check of availability, and a `status` request may have excessive costs.  It is better to use checks for the availability of sentinel objects instead (store specific objects in the cluster for the purpose of health-checks).
   - There is no mechanism for making objects permanent and immutable, so care must be taken to ensure sentinel objects are not accidentally deleted.
@@ -84,17 +96,20 @@ Non-functional tests of Riak are performed with requests distributed across the 
   - Without connection pools it is necessary to ensure there is sufficient connection capacity to handle the required database load, and this will require the reuse of connections in a TIME_WAIT state.
   - Reuse of connections in a TIME_WAIT state will require the PAWS protection described in [RFC 7323](https://www.rfc-editor.org/rfc/rfc7323).  Note that the TCP timestamps necessary for PAWS, may sometimes be disabled for security reasons, as some vulnerability scanning tools are not aware of the relevance of RFC 7323 to high performance environments.
   - Note that a common signal of connection pool exhaustion is response times of close to 1s, 3s or 5s; the delays normally associated with a TCP retry.
-- A proxy for a Riak cluster will generally require a significant amount of bandwidth, especially where the cluster is supporting relatively large objects.  Scaling proxy bandwidth may require a step-change in underlying network technology compared to that of the individual nodes.
 - The `503` service unavailable message is used by Riak when sending a timeout.  However, such timeouts may occur because of poorly formed requests (such as overly complex queries).  It is therefore generally recommended that `503` errors should not be considered as server failures within the proxy configuration, so that nodes that coordinate complex queries are not marked as down.
 - If a node is marked as `down` by a proxy, either through failure detection or operator intervention, it should be noted that the node will still play an active role in the cluster unless it has been stopped.  Marking a node as `down` is not sufficient to remove a role from service.
 - When deploying a new node, note that it may be considered as active by a load-balancer when the node is started, and before the join has been initiated - and in this state the node would not have access to the data in the cluster.  Careful orchestration of change between the load-balancer configuration and cluster change actions is required.
+
+Additional factors that should be considered when implementing a load balancer include:
+
+- A proxy for a Riak cluster will generally require a significant amount of bandwidth, especially where the cluster is supporting relatively large objects.  Scaling proxy bandwidth may require a step-change in underlying network technology compared to that of the individual nodes.
 - Load-balancing proxies are the recommended approach for logging of individual requests, should tracking per request be required.
   - The response time metrics provided by Riak commence at the start of the internal process, and do not include the time to deserialise the request and serialise the response.  Logging metrics from a proxy is a better way of assessing actual response times than relying on the Riak metrics.
 - It is generally easier to automate the management of security controls by manipulating the configuration of a load-balancing proxy, than it is through manipulation of the Riak security CLI controls.  Many environments therefore delegate access controls that restrict users and networks to specific Riak functions to the load-balancing proxy.
 
 ## Forming and Expanding a Riak cluster
 
-Riak may be deployed in the style of a traditional database, with a single node primary "cluster", and a single node standby "cluster" - with the replication and reconciliation controls in riak used to make sure that primary and secondary remain in-sync.  Such setups are commonly only found in non-production environments, the power of Riak is only truly realised when it is used as a scale out database where:
+Riak may be deployed in the style of a traditional database, with a single node primary "cluster", and a single node standby "cluster" - with the replication and reconciliation controls in Riak used to make sure that primary and secondary remain in-sync.  Such setups are commonly only found in non-production environments, the power of Riak is only truly realised when it is used as a scale-out database, and:
 
 - `n_val` is at least 3 (there are three copies of the data stored for resilience in the cluster);
 - the node count is at least 6;
@@ -104,7 +119,7 @@ With modern hardware, a simple configuration such as this can achieve a very hig
 
 The largest Riak users have o(1000) nodes, but these are generally split into different clusters serving different purposes or geographies.  It is rare to have individual clusters that scale beyond 50 nodes.
 
-A cluster is formed by joining nodes to a cluster.  Note that a Riak node, when started is a cluster of 1.  If the ring size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
+A cluster is formed by joining nodes to a cluster.  Note that a Riak node when it is started, is a cluster of one, and so the acting of joining a node is actually the act of merging two clusters.  If the ring size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.  When nodes join a cluster, the handoff process is two-ways - the joining node is handing off vnodes it will no longer run to the cluster, and the cluster will hand off vnodes it requires the joining node to run to that node.  Note that each vnode consists of two vnode modules - `riak_kv_vnode` and `riak_pipe_vnode` - and both modules must handoff for a vnode handoff to complete (although generally the `riak_pipe_vnode` is empty so this handoff is immediate).
 
 For details of the cluster management commands:
 
@@ -124,6 +139,8 @@ The process of joining, is a five stage process:
 
 There must first be a `join`, an act that simply informs the cluster of the intention to make a change.  To perform the join the joining node must be started and be configured with the same `ring_size` as the existing cluster, and must have its location set (if a location-aware cluster is required).  The join command is issued on the joining node.
 
+Only nodes configured with the same `ring_size` as the cluster, can be joined into the cluster.
+
 ### Join process - plan a change
 
 The second stage is a `plan`.  In the plan stage, a claimant node, which will have been elected in the cluster, takes all the pending changes (in this case the joins) - and produces a plan of how vnodes should be arranged in the cluster following the transition.
@@ -131,7 +148,7 @@ The second stage is a `plan`.  In the plan stage, a claimant node, which will ha
 As well as the pending changes, there are four inputs to that planning process:
 
 - The `target_n_val` - which should be >= to the `n_val`. If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.  If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes e.g. the `target_n_val` is the number of primaries and fallbacks which must be on distinct nodes.
-- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is an offline [ring calculator](https://github.com/OpenRiak/ring_calculator) with may be used before before planning a cluster expansion.
+- the `target_location_n_val` - which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.  The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.  For experimenting with checking the validity of larger settings, there is an offline [ring calculator](https://github.com/OpenRiak/ring_calculator) which may be used before planning a cluster expansion.
 - The `ring_size` - how many vnodes need to be distributed, this must be set across the cluster at the start of the cluster, changing the ring size can only be managed by replicating to a new cluster.
 - The cluster claim algorithm - which algorithm should be used to generate the plan.
 
@@ -169,7 +186,7 @@ On issuing the `commit` of the plan, the transfers will be triggered, once certa
 
 The pace of handoffs within the cluster, where there is a significant volume of data to handoff, is determined by the handoff concurrency limits.  There are two concurrency limits, the `cluster_transfer_limit` and the per-node `transfer_limit` - both limits must be lifted to achieve higher concurrent transfers.
 
-When increasing the number of concurrent transfers, it is important to monitor the system for signs of stress related to transfers, such as the `backend_pause` log in the leveled backend.  In some cases, where the recipient node for a handoff cannot process the inbound data fast enough, the handoff will error and exit.  following exit, when the handoff is re-scheduled it will re-commence from the start and redo all previous handoff work.  Avoiding handoff errors is critical to transfer performance.
+When increasing the number of concurrent transfers, it is important to monitor the system for signs of stress related to transfers, such as the `backend_pause` log in the leveled backend.  In some cases, where the recipient node for a handoff cannot process the inbound data fast enough, the handoff will error and exit.  Following exit, when the handoff is re-scheduled it will re-commence from the start and redo all previous handoff work.  Avoiding handoff errors, and hence re-work, is critical to overall transfer performance.
 
 The `handoff_batch_threshold_count` may be reduced if handoff errors are occurring.  This controls the size of each handoff batch, and reducing the size of a batch should reduce the risk the batch will not be processed within the timeout.
 
@@ -181,6 +198,6 @@ In these circumstances, if a node is under disk space pressure, inbound handoffs
 
 ## Shrinking a cluster
 
-Cluster changes to sharing a cluster require the staging of `leave` requests.  These plans may result in two-phase transition plan - where in the first phase the leaving node simply offloads its vnodes to safe nodes (given the targets), and in the second phase the remaining nodes shuffle vnodes to ensure a better balance of load.
+Cluster changes to sharing a cluster require the staging of `leave` requests.  These plans may result in a two-phase transition plan - where in the first phase the leaving node simply offloads its vnodes to safe nodes (given the targets), and in the second phase the remaining nodes shuffle vnodes to ensure a better balance of load.
 
 If the first phase creates an unsafe situation, where a remaining node has a higher proportion of the disk space than it can support, an alternative plan can be made by using the `full_rebalance_on_leave` configuration option.  With this option, a single-phase transition is planned based on an ideal plan for the new layout, and a broader shuffle will occur bypassing the first phase (although this will lead to more handoff events).  This should always be enabled when using `choose_claim_v4`.
