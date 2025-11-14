@@ -89,7 +89,7 @@ Non-functional tests of Riak are performed with requests distributed across the 
 
 As part of load-balancing, it is necessary for a load-balancing gateway to make a continuous determination of the the health of individual nodes, and react accordingly should a node become unavailable:
 
-- Some legacy Riak clients will attempt to implement their own health-checking and load-balancing across configured destinations.  This should be disabled when using a proxy, as it may lead to unexpected failure propagation e.g. a client determining a proxy has failed because it load-balanced a request to a node that has failed.
+- Some legacy Riak clients will attempt to implement health-checking and load-balancing across configured destinations.  This should be disabled when using a proxy, as it may lead to unexpected failure propagation e.g. a client determining a proxy has failed because it load-balanced a request to a node that has failed.
 - If enabling proactive health-checking of nodes, sending a `ping` request represents a weak check of availability, and a `status` request may have excessive costs.  It is better to use checks for the availability of sentinel objects instead (store specific objects in the cluster for the purpose of health-checks).
   - There is no mechanism for making objects permanent and immutable, so care must be taken to ensure sentinel objects are not accidentally deleted.
 - When sending requests via a proxy, it is recommended to avoid connection pooling (e.g. use a `connection_close` or equivalent directive).  Pooling and reusing long-lived connections will reduce response times by a small margin; however there will be failure conditions that may take a long time to be detected, especially without frequent proactive health-checks.
