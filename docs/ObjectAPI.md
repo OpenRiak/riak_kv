@@ -92,7 +92,7 @@ Index entries consist of multiple index fields, where each index field may have 
 
 An object will always be presented (in a GET response) with all its index entries, and when updating an object all index entries must be passed - an update requires all entries, not a delta.
 
-If an object results in an unresolved conflict, the index entries for the object within teh database will be the union of the index entries for all sibling content items.
+If an object results in an unresolved conflict, the index entries for the object within the database will be the union of the index entries for all sibling content items.
 
 ## GET and PUT Options
 
@@ -206,7 +206,7 @@ When using the HEAD method the request will still result in the object value bei
 Supported HTTP request headers for GET:
 
 - `authorization`; optional, for tls-protected requests only when riak security is enabled.
-- `accept: multipart/mixed`; optional, will cause results ina. conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each vtag mat be fetched using the `vtag=<vtag>` query parameter in the URL.
+- `accept: multipart/mixed`; optional, will cause results ina. conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each vtag may be fetched using the `vtag=<vtag>` query parameter in the URL.
 
 Expected HTTP response headers for GET:
 
@@ -232,7 +232,7 @@ Supported HTTP request headers for DELETE:
 - `x-riak-vclock`; see above.
 - `x-riak-if_not_modified`; optional, for conditional requests.
 - `if_none-match: *`; optional, for conditional requests.
-- `authorization`; optional, for tls-protected requests only when riak security is enabled.
+- `authorization`; optional, for tls-protected requests only when Riak security is enabled.
 
 ### Example DELETE request
 
