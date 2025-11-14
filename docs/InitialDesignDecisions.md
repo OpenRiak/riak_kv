@@ -58,7 +58,7 @@ The leveled backend has the following characteristics and features:
 The bitcask backend has the following characteristics and features:
 
 - A simple low-code, journal based key-value store, originally designed and developed by the founding Riak team at Basho; that has been used as a general implementation model for other such stores.
-  - Although there have been minimal changes to the original version as at Riak 3.4, bitcask remains under active development by the OpenRiak team, with plans agreed for future enhancements.
+  - Although there have been minimal changes to the original version as of Riak 3.4, bitcask remains under active development by the OpenRiak team, with plans agreed for future enhancements.
 - Written primarily in Erlang, but including around 3K lines of C code to provide the in-memory database of keys.  Access to C-code is generally for short-lived functions, which limits the impact on the scheduling requirements of the BEAM.  The C-code is also extremely stable, and is low-risk in terms of overheads associated with platform evolution.
 - Supports for pure objects only, no support for index entries and any part of the Riak Query API.
 - Requires an out-of-hours merge window to be available and configured, for compaction of mutated objects.  Merging under database load may lead to highly unpredictable performance.

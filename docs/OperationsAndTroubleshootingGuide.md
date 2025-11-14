@@ -52,7 +52,7 @@ After completing a proactive replace operation, it may be necessary to realign n
 
 ### Reactive Replace
 
-If a node temporarily fails, then recovers without a loss of historic delta; the node will automatically rejoin the cluster and have the any delta in data patched via ant-entropy mechanisms, without the need for operator intervention.
+If a node temporarily fails, then recovers without a loss of historic delta; the node will automatically rejoin the cluster and have any delta in data patched via anti-entropy mechanisms, without the need for operator intervention.
 
 If a node has failed following an incident, and all data on the node is lost, the cluster can still be recovered back to its previous state without requiring a backup of the failed node.
 
@@ -266,7 +266,7 @@ Each worker pool will regularly log its current queue length and last checkout t
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
-### Riak KV Reaper and Riak KV Eraser
+### Riak KV Eraser and Riak KV Reaper
 
 The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold to feed the eraser queue.
 
@@ -277,10 +277,10 @@ Filters within the AAE folds can be used to select specific key_ranges, or last 
 When queueing large volumes of changes, note that:
 
 - The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and dequeued in batches containing objects within the same preflist.
-- The pace of which items are de-queued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
+- The pace of which items are dequeued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
 - In multi-data centre configurations reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
 - Each queue on each node has a limit to the size of reaps or erases it can hold - this is controlled through the `eraser_overflow_limit` and the `reaper_overflow_limit`.  The queue, except for a small number, is held on disk; and so increasing this limit can be achieved without hitting memory constraints.
-- As of Riak 3.4, if a reap is de-queued, but the primaries are not all available, then the reap will be acted on all available primaries and an item will be queued to act on the remaining primaries once they are available.
+- As of Riak 3.4, if a reap is dequeued, but the primaries are not all available, then the reap will be acted on all available primaries and an item will be queued to act on the remaining primaries once they are available.
 - Large reap jobs should not be queued while cluster change operations are planned on the cluster, or any cluster linked by replication.
 
 Whether reaps are required depends on the `delete_mode` setting of the cluster.
