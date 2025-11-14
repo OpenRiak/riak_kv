@@ -224,7 +224,7 @@ Changing an n_val on a bucket which already contains data will have unexpected a
 
 The `node_confirms` bucket property has a default value of `0`, and may be set to any non-negative integer less than or equal to the n_val (for that bucket).  The purpose of `node_confirms` is to offer a guarantee that the data is available on multiple machines, for example setting node_confirms to 2 will guarantee that at least two machines have the data - and the risk of the data being lost can be considered accordingly.
 
-The `node_confirms` property was added as an alternative to using the `pr` and `pw` parameters to provide guarantees that distinct nodes were used for storage before confirming reads/writes.  The use of `pw` could both fail to provide the desired guarantee of physical redundancy; but also could prompt false failures in circumstances where the data was still resiliently stored, reducing availability.
+The `node_confirms` property was added as an alternative to using the `pr` and `pw` parameters to provide guarantees that distinct nodes were used for storage before confirming reads/writes.  The use of `pw` could fail to provide the desired guarantee of physical redundancy and also could prompt false failures in circumstances where the data was still resiliently stored, reducing availability.
 
 Note that `node_confirms` is applied on both reads and writes.  The parameter is also applied on reads so that an application can understand on read that a previous put has not yet reached the required level of diversity.
 
