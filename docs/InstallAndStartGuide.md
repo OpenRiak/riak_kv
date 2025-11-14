@@ -200,7 +200,7 @@ Unless the non-existence of an object can be guaranteed by the application using
 
 The `last_write_wins` bucket property has a default value of `false`.  It should only ever be changed when the `allow_mult` bucket property is set to `false`.
 
-In general, the default should be used, even when `{allow_mult, false}`.  Setting `{last_write_wins, true}` changes the behaviour on PUT so that an incoming write is assumed to be superior to an existing write, without checking the change history of the existing object.  Internally within Riak, the actual order with which PUTs are applied is non-deterministic, and there are many situations (replication, anti-entropy, handoffs) where old PUTs may be received after new PUTs.  In these cases setting `{last_write_wins, true}` may have unexpected consequences
+In general, the default should be used, even when `{allow_mult, false}` is set.  Setting `{last_write_wins, true}` changes the behaviour on PUT so that an incoming write is assumed to be superior to an existing write, without checking the change history of the existing object.  Internally within Riak, the actual order with which PUTs are applied is non-deterministic, and there are many situations (replication, anti-entropy, handoffs) where old PUTs may be received after new PUTs.  In these cases setting `{last_write_wins, true}` may have unexpected consequences
 
 If, and only if, the bitcask backend is used, and objects are being updated and not simply inserted, and there is no use of tictac anti-entropy, then there is a small performance advantage from setting `{last_write_wins, true}`.  For other backends and scenarios there is no performance benefit.
 
