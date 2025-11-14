@@ -276,7 +276,7 @@ Filters within the AAE folds can be used to select specific key_ranges, or last 
 
 When queueing large volumes of changes, note that:
 
-- The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and the dequeued in batches containing objects within the same preflist.
+- The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and dequeued in batches containing objects within the same preflist.
 - The pace of which items are de-queued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
 - In multi-data centre configurations reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
 - Each queue on each node has a limit to the size of reaps or erases it can hold - this is controlled through the `eraser_overflow_limit` and the `reaper_overflow_limit`.  The queue, except for a small number, is held on disk; and so increasing this limit can be achieved without hitting memory constraints.
