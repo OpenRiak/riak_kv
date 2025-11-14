@@ -18,8 +18,8 @@ When a cluster is formed, a claim algorithm will distribute vnodes `0` to `RingS
 
 To restore full data protection after failure, Riak must request the next node along in each preflist to start a fallback vnode.  For example, if a node holding vnode 10 fails, then this has an impact on the keys that have mapped to vnodes 8, 9 and 10 - they all now have a missing vnode.  three fallback vnodes will now be started:
 
-- A key which hashes to vnode 8 will be stored in vnodes 8, 9 and a fallback for 10 that runs on the node owning vnode 11.
-- A key which hashes to vnode 9 will be stored in vnodes 9, 11, and a fallback to vnode 10 started on the node which owns vnode 12.
+- A key which hashes to vnode 8 will be stored in vnodes 8, 9 and a fallback for vnode 10 started on the node which owns vnode 11.
+- A key which hashes to vnode 9 will be stored in vnodes 9, 11, and a fallback for vnode 10 started on the node which owns vnode 12.
 - A key which hashes to vnode 10 will be stored in vnodes 11, 12 and a fallback for vnode 10 started on the node which owns vnode 13.
 
 If the distribution in claim is correct, the full divergence of `n_val` resilience is maintained even when a single node fails.  Having full resilience for greater numbers of failures is configurable (assuming there exists sufficient nodes).
