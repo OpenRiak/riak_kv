@@ -381,7 +381,7 @@ Note that in cloud environments, if an inefficient backup method is chosen (e.g.
 
 ### Backup - the preferred building block
 
-As part of the replication approach of Riak it is possible to replicate, and reconcile between clusters with different `n_val`s, different node counts, different vnode counts (i.e. ring sizes) and different storage backends.  It is common in Riak production systems to maintain a single-node, `n_val=1` cluster, with a potentially lower ring size, that represents a backup; where that cluster may be in a diverse geographical occasion to the primary production clusters.
+As part of the replication approach of Riak it is possible to replicate, and reconcile between clusters with different `n_val`s, different node counts, different vnode counts (i.e. ring sizes) and different storage backends.  It is common in Riak production systems to maintain a single-node, `n_val=1` cluster, with a potentially lower ring size, that represents a backup; where that cluster may be in a diverse geographical location to the primary production clusters.
 
 Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.
 
