@@ -385,7 +385,7 @@ As part of the replication approach of Riak it is possible to replicate, and rec
 
 Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.
 
-The real-time replication process that keeps the backup in-sync use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. the backup cluster) pause consumption.  After resuming replication, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful - with automatic resolution of any unexpected deltas.
+The real-time replication process that keeps the backup in-sync uses a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. the backup cluster) pause consumption.  After resuming replication, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful - with automatic resolution of any unexpected deltas.
 
 Backup clusters are not a prerequisite for taking backups, but they can be a flexible and efficient starting point; and in some cases act as an alternative.
 
