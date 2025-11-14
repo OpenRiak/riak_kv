@@ -48,7 +48,7 @@ See `riak admin cluster --help` for further details on the required inputs to cl
 
 During the replace operation the replacement node should have `participate_in_coverage` disabled, and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
 
-After completing a proactive replace operation, it may be necessary to realign node naming with design documents or monitoring systems; to rename a replacement node with the name of the node it replaced.  Once the replace operation is complete, it is possible to rename a node while it is down using `reip_manual` - see `riak admin reip_manual --help`.  The ring_directory required is normally named `ring` in the platform data directory.  It will contain files such as `riak_core_ring.default.20221122164111`, where the middle term between the period (in this case `default`) represents the required cluster name.
+After completing a proactive replace operation, it may be necessary to realign node naming with design documents or monitoring systems; to rename a replacement node with the name of the node it replaced.  Once the replace operation is complete, it is possible to rename a node while it is down using `reip_manual` - see `riak admin reip_manual --help`.  The ring_directory is normally named `ring` in the platform data directory.  It will contain files such as `riak_core_ring.default.20221122164111`, where the middle term between the periods (in this case `default`) represents the required cluster name.
 
 ### Reactive Replace
 
