@@ -28,33 +28,35 @@ The most common repair requirements are for proactive replace, and reactive repl
 
 ### Proactive Replace
 
-It is possible to proactively replace a node in a Riak cluster, if:
+It is possible to proactively replace a node in a Riak cluster, for example if:
 
 - a cloud provider intends to withdraw an instance;
 - a hardware upgrade is required;
 - to change the storage_backend of a cluster node-by-node;
 - or to fully vacuum a node's storage backends of garbage.
 
-A proactive replace is a cluster administration change, and [follows the standard five stage process described in the general guidance on amending the cluster make-up](/docs/BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).  In the case of a proactive replace, the first stage, staging, requires the staging of two changes: 
+A proactive replace is a cluster administration change, and [follows the standard five stage process described in the general guidance on amending the cluster make-up](/docs/BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).  In the case of a proactive replace, the first stage, staging, requires the staging of two changes:
 
 - the `join` of a new node, and
 - a `replace` to indicate the old node which should be replaced.
 
 The plan should be planned, reviewed, committed and then monitored as with other changes.
 
-The node may have its `location` set prior to the `join`, but the location will be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster.
+The node may have its `location` set prior to the `join`, but the location will be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster as a separate change activity.
 
 See `riak admin cluster --help` for further details on the required inputs to cluster change commands.
 
-During the replace operation the replacement node should have `participate_in_coverage` disabled, and have coverage support enabled only once all transfers have complete and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
+During the replace operation the replacement node should have `participate_in_coverage` disabled, and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
 
 After completing a proactive replace operation, it may be necessary to realign node naming with design documents or monitoring systems; to rename a replacement node with the name of the node it replaced.  Once the replace operation is complete, it is possible to rename a node while it is down using `reip_manual` - see `riak admin reip_manual --help`.  The ring_directory required is normally named `ring` in the platform data directory.  It will contain files such as `riak_core_ring.default.20221122164111`, where the middle term between the period (in this case `default`) represents the required cluster name.
 
 ### Reactive Replace
 
-When a node has failed following an incident, the node can still be recovered back to its previous state without requiring a backup.
+If a node temporarily fails, then recovers without a loss of historic delta; the node will automatically rejoin the cluster and have the any delta in data patched via ant-entropy mechanisms, without the need for operator intervention.
 
-There are three stages to replace and recover the node:
+If a node has failed following an incident, and all data on the node is lost, the cluster can still be recovered back to its previous state without requiring a backup of the failed node.
+
+Recovery of such a lost node requires a reactive replace.  There are three stages to replace and recover the node:
 
 - [ensuring the node is downed](#administratively-downing-a-node);
 - [forcing the replace](#forcing-a-replace);
@@ -91,15 +93,15 @@ riak eval "riak_client:remove_node_from_coverage()."
 
 The data can then be recovered from the other nodes in the cluster issuing the `riak_client:repair_node()` command from the `remote_console` of the replacement node.  This will prompt all vnodes which partially overlap the data held in the vnodes on the replacement node to race to play a role in repairing the node.  Each vnode will only repair the data which overlaps, filtering out any data that another vnode has already repaired (or is in the process of repairing).
 
-To improve the performance of repair the `repair_span` configuration in the [riak_core schema section of riak.conf](https://github.com/OpenRiak/riak_core/blob/openriak-3.4/priv/riak_core.schema) can be changed to `double_pair`, and this has been proven to be more effective when used with the leveled backend and the enablement of the `repair_deferred` option in the [riak_kv schema section of riak.conf](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
+To improve the performance of repair the `repair_span` configuration in the [riak_core schema section of riak.conf](https://github.com/OpenRiak/riak_core/blob/openriak-3.4/priv/riak_core.schema) can be changed to `double_pair`, and this has been proven to be more effective when used with the leveled backend together with the enablement of the `repair_deferred` option in the [riak_kv schema section of riak.conf](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
-The combination of `repair_span = double_pair, repair_deferred = enabled` is proven to be significantly more effective when using the leveled backend, especially when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, and when using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are under heavy utilisation.
+The combination of `repair_span = double_pair, repair_deferred = enabled` is significantly more effective when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are persistently at 100% CPU utilisation due to the handling of application requests.
 
 Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
 
 ### Repair an individual leveled store
 
-The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.  As the journal is the source of truth, the ledger can be rebuilt from the journal, and leveled will do this automatically on startup when the ledger is missing.
+The leveled backend is split into two parts - a journal, and a ledger.  The journal is the log of all received changes, and is the source of truth in leveled.  The ledger is a log-structured merge tree that provides a sorted view of the index keys, and object keys and metadata.  As the journal is the source of truth, the ledger can be rebuilt from the journal, and leveled will do this automatically on startup if the ledger is missing.
 
 There exists the (very rare) potential for a ledger to be corrupted.  There are also circumstances where following an update the ledger is not fully efficient until it is rebuilt.  As a missing ledger is rebuilt automatically on startup, rebuilding of the ledger can simply be prompted by deleting it:
 
@@ -107,7 +109,7 @@ There exists the (very rare) potential for a ledger to be corrupted.  There are 
 - Deleting the ledgers in the impacted partitions (under each vnode's leveled store there should be a ledger folder);
 - Restarting the node.
 
-On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster (the riak_kv application will not complete startup until the rebuilds are complete).  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
+On restarting the node all missing ledgers will be rebuilt before the node becomes and active participant in the cluster - the `riak_kv` application which determines availability of a node, will not complete startup until all the rebuilds are complete.  Rebuild progress can be tracked in the leveled logs with `log_ref=b0006`.
 
 Previous versions of Riak had an option to repair secondary index entries through a specific anti-entropy recovery process.  This is no longer supported.  If there are detected issues with inconsistency between objects and their index entries, then this should be addressed by the simple approach of deleting the ledger (which contains the index entries) to force a rebuild on restart of the vnode.
 
@@ -115,15 +117,15 @@ Previous versions of Riak had an option to repair secondary index entries throug
 
 Storage backends make use of CRC checks to detect and respond to corruption (by impacting individual objects not the whole store).  If an object, or a block of keys, becomes corrupted due to an issue with file storage then this should be detected by CRC checks.  The result of a failed CRC check, will be to respond as if the object in question is missing, rather than trigger a failure of the whole vnode.
 
-Where such corruption is limited to a leveled ledger, then [a repair via leveled rebuild](#repair-an-individual-leveled-store) can be used to recover.  However, in other backends, or with a corruption in the leveled journal - it may be preferable to repair a whole vnode rather than wait for other anti-entropy processes to eventually resolve the impact of the corruption (by repairing the object). 
+Where such corruption is limited to a leveled ledger, then [a repair via leveled rebuild](#repair-an-individual-leveled-store) can be used to recover.  However, in other backends, or with a corruption in the leveled journal - it may be preferable to repair a whole vnode rather than wait for other anti-entropy processes to eventually resolve the impact of the corruption (by repairing each impacted object).
 
-The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  the vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
+The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  The vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
 
 ```bash
 riak eval "riak_kv_vnode:repair(<partition_number>)."
 ```
 
-The repair node will replace any object which the store does not presently hold.  However, following corruption that validation may not be accurate - the store may incorrectly report presence.  So it is normally better to delete all the data on the vnode following corruption before triggering the repair.  Data will always be repaired eventually, deleting the store first ensures the time to repair is bounded and not dependent on long-running background recovery jobs.
+The repair node will replace any object which the store does not presently hold.  However, following corruption, that validation may not be accurate and the store may incorrectly report presence.  So it is normally better to delete all the data on the vnode following corruption before triggering the repair.  Data will always be repaired eventually, deleting the store first ensures the time to repair is bounded and not dependent on long-running background recovery jobs.
 
 ### Repair key ranges
 
@@ -131,7 +133,7 @@ Outside of the circumstances covered in the previous sections, it is not expecte
 
 Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
 
-The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request - which should there be a discrepancy will prompt a repair via `read_repair`.
+The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request; which, should there be a discrepancy, prompt a repair via `read_repair`.
 
 Repair key range operations are a potentially efficient method for repairing keys across a cluster following a known incident, the impact of which was restricted to a given time range; and may prove to be quicker in some circumstances than waiting for the delta to heal via active anti-entropy.
 
@@ -183,7 +185,7 @@ riak eval "riak_client:repair_node()."
 
 ### Using advanced.config
 
-The advanced.config file is found within the `platform_etc_dir` (a location configured within `riak.conf`), which is normally the system `/etc/riak` folder when Riak is built from packages.  The file bypasses the Riak-specific configuration mechanism, and uses the native Erlang method for passing configuration into an Erlang application.  The file may be used for advanced configuration purposes, to supply environment variables to Riak which are not currently covered by the riak.conf schema files.
+The advanced.config file is found within the `platform_etc_dir` (a location configured within `riak.conf`), which is normally the system `/etc/riak` folder, after a package-based build of Riak.  The file bypasses the Riak-specific configuration mechanism, and uses the native Erlang method for passing configuration into an Erlang application.  The file may be used for advanced configuration purposes, to supply environment variables to Riak which are not currently covered by the riak.conf schema files.
 
 The variables need to represented as an Erlang object, which is a list of mappings between an application and a list of key/value pairs, as [described in the Erlang documentation](https://www.erlang.org/doc/apps/kernel/config.html).
 
@@ -207,14 +209,14 @@ Any configuration added in advanced.config will override any configuration set i
 
 All configuration in `riak.conf` is converted into erlang environment variables, and it is those variables that are used by the code.  The `riak.conf` is referred to only as the node is started - `riak.conf` changes will have no impact until the next restart.
 
-To change the configuration of riak at run-time, the variables can be changed via `remote_console` using the [application:set_env/3 function](https://www.erlang.org/doc/apps/kernel/application.html#set_env/3).
+To change the configuration of Riak at run-time, the variables can be changed via `remote_console` using the [application:set_env/3 function](https://www.erlang.org/doc/apps/kernel/application.html#set_env/3).
 
 Note though, that:
 
 - Some environment variables will be read by long-lived processes at startup, and so making runtime changes will have no effect.
 - Configuration parameters will be translated into environment variables values by the cuttlefish schema - the configured value may not be a valid value for the environment variable e.g. `enabled`/`disabled` flags will commonly be translated into `true`/`false` boolean environment variables.  Changing an environment variable to the untranslated value may lead to node crashes.
 
-In general, never change an environment variable at run-time via `remote_console` unless you have read and understood the code that uses it.
+In general, never change an environment variable at run-time via `remote_console` without first reading and understanding the code that uses it.
 
 ### Accessing configuration
 
@@ -230,13 +232,13 @@ Note that the result of `describe` request is the current schema documentation o
 
 ### Riak Stats
 
-Riak collates statistics.  Stats include total counts over all time, counts in the last 60 seconds and mean, median and approximate percentile response times measured over the previous 60s.  The stats are available via the CLI `riak admin status` or via a http GET request to the "/stats" endpoint.
+Riak collates statistics.  Stats include total counts over all time, counts in the last 60 seconds, and mean, median and approximate percentile response times measured over the previous 60s.  The stats are available via the CLI `riak admin status` or via a http GET request to the `/stats` endpoint.
 
-Riak does not retain history of stats, so to track the change of stats over time it is necessary to request the stats at regular intervals, and index the stats in some other monitoring tool.  Other than the `_total` stats, the stats will always reflect the last 60s, regardless of how frequently the stats are requested (returning stats does not reset any values), the stats processes maintain a rolling view of the last 60 seconds.
+Riak does not retain history of stats, so to track the change of stats over time it is necessary to request the stats at regular intervals, and index the stats in some other monitoring tool.  Other than the `_total` stats, the stats will always reflect the last 60s, regardless of how frequently the stats are requested (returning stats does not reset any values).  The stats process maintains a rolling view of the last 60 seconds.
 
 All timings are internal timings, and not necessarily fully representative of external application experience.
 
-The stats represent the statistics on the node from which they were requested, the stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
+The stats represent the statistics on the node from which they were requested.  The stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
 
 ## Monitoring Operational Services
 
@@ -266,9 +268,9 @@ Each worker pool will regularly log its current queue length and last checkout t
 
 ### Riak KV Reaper and Riak KV Eraser
 
-The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold, to feed the eraser queue.
+The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold to feed the eraser queue.
 
-Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold, to feed the reaper queue.
+Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold to feed the reaper queue.
 
 Filters within the AAE folds can be used to select specific key_ranges, or last modified date ranges for the erase or reap process.
 
@@ -305,9 +307,9 @@ The leveled backend is split into two parts:
 - the Journal which like bitcask is generally an append-only file-based log of writes in the order they were received;
 - the Ledger which stores only the keys index entries and object metadata; and is a log-structured merge tree, where immutable files are periodically merged and re-written to preserve an on-disk ordering of the keys by level.
 
-The ledger compaction is continuous and the backend will `pause` if a backlog of compaction occurs due to excessive write activity.   When paused, new writes will be slowed by pauses until the backend is up-to-date with its ledger compaction work.
+The ledger compaction is continuous and the backend will enter a `slow offer` state if a backlog of compaction occurs due to excessive write activity.   When in this state, new writes will be slowed by pauses until the backend is up-to-date with its ledger compaction work.
 
-The journal is generally immutable, but periodically compaction runs will be made which will compact a set of contiguous journal files, if the volume of space to be freed by that compaction is considered by the compaction configuration to be of sufficient value relative to the cost of compaction.  Unlike the ledger compaction, the journal compaction is non-blocking; a backlog of compaction work will result in overuse of disk space, not a slowing of the storage system.
+The journal is generally immutable, but periodically compaction runs will be made which will compact a set of contiguous journal files, if the volume of space to be freed by that compaction is considered to be of sufficient value relative to the cost of the action.  Unlike the ledger compaction, the journal compaction is non-blocking; a backlog of compaction work will result in overuse of disk space, not a slowing of the storage system.
 
 The leveled backend makes use of randomness to reduce the probability of overlapping compaction activity.  It is possible to configure a compaction window, however, all volume testing of Riak with a leveled backend is performed with continuous compaction activity.  The Journal compaction is relatively efficient and low-impact in comparison to bitcask merge - it is generally considered a safe practice to run compaction continuously throughout the day.
 
@@ -367,13 +369,13 @@ For performance testing Riak [`basho_bench`](https://github.com/OpenRiak/basho_b
 
 Before considering backups, it is worth noting that as a distributed database there is no single commit position that represents a point of truth.  Therefore there is no way to effectively backup at a point, and restore to a point.  The overall state is eventually consistent.
 
-- The Riak is designed to operate as a resilient cluster, and also as a broader system of resilience from having multiple clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.
+- Riak is designed to operate as a resilient cluster, and also as a broader system of resilience from having multiple clusters that both replicate between each other and have continuous reconciliation to ensure they are in-sync.
 - Major changes to the database will often occur in the application, not the database.  The application is in control of the data schema, and hence the migration of objects between schema versions.
 - Self-healing is used to handle repair scenarios - i.e. recovering data from peers within the cluster, and the system is designed to perform predictably during the healing process.
 
 Production users of Riak commonly have relatively lightweight backup and recovery strategies when compared to traditional database management systems; eventual consistency allows the global recovery of state without the need to focus on recovering state first back to a point in time.  In general, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
-If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use the `repair` process to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
+If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use [the `repair` process](#reactive-replace) to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
 
 Note that in cloud environments, if an inefficient backup method is chosen (e.g. snapshots of block-service file-system volumes), then backup costs may consume a dominant proportion of overall Riak infrastructure costs.
 
@@ -381,19 +383,21 @@ Note that in cloud environments, if an inefficient backup method is chosen (e.g.
 
 As part of the replication approach of Riak it is possible to replicate, and reconcile between clusters with different `n_val`s, different node counts, different vnode counts (i.e. ring sizes) and different storage backends.  It is common in Riak production systems to maintain a single-node, `n_val=1` cluster, with a potentially lower ring size, that represents a backup; where that cluster may be in a diverse geographical occasion to the primary production clusters.
 
-Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.  Note that the real-time replication fetches use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. in this case the backup cluster) pause consumption.  After re-connecting, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful - with automatic resolution of any unexpected deltas.
+Having a backup cluster may be considered as a backup in itself, or as a staging post from which to take further backups.
+
+The real-time replication process that keeps the backup in-sync use a queue on the source cluster, and that queue will grow (as small on-disk references to changes) should the sink (i.e. the backup cluster) pause consumption.  After resuming replication, the sink cluster will catch-up on the missing changes from the queue, and when reconciliation is re-enabled that catch-up can be confirmed.  There is flexibility to disconnect a backup cluster, hold it at a point in time, and then in the future reconnect and fast-forward to the current state, then prove that the fast-forward was successful - with automatic resolution of any unexpected deltas.
 
 Backup clusters are not a prerequisite for taking backups, but they can be a flexible and efficient starting point; and in some cases act as an alternative.
 
 #### Leveled - hot backups
 
-If a cluster uses only the leveled backend, a hot backup may be taken across the cluster using the `riak_client:hotbackup/4` function from `bin/riak remote_console` on any node within the cluster.
+If a cluster uses only the leveled backend, a hot backup may be taken across the cluster using the `riak_client:hotbackup/4` function from [the `remote_console`](#remote-console) on any node within the cluster.
 
 There are four inputs to the function required:
 
 - A backup path; all nodes will be required to support the same path, the path cannot be to the current folder in which leveled is running, but the path must be on the same volume as the current data path (e.g. you could use `<PLATFORM_DATA_DIR>/backup` as a backup to `<PLATFORM_DATA_DIR>/leveled`).
 - The `n_val` of the cluster.
-- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is easier to understand and reason about the result of the backup if: the cluster uses the same `n_val` for all buckets; and the coverage plan `n_val` is set to that `n_val`.
+- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is, though, easier to understand and reason about the result of the backup if the cluster uses the same `n_val` for all bucketsm, and the coverage plan `n_val` is set to that `n_val`.
 - A client; e.g. a `C` where `{ok, C} = riak:local_client()`.
 
 The backup at each vnode backend will first:
@@ -404,18 +408,18 @@ The backup at each vnode backend will first:
 The actual backup is then called on the snapshot:
 
 - It will write the Journal manifest (the data structure that defines the list of file references that represents the Journal) to the backup path;
-- It will then for each file within that Journal manifest hard-link to a new file in the backup path;
-- The snapshot will then close (and any pending changes held in the active Journal because of the snapshot will be released).
+- It will then for each file within that Journal manifest write a hard-link to a new file in the backup path;
+- The snapshot will then close, and any pending changes held in the active Journal because of the snapshot will be released.
 
 It is important to note that there will be minimal impact on the disk footprint within the volume from taking the backup.  The hard-link only requires the backup partition to grow when the files are mutated - but the journal files are not mutated, they are immutable.
 
-Because the active journal file was "rolled" at the start of the process, new writes to the database will go into a new active journal that is not linked to the backup directory.  It is only when journal compaction is run, that there may be a disk-space impact from the existence of the backup.  If journal compaction compacts a set of files it will re-write a new set of files (that are not linked to the backup), and then delete the old files.  If a backup link still exists for those files, the space will now not be reclaimed due to those hard links.
+Because the active journal file was "rolled" at the start of the process, new writes to the database will go into a new active journal that is not linked to the backup directory.  It is only when journal compaction is run, that there may be a disk-space impact from the existence of the backup.  If journal compaction compacts a set of files it will re-write a new set of files (that are not linked to the backup), and then delete the old files.  If a backup link still exists for those deleted files, the space will now not be reclaimed due to those hard links.
 
-The best practice for copying the hot backup to an alternative location, should that be required, is not defined by the OpenRiak community.  There are example solutions, such as [the S3 sync](https://github.com/OpenRiak/leveled-hotbackup-s3-sync) project which may provide a potential approach.  The S3 sync project is particularly interesting, as before copying the Journal files to S3 it creates "hints" files so that it is possible to read individual objects in the back using S3 commands - without requiring the backup to be restored.  Other standard solutions may be used (e.g. `rsync` to offline the backup).
+The best practice for copying the hot backup to an alternative location, should that be required, is not defined.  There are example solutions, such as [the S3 sync](https://github.com/OpenRiak/leveled-hotbackup-s3-sync) project which may provide a potential approach.  The S3 sync project is particularly interesting, as before copying the Journal files to S3 it creates "hints" files so that it is possible to read individual objects in the back using S3 commands - without requiring the backup to be restored.  Other standard solutions may be used (e.g. `rsync` to offline the backup).
 
 #### Leveled - restore a backup
 
-If the database is stopped, and the contents of the `data/leveled` folders replaced by the content of the `data/backup` folders, then when riak is restarted each vnode on each node will rebuild the leveled ledger (which is not backed up) from the Journal, and the cluster will return to the same distributed consensus as when the backup was taken (given the constraint that the backup coverage plan took time to be distributed).
+If the database is stopped, and the contents of the `data/leveled` folders replaced by the content of the `data/backup` folders, then when Riak is restarted each vnode on each node will [rebuild the leveled ledger](#repair-an-individual-leveled-store), as the ledger is not part of the backup. The cluster will then return to the same distributed consensus as when the backup was taken (given the constraint that the backup coverage plan took time to be distributed).
 
 #### Bitcask - backups
 
@@ -429,7 +433,7 @@ As well as the storage backend data folder, a Riak node also stores data in a ri
 
 ## Advanced - troubleshoot via the Erlang VM
 
-For more advanced troubleshooting, the `riak remote_console` can be used to access specialist troubleshooting tools.
+For more advanced troubleshooting, [the `remote_console`](#remote-console) can be used to access specialist troubleshooting tools.
 
 ### Recon
 
@@ -444,13 +448,13 @@ The [riak_kv_util module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/
 - `top_n_process_total_memory/1`
 - `summarise_process_memory_by_initial_call/1`
 
-All these functions take a single argument N (the N in Top N), though the `summarise` functions can also be passed the output of the related top_n function.
+All these functions take a single argument N (the N in Top N), though the `summarise` functions can also be directly passed the output of the related top_n function, so that a recalculation of the Top N is not required.
 
 ### Microstate accounting
 
 To examine the spread of CPU-related work by scheduler (there should be one standard erlang scheduler for each CPU core), microstate accounting may be used.  The [erlang documentation](https://www.erlang.org/doc/apps/runtime_tools/msacc.html) gives basic information on analysing the output, but note that the functionality of microstate accounting may vary significantly between OTP releases.
 
-To alter the configuration on the Erlang VM to adjust the operation of schedulers, see the `erlang.schedulers` options within the [riak schema file](https://github.com/OpenRiak/riak/blob/openriak-3.4/priv/riak.schema).  It is recommended to seek expert advice, and run realistic performance test exercises before adjusting any default settings.
+To alter the configuration on the Erlang VM to adjust the operation of schedulers, see the `erlang.schedulers` options within the [Riak schema file](https://github.com/OpenRiak/riak/blob/openriak-3.4/priv/riak.schema).  It is recommended to seek expert advice, and run realistic performance test exercises before adjusting any default settings.
 
 ### Eprof
 
