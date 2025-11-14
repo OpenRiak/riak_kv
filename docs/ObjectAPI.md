@@ -206,7 +206,7 @@ When using the HEAD method the request will still result in the object value bei
 Supported HTTP request headers for GET:
 
 - `authorization`; optional, for tls-protected requests only when riak security is enabled.
-- `accept: multipart/mixed`; optional, will cause results ina. conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each vtag may be fetched using the `vtag=<vtag>` query parameter in the URL.
+- `accept: multipart/mixed`; optional, will cause results in a conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each vtag may be fetched using the `vtag=<vtag>` query parameter in the URL.
 
 Expected HTTP response headers for GET:
 
