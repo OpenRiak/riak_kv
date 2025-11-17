@@ -93,7 +93,7 @@ setup() ->
     meck:new(riak_core_bucket),
     meck:expect(riak_core_bucket, get_bucket,
                 fun(_Bucket) ->
-                        [dvv_enabled]
+                        [{dvv_enabled, true}]
                 end),
     %% Check networking/clients are set up
     ?assert(node() /= 'nonode@nohost'),
@@ -270,14 +270,19 @@ prop_basic_put() ->
 
                        %% Run the test and wait for all processes spawned by it to settle.
                        process_flag(trap_exit, true),
-                       {ok, PutPid} = riak_kv_put_fsm:test_link({raw, ?REQ_ID, self()},
-                                                                Object,
-                                                                Options,
-                                                                [{starttime, riak_core_util:moment()},
-                                                                 {n, N},
-                                                                 {bucket_props, BucketProps},
-                                                                 {preflist2, PL2},
-                                                                 {coord_pl_entry, CoordPLEntry}]),
+                       {ok, PutPid} =
+                        riak_kv_put_fsm:test_link(
+                            {raw, ?REQ_ID, self()},
+                            Object,
+                            Options,
+                            [
+                                {starttime, riak_core_util:moment()},
+                                {n, N},
+                                {bucket_props_list, BucketProps},
+                                {preflist2, PL2},
+                                {coord_pl_entry, CoordPLEntry}
+                            ]
+                        ),
                        ok = riak_kv_test_util:wait_for_pid(PutPid),
                        ok = riak_kv_test_util:wait_for_children(PutPid),
                        Res = fsm_eqc_util:wait_for_req_id(?REQ_ID, PutPid),

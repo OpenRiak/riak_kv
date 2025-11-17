@@ -184,7 +184,7 @@ client_test_phase1(Client) ->
 client_test_phase2(Client, Object0) ->
     Now = calendar:universal_time(),
     Object = riak_object:update_value(Object0, Now),
-    case riak_client:put(Object, 1, Client) of
+    case riak_client:put(Object, Client) of
         ok ->
             client_test_phase3(Client, Now);
         Error ->

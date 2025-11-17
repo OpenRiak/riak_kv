@@ -52,7 +52,7 @@
 % -define(CAP_OBJECT_FORMAT,
 %     riak_core_capability:get({riak_kv, object_format}, v0)
 % ).
--define(CAP_OBJECT_FORMAT, app_helper:get_env(riak_kv, object_format, v1)).
+-define(CAP_OBJECT_FORMAT, v1).
 
 % -define(CAP_VCLOCK_ENCODING,
 %     riak_core_capability:get({riak_kv, vclock_data_encoding}, encode_zlib)

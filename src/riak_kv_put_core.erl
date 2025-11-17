@@ -92,14 +92,42 @@ add_result({w, Idx, _ReqId}, PutCore = #putcore{results = Results,
                                                 num_w = NumW}) ->
     PutCore#putcore{results = [{Idx, w} | Results],
                     num_w = NumW + 1};
-add_result({dw, Idx, _ReqId}, PutCore = #putcore{results = Results,
-                                                 num_dw = NumDW}) ->
-    num_node_confirms(num_pw(PutCore#putcore{results = [{Idx, {dw, undefined}} | Results],
-                    num_dw = NumDW + 1}, Idx));
-add_result({dw, Idx, ResObj, _ReqId}, PutCore = #putcore{results = Results,
-                                                         num_dw = NumDW}) ->
-    num_node_confirms(num_pw(PutCore#putcore{results = [{Idx, {dw, ResObj}} | Results],
-                    num_dw = NumDW + 1}, Idx));
+add_result(
+    {dw, Idx, _ReqId},
+    PutCore =
+        #putcore{results = Results, num_dw = NumDW, node_confirms = NCR}
+    ) ->
+    UpdatedCorePW =
+        num_pw(
+            PutCore#putcore{
+                results = [{Idx, {dw, undefined}} | Results],
+                num_dw = NumDW + 1},
+            Idx
+        ),
+    case NCR of
+        NCR when is_integer(NCR), NCR > 0 ->
+            num_node_confirms(UpdatedCorePW);
+        _ ->
+            UpdatedCorePW
+    end;
+add_result(
+    {dw, Idx, ResObj, _ReqId},
+    PutCore =
+        #putcore{results = Results, num_dw = NumDW, node_confirms = NCR}
+    ) ->
+    UpdatedCorePW =
+        num_pw(
+            PutCore#putcore{
+                results = [{Idx, {dw, ResObj}} | Results],
+                num_dw = NumDW + 1},
+            Idx
+        ),
+    case NCR of
+        NCR when is_integer(NCR), NCR > 0 ->
+            num_node_confirms(UpdatedCorePW);
+        _ ->
+            UpdatedCorePW
+    end;
 add_result({fail, Idx, _ReqId}, PutCore = #putcore{results = Results,
                                                    num_fail = NumFail}) ->
     PutCore#putcore{results = [{Idx, {error, undefined}} | Results],
@@ -234,15 +262,19 @@ num_pw(PutCore = #putcore{num_pw=NumPW, idx_type=IdxType}, Idx) ->
 -spec count_diverse_nodes(IDXType::idx_type(), [idxresult()]) -> non_neg_integer().
 count_diverse_nodes(IdxType, Results) ->
     DWrites = [Part || {Part, {dw, _}} <- Results ],
-    count_physically_diverse(IdxType, DWrites, []).
-
--spec count_physically_diverse(IDXType::idx_type(), [non_neg_integer()], [node()]) -> non_neg_integer().
-count_physically_diverse(_IdxType, [], NodeAcc) ->
-    UniqueNodes = lists:usort(NodeAcc),
-    length(UniqueNodes);
-count_physically_diverse(IdxType, [DWPart | DWRest], NodeAcc) ->
-    {DWPart, _Type, Node} = lists:keyfind(DWPart, 1, IdxType),
-    count_physically_diverse(IdxType, DWRest, [Node | NodeAcc]).
+    Nodes =
+        lists:filtermap(
+                fun({DWPart, _Type, Node}) ->
+                    case lists:member(DWPart, DWrites) of
+                        true ->
+                            {true, Node};
+                        false ->
+                            false
+                    end
+                end,
+                IdxType
+            ),
+    length(lists:usort(Nodes)).
 
 %% @private Return number of physically diverse partitions in results
 -spec num_node_confirms(putcore()) -> putcore().

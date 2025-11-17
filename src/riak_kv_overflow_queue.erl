@@ -128,8 +128,7 @@ log(Type, JobID, Attempts, Aborts, Queue) ->
 
     ?LOG_INFO(
         lists:flatten(
-            ["~p job_id=~p has ",
-                "attempts=~w aborts=~w ",
+            ["~w job_id=~w has attempts=~w aborts=~w ",
                 QueueLengths,
                 OverflowLengths,
                 DiscardCounts]),

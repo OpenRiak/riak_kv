@@ -26,7 +26,6 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
--include_lib("riak_kv_vnode.hrl").
 -include("riak_kv_types.hrl").
 -include("riak_kv_capability.hrl").
 
@@ -35,11 +34,7 @@
                 {gen_fsm, send_event, 2}]}).
 
 -behaviour(gen_fsm).
--define(DEFAULT_OPTS, [{returnbody, false}, {update_last_modified, true}]).
--export([start/3,start/6,start/7]).
--export([start_link/3,start_link/6,start_link/7]).
--export([set_put_coordinator_failure_timeout/1,
-         get_put_coordinator_failure_timeout/0]).
+-export([start/3, start_link/3]).
 -ifdef(TEST).
 -export([test_link/4]).
 -endif.
@@ -48,7 +43,7 @@
 -export([prepare/2, validate/2, precommit/2,
          waiting_local_vnode/2,
          waiting_remote_vnode/2,
-         postcommit/2, finish/2]).
+         postcommit/2, finish/2, abort/2]).
 -export([conditional_check/3]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -67,7 +62,7 @@
         {dw, non_neg_integer()} |
         {timeout, timeout()} |
         %% Prevent precommit/postcommit hooks from running
-        disable_hooks |
+        {disable_hooks, boolean()} |
         %% Request additional details about request added as extra
         %% element at the end of result tuple
         {details, detail()} |
@@ -75,7 +70,7 @@
         {sync_on_write, atom()} |
         %% Put the value as-is, do not increment the vclocks
         %% to make the value a frontier.
-        asis |
+        {asis, boolean()} |
         %% Use a sloppy quorum, default = true
         {sloppy_quorum, boolean()} |
         %% The N value, default = value from bucket properties
@@ -93,9 +88,16 @@
         %% it.
         {mbox_check, boolean()} |
         {counter_op, any()} |
-        {crdt_op, any()}.
+        {crdt_op, any()} |
+        {node_confirms, non_neg_integer()} |
+        {returnbody, boolean()} |
+        {update_last_modified, boolean()}.
 
 -type options() :: [option()].
+-type condition_check() ::
+    false|
+    {undefined, true, list()}|
+    {{true, vclock:vclock()}, undefined, list()}.
 
 -type preflist_entry() :: {Idx::non_neg_integer(), node()}.
 %% the information about vnode mailbox queues used to select a
@@ -126,7 +128,8 @@
                 allowmult = true :: boolean(),
                 precommit=[] :: list(),
                 postcommit=[] :: list(),
-                bucket_props :: list() | undefined,
+                bucket_props_map :: #{atom() => any()},
+                bucket_props_list :: list({atom(),any()}),
                 putcore :: riak_kv_put_core:putcore() | undefined,
                 timing = [] :: [{atom(), {non_neg_integer(), non_neg_integer(),
                                           non_neg_integer()}}],
@@ -134,7 +137,7 @@
                 trace = false :: boolean(), 
                 tracked_bucket=false :: boolean(), %% track per bucket stats
                 bad_coordinators = [] :: [atom()],
-                coordinator_timeout :: integer()
+                client_details = false :: detail()
                }).
 
 -include("riak_kv_dtrace.hrl").
@@ -146,47 +149,43 @@
 %% Public API
 %% ===================================================================
 
-%% In place only for backwards compatibility
-start(ReqId,RObj,W,DW,Timeout,ResultPid) ->
-    start_link(ReqId,RObj,W,DW,Timeout,ResultPid,[]).
-
-%% In place only for backwards compatibility
-start(ReqId,RObj,W,DW,Timeout,ResultPid,Options) ->
-    start_link(ReqId,RObj,W,DW,Timeout,ResultPid,Options).
-
-start_link(ReqId,RObj,W,DW,Timeout,ResultPid) ->
-    start_link(ReqId,RObj,W,DW,Timeout,ResultPid,[]).
-
-start_link(ReqId,RObj,W,DW,Timeout,ResultPid,Options) ->
-    start({raw, ReqId, ResultPid}, RObj, [{w, W}, {dw, DW}, {timeout, Timeout} | Options]).
-
-start(From, Object, PutOptions) ->
-    Args = [From, Object, PutOptions],
-    case sidejob_supervisor:start_child(riak_kv_put_fsm_sj,
-                                        gen_fsm, start_link,
-                                        [?MODULE, Args, []]) of
-        {error, overload} ->
-            riak_kv_util:overload_reply(From),
-            {error, overload};
-        {ok, Pid} ->
-            {ok, Pid}
+-spec start(
+    {raw, non_neg_integer(), pid()},
+    riak_object:riak_object(),
+    proplists:proplist()) ->
+        consistent|write_once|{ok, pid()}|{error, overload}.
+start(From, RObj, PutOptions) ->
+    Bucket = riak_object:bucket(RObj),
+    BucketPropsL = riak_kv_util:get_bucket_props(Bucket),
+    BucketPropsM = maps:from_list(BucketPropsL),
+    case {
+        maps:get(consistent, BucketPropsM, false),
+        maps:get(write_once, BucketPropsM, false)} of
+        {true, _} ->
+            consistent;
+        {false, true} ->
+            write_once;
+        _ ->
+            Args = [From, RObj, PutOptions, Bucket, BucketPropsM, BucketPropsL],
+            StartSideJob =
+                sidejob_supervisor:start_child(
+                    riak_kv_put_fsm_sj, gen_fsm, start_link, [?MODULE, Args, []]
+                ), 
+            case StartSideJob of
+                {error, overload} ->
+                    riak_kv_util:overload_reply(From),
+                    {error, overload};
+                {ok, Pid} ->
+                    {ok, Pid}
+            end
     end.
 
 %% Included for backward compatibility, in case someone is, say, passing around
-%% a riak_client instace between nodes during a rolling upgrade. The old
+%% a riak_client instance between nodes during a rolling upgrade. The old
 %% `start_link' function has been renamed `start' since it doesn't actually link
 %% to the caller.
 start_link(From, Object, PutOptions) -> start(From, Object, PutOptions).
 
-set_put_coordinator_failure_timeout(MS) when is_integer(MS), MS >= 0 ->
-    application:set_env(riak_kv, put_coordinator_failure_timeout, MS);
-set_put_coordinator_failure_timeout(Bad) ->
-    ?LOG_ERROR("~s:set_put_coordinator_failure_timeout(~p) invalid",
-                [?MODULE, Bad]),
-    set_put_coordinator_failure_timeout(3000).
-
-get_put_coordinator_failure_timeout() ->
-    app_helper:get_env(riak_kv, put_coordinator_failure_timeout, 3000).
 
 make_ack_options(Options) ->
     AckOption = get_option(ack_execute, Options),
@@ -216,6 +215,7 @@ spawn_coordinator_proc(CoordNode, Mod, Fun, Args) ->
 monitor_remote_coordinator(false = _UseAckP, _MiddleMan, _CoordNode, StateData) ->
     {stop, normal, StateData};
 monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode, StateData) ->
+    TO = app_helper:get_env(riak_kv, put_coordinator_failure_timeout, 3000),
     receive
         {ack, CoordNodeFinal, now_executing} ->
             case CoordNodeFinal of
@@ -226,7 +226,7 @@ monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode, StateData) ->
                                   [CoordNodeFinal, CoordNode])
             end,
             {stop, normal, StateData}
-    after StateData#state.coordinator_timeout ->
+    after TO ->
             exit(MiddleMan, kill),
             Bad = StateData#state.bad_coordinators,
             ?LOG_WARNING("timed out waiting for forward-ack, adding ~p to bad coordinators",
@@ -248,7 +248,19 @@ monitor_remote_coordinator(true = _UseAckP, MiddleMan, CoordNode, StateData) ->
 %%
 %% As test, but linked to the caller
 test_link(From, Object, PutOptions, StateProps) ->
-    gen_fsm:start_link(?MODULE, {test, [From, Object, PutOptions], StateProps}, []).
+    Bucket = riak_object:bucket(Object),
+    {bucket_props_list, BProps} =
+        lists:keyfind(bucket_props_list, 1, StateProps),
+    BucketPropsM = maps:from_list(BProps),
+    gen_fsm:start_link(
+        ?MODULE,
+        {
+            test,
+            [From, Object, PutOptions, Bucket, BucketPropsM, BProps],
+            StateProps
+        },
+        []
+    ).
 
 -endif.
 
@@ -258,18 +270,22 @@ test_link(From, Object, PutOptions, StateProps) ->
 %% ====================================================================
 
 %% @private
-init([From, RObj, Options0]) ->
-    BKey = {Bucket, Key} = {riak_object:bucket(RObj), riak_object:key(RObj)},
-    CoordTimeout = get_put_coordinator_failure_timeout(),
+init([From, RObj, Options0, Bucket, BucketPropsM, BucketPropsL]) ->
+    Key = riak_object:key(RObj),
     Trace = app_helper:get_env(riak_kv, fsm_trace_enabled),
     Options = proplists:unfold(Options0),
-    StateData = #state{from = From,
-                       robj = RObj,
-                       bkey = BKey,
-                       trace = Trace,
-                       options = Options,
-                       timing = riak_kv_fsm_timing:add_timing(prepare, []),
-                       coordinator_timeout=CoordTimeout},
+    StateData =
+        #state{
+            from = From,
+            robj = RObj,
+            bkey = {Bucket, Key},
+            trace = Trace,
+            options = Options,
+            timing = riak_kv_fsm_timing:add_timing(prepare, []),
+            bucket_props_map = BucketPropsM,
+            bucket_props_list = BucketPropsL
+        },
+    gen_fsm:send_event(self(), timeout),
     case Trace of
         true ->
             riak_core_dtrace:put_tag([Bucket, $,, Key]),
@@ -285,7 +301,6 @@ init([From, RObj, Options0]) ->
         _ ->
             ok
     end,
-    gen_fsm:send_event(self(), timeout),
     {ok, prepare, StateData};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -304,19 +319,27 @@ init({test, Args, StateProps}) ->
     %% state of the rest of the system
     {ok, validate, TestStateData}.
 
+abort(timeout, StateData) ->
+    {stop, normal, StateData}.
+
 %% @private
-prepare(timeout, State = #state{robj = RObj, options=Options}) ->
-    Bucket = riak_object:bucket(RObj),
-    BucketProps = get_bucket_props(Bucket),
+prepare(
+        timeout,
+        State=#state{
+            bkey = {Bucket, Key},
+            options=Options,
+            bucket_props_map=BucketProps
+        }
+    ) ->
     StatTracked = get_option(stat_tracked, BucketProps, false),
-    N = get_n_val(Options, BucketProps),
-    ConditionCheck = get_option(condition_check, Options, false),
+    {SQ, AI, MC, CD, NV, ConditionCheck} =
+        get_options_for_prepare(Options),
+    N = get_n_val(NV, BucketProps),
     CheckR =
         case ConditionCheck of
             false ->
                 ok;
             {NotMod, NoneMatch, GetOpts} ->
-                Key = riak_object:key(RObj),
                 {GetCheck, _PutOpts} =
                     riak_kv_put_fsm:conditional_check(
                         riak_client:get(
@@ -330,13 +353,13 @@ prepare(timeout, State = #state{robj = RObj, options=Options}) ->
                     ),
                 GetCheck
         end,
+    MailBoxCheck =
+        app_helper:get_env(riak_kv, mbox_check_enabled, true) andalso MC,
     case CheckR of
         ok ->
             get_preflist(
-                N,
-                State#state{
-                    tracked_bucket=StatTracked, bucket_props=BucketProps
-                }
+                N, SQ, AI, MailBoxCheck,
+                State#state{tracked_bucket=StatTracked, client_details = CD}
             );
         Error ->
             process_reply(Error, State)
@@ -344,22 +367,21 @@ prepare(timeout, State = #state{robj = RObj, options=Options}) ->
 
 %% @private
 validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
-                                      options = Options0,
+                                      options = Options,
                                       robj = RObj0,
-                                      n=N, bucket_props = BucketProps,
+                                      n=N,
+                                      bucket_props_map = BucketProps,
+                                      bucket_props_list = LegacyProps,
                                       trace = Trace,
                                       preflist2 = Preflist2}) ->
-    Timeout = get_option(timeout, Options0, ?DEFAULT_TIMEOUT),
-    PW0 = get_option(pw, Options0, default),
-    NodeConfirms0 = get_option(node_confirms, Options0, default),
-    W0 = get_option(w, Options0, default),
-    DW0 = get_option(dw, Options0, default),
-    SyncOnWrite0 = get_option(sync_on_write, Options0, default),
+    
+    {Timeout, PW0, NC0, W0, DW0, SW0, Disable, ReturnBody, Asis, ULM} =
+        get_options_for_validate(Options),
 
     PW = riak_kv_util:expand_rw_value(pw, PW0, BucketProps, N),
-    NodeConfirms = riak_kv_util:expand_rw_value(node_confirms, NodeConfirms0, BucketProps, N),
+    NodeConfirms = riak_kv_util:expand_rw_value(node_confirms, NC0, BucketProps, N),
     W = riak_kv_util:expand_rw_value(w, W0, BucketProps, N),
-    SyncOnWrite = riak_kv_util:expand_sync_on_write(SyncOnWrite0, BucketProps),
+    SyncOnWrite = riak_kv_util:expand_sync_on_write(SW0, BucketProps),
 
     %% Expand the DW value, but also ensure that DW <= W
     DW1 = riak_kv_util:expand_rw_value(dw, DW0, BucketProps, N),
@@ -382,7 +404,7 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
         PW =:= error ->
             process_reply({error, {pw_val_violation, PW0}}, StateData0);
         NodeConfirms =:= error ->
-            process_reply({error, {node_confirms_val_violation, NodeConfirms0}}, StateData0);
+            process_reply({error, {node_confirms_val_violation, NC0}}, StateData0);
         W =:= error ->
             process_reply({error, {w_val_violation, W0}}, StateData0);
         DW =:= error ->
@@ -396,8 +418,6 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                                    need, MinVnodes}}, StateData0);
         true ->
             AllowMult = get_option(allow_mult, BucketProps),
-            Options = flatten_options(Options0 ++ ?DEFAULT_OPTS, []),
-            Disable = get_option(disable_hooks, Options),
             Precommit =
                 if Disable -> [];
                    true ->
@@ -408,26 +428,29 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                 if Disable -> [];
                    true -> get_hooks(postcommit, BucketProps, StateData0)
                 end,
-            {VNodeOpts0, ReturnBody} =
-                case get_option(returnbody, Options) of
-                    true ->
-                        {[], true};
+            InitVNodeOpts =
+                case {ReturnBody, Postcommit} of
+                    {false, []} ->
+                        [
+                            {bucket_props, LegacyProps}
+                        ];
                     _ ->
-                        case Postcommit of
-                            [] -> 
-                                {[], false};
-                            _ -> 
-                                {[{returnbody,true}], false}
-                        end
+                        [
+                            {returnbody, true},
+                            {bucket_props, LegacyProps}
+                        ]
                 end,
-            RObj = apply_updates(RObj0, Options),
+            RObj = apply_updates(RObj0, ULM),
             RR =
-                case get_option(asis, Options) of
+                case Asis of
                     true ->
                         Clock = riak_object:vclock(RObj),
                         MaybePrunedClock =
                             vclock:prune(
-                                Clock, riak_core_util:moment(), BucketProps),
+                                Clock,
+                                riak_core_util:moment(),
+                                LegacyProps
+                            ),
                         case {length(MaybePrunedClock), length(Clock)} of
                             {PVL, UPVL} when PVL < UPVL ->
                                 true;
@@ -437,25 +460,41 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
                     _ ->
                         false
                 end,
-            PutCore = riak_kv_put_core:init(N, W, PW, NodeConfirms, DW,
-                                            AllowMult,
-                                            ReturnBody,
-                                            IdxType),
+            PutCore =
+                riak_kv_put_core:init(
+                    N,
+                    W,
+                    PW,
+                    NodeConfirms,
+                    DW,
+                    AllowMult,
+                    ReturnBody,
+                    IdxType
+                ),
             Options1 = lists:keydelete(sync_on_write, 1, Options),
             Options2 = [{sync_on_write, SyncOnWrite}|Options1],
             Options3 = [{rr, RR}|Options2],
-            VNodeOpts = handle_options(Options3, VNodeOpts0),
-            StateData = StateData0#state{n=N,
-                                         w=W,
-                                         pw=PW, node_confirms=NodeConfirms, dw=DW,
-                                         allowmult=AllowMult,
-                                         precommit = Precommit,
-                                         postcommit = Postcommit,
-                                         req_id = ReqId,
-                                         robj = RObj,
-                                         putcore = PutCore,
-                                         vnode_options = VNodeOpts,
-                                         timeout = Timeout},
+            VNodeOpts =
+                handle_options(
+                    Options3,
+                    InitVNodeOpts
+                ),
+            StateData =
+                StateData0#state{
+                    n = N,
+                    w = W,
+                    pw = PW,
+                    node_confirms = NodeConfirms,
+                    dw=DW,
+                    allowmult = AllowMult,
+                    precommit = Precommit,
+                    postcommit = Postcommit,
+                    req_id = ReqId,
+                    robj = RObj,
+                    putcore = PutCore,
+                    vnode_options = VNodeOpts,
+                    timeout = Timeout
+                },
             ?DTRACE(Trace, ?C_PUT_FSM_VALIDATE, [N, W, PW, NodeConfirms, DW], []),
             case Precommit of
                 [] -> % Nothing to run, spare the timing code
@@ -465,9 +504,9 @@ validate(timeout, StateData0 = #state{from = {raw, ReqId, _Pid},
             end
     end.
 
-apply_updates(RObj0, Options) ->
+apply_updates(RObj0, ULM) ->
     RObj1 = 
-        case get_option(update_last_modified, Options) of
+        case ULM of
             true ->
                 riak_object:update_last_modified(RObj0);
             _ ->
@@ -729,6 +768,137 @@ code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 %% Internal functions
 %% ====================================================================
 
+
+-type w_param() :: backend|one|quorum|all|default|non_neg_integer()|binary().
+
+-spec get_options_for_prepare(list(option())) ->
+    {
+        boolean(),
+        boolean(),
+        boolean(),
+        detail(),
+        false|pos_integer(),
+        condition_check()
+    }.
+get_options_for_prepare(Options) ->
+    get_prepare_options(
+        lists:reverse(Options),
+        true,
+        false,
+        ?CAP_PUTFSM_SOFTLIMIT,
+        false,
+        false,
+        false
+    ).
+
+get_prepare_options([], SQ, AI, MC, CD, NV, CC) ->
+    {SQ, AI, MC, CD, NV, CC};
+get_prepare_options([{sloppy_quorum, SQ}|Opts], _SQ, AI, MC, CD, NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([{asis, AI}|Opts], SQ, _AI, MC, CD, NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([{mbox_check, MC}|Opts], SQ, AI, true, CD, NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([{details, CD}|Opts], SQ, AI, MC, _CD, NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([{n_val, NV}|Opts], SQ, AI, MC, CD, _NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([{condition_check, CC}|Opts], SQ, AI, MC, CD, NV, _CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC);
+get_prepare_options([_Opt|Opts], SQ, AI, MC, CD, NV, CC) ->
+    get_prepare_options(Opts, SQ, AI, MC, CD, NV, CC).
+
+-spec get_options_for_validate(list(option())) ->
+    {
+        pos_integer(),
+        w_param(), w_param(), w_param(), w_param(), w_param(),
+        boolean(), boolean(), boolean(), boolean()
+    }.
+get_options_for_validate(Options) ->
+    get_validate_options(
+        lists:reverse(Options),
+            % make backwards compatible with proplists fetch
+            % if there are duplicate elements
+            % e.g. [{return_body, false}, {return_body, true}]
+            % take the first value
+        ?DEFAULT_TIMEOUT,
+        default, default, default, default, default,
+        false, false, false, true
+    ).
+
+get_validate_options([], TO, PW, NC, W, DW, SW, DH, RB, AI, UM) ->
+    {TO, PW, NC, W, DW, SW, DH, RB, AI, UM};
+get_validate_options(
+    [{timeout, TO}|RestOpts],
+    _TO,
+    PW, NC, W, DW, SW, DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{pw, PW}|RestOpts],
+    TO,
+    _PW,
+    NC, W, DW, SW, DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{node_confirms, NC}|RestOpts],
+    TO, PW,
+    _NC,
+    W, DW, SW, DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{w, W}|RestOpts],
+    TO, PW, NC,
+    _W,
+    DW, SW, DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{dw, DW}|RestOpts],
+    TO, PW, NC, W,
+    _DW,
+    SW, DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{sync_on_write, SW}|RestOpts],
+    TO, PW, NC, W, DW,
+    _SW,
+    DH, RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{disable_hooks, DH}|RestOpts],
+    TO, PW, NC, W, DW, SW,
+    _DH,
+    RB, AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{returnbody, RB}|RestOpts],
+    TO, PW, NC, W, DW, SW, DH,
+    _RB,
+    AI, UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{asis, AI}|RestOpts],
+    TO, PW, NC, W, DW, SW, DH, RB,
+    _AI,
+    UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options(
+    [{update_last_modified, UM}|RestOpts],
+    TO, PW, NC, W, DW, SW, DH, RB, AI,
+    _UM
+) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM);
+get_validate_options([_Opt|RestOpts], TO, PW, NC, W, DW, SW, DH, RB, AI, UM) ->
+    get_validate_options(RestOpts, TO, PW, NC, W, DW, SW, DH, RB, AI, UM).
+
 %% Move to the new state, marking the time it started
 new_state(StateName, StateData=#state{trace = true}) ->
     {next_state, StateName, add_timing(StateName, StateData)};
@@ -785,27 +955,9 @@ process_reply(Reply, StateData = #state{postcommit = PostCommit,
     end.
 
 
-%%
-%% Given an expanded proplist of options, take the first entry for any given key
-%% and ignore the rest
-%%
-%% @private
-flatten_options([], Opts) ->
-    Opts;
-flatten_options([{Key, Value} | Rest], Opts) ->
-    case lists:keymember(Key, 1, Opts) of
-        true ->
-            flatten_options(Rest, Opts);
-        false ->
-            flatten_options(Rest, [{Key, Value} | Opts])
-    end.
-
 %% @private
 handle_options([], Acc) ->
     Acc;
-handle_options([{returnbody, true}|T], Acc) ->
-    VNodeOpts = [{returnbody, true} | Acc],
-    handle_options(T, VNodeOpts);
 handle_options([{sync_on_write, Val}|T], Acc) ->
     VNodeOpts = [{sync_on_write, Val} | Acc],
     handle_options(T, VNodeOpts);
@@ -934,14 +1086,20 @@ get_hooks(HookType, BucketProps) ->
             Hooks
     end.
 
-get_hooks(postcommit, BucketProps, #state{bkey=BKey}) ->
+get_hooks(postcommit, BucketProps, State) ->
     BaseHooks = get_hooks(postcommit, BucketProps),
-    CondHooks = riak_kv_hooks:get_conditional_postcommit(BKey, BucketProps),
+    CondHooks =
+        riak_kv_hooks:get_conditional_postcommit(
+            State#state.bkey,
+            State#state.bucket_props_list
+        ),
     BaseHooks ++ (CondHooks -- BaseHooks).
 
 get_option(Name, Options) ->
     get_option(Name, Options, undefined).
 
+get_option(Name, Options, Default) when is_map(Options) ->
+    maps:get(Name, Options, Default);
 get_option(Name, Options, Default) ->
     case lists:keyfind(Name, 1, Options) of
         {_, Val} ->
@@ -957,20 +1115,20 @@ schedule_timeout(Timeout) ->
 
 client_reply(Reply, State = #state{from = {raw, ReqId, Pid},
                                    timing = Timing0,
-                                   options = Options}) ->
+                                   client_details = Details
+                                }) ->
     Timing = riak_kv_fsm_timing:add_timing(reply, Timing0),
-    Reply2 = case get_option(details, Options, false) of
-                 false ->
-                     Reply;
-                 [] ->
-                     Reply;
-                 Details ->
-                     add_client_info(Reply, Details, 
-                                     State#state{timing = Timing})
-             end,
+    Reply2 =
+        case Details of
+            false ->
+                Reply;
+            [] ->
+                Reply;
+            Details ->
+                add_client_info(Reply, Details, State#state{timing = Timing})
+        end,
     Pid ! {ReqId, Reply2},
-    State#state{reply = Reply, 
-                timing = Timing}.
+    State#state{reply = Reply, timing = Timing}.
 
 add_client_info(Reply, Details, State) ->
     Info = client_info(Details, State, []),
@@ -1011,26 +1169,11 @@ dtrace_errstr(Term) ->
 late_put_fsm_coordinator_ack(_Node) ->
     ok.
 
--spec get_bucket_props(riak_object:bucket()) -> list().
-get_bucket_props(Bucket) ->
-    {ok, DefaultProps} = application:get_env(riak_core, default_bucket_props),
-    BucketProps = riak_core_bucket:get_bucket(Bucket),
-    %% typed buckets never fall back to defaults
-    case is_tuple(Bucket) of
-        false ->
-            lists:keymerge(
-                1,
-                lists:keysort(1, BucketProps),
-                lists:keysort(1, DefaultProps));
-        true ->
-            BucketProps
-    end.
-
 %% @private decide on the N Val for the put request, and error if
 %% there is a violation.
-get_n_val(Options, BucketProps) ->
+get_n_val(NV, BucketProps) ->
     Bucket_N = get_option(n_val, BucketProps),
-    case get_option(n_val, Options, false) of
+    case NV of
         false ->
             Bucket_N;
         N_val when is_integer(N_val), N_val > 0, N_val =< Bucket_N ->
@@ -1041,22 +1184,21 @@ get_n_val(Options, BucketProps) ->
     end.
 
 %% @private given no n-val violation, generate a preflist.
-get_preflist({error, _Reason}=Err, State) ->
+get_preflist({error, _Reason}=Err, _SQ, _AI, _MC, State) ->
     process_reply(Err, State);
-get_preflist(N, State) ->
+get_preflist(N, SQ, AI, MC, State) ->
     #state{bkey = BKey,
-           options = Options,
-           bucket_props=BucketProps,
+           bucket_props_list=BucketProps,
            bad_coordinators = BadCoordinators} = State,
 
     DocIdx = riak_core_util:chash_key(BKey, BucketProps),
 
     Preflist =
-        case get_option(sloppy_quorum, Options, true) of
+        case SQ of
             true ->
                 UpNodes = riak_core_node_watcher:nodes(riak_kv),
-                riak_core_apl:get_apl_ann(DocIdx, N,
-                                          UpNodes -- BadCoordinators);
+                riak_core_apl:get_apl_ann(
+                    DocIdx, N, UpNodes -- BadCoordinators);
             false ->
                 Preflist0 =
                     riak_core_apl:get_primary_apl(DocIdx, N, riak_kv),
@@ -1064,32 +1206,40 @@ get_preflist(N, State) ->
                       not lists:member(Node, BadCoordinators)]
         end,
 
-    coordinate_or_forward(Preflist, State#state{n=N}).
+    coordinate_or_forward(Preflist, AI, MC, State#state{n=N}).
 
 %% @private if there is a non-empty preflist, select a coordinator, as
 %% needed.
-coordinate_or_forward([], State=#state{trace=Trace}) ->
+coordinate_or_forward([], _AI, _MC, State=#state{trace=Trace}) ->
     %% Empty preflist
     ?DTRACE(Trace, ?C_PUT_FSM_PREPARE, [-1],
             ["prepare",<<"all nodes down">>]),
     process_reply({error, all_nodes_down}, State);
-coordinate_or_forward(Preflist, State) ->
-    #state{options = Options, n = N, trace=Trace} = State,
-    CoordinatorType = get_coordinator_type(Options),
-    MBoxCheck = get_soft_limit_option(Options),
+coordinate_or_forward(Preflist, Asis, MBoxCheck, State) ->
+    #state{n = N, trace=Trace} = State,
+    CoordinatorType = get_coordinator_type(Asis),
 
     case select_coordinator(Preflist, CoordinatorType, MBoxCheck) of
         {local, CoordPLEntry} ->
-            %% for DTRACE
-            CoordPlNode = case CoordPLEntry of
-                              undefined  -> undefined;
-                              {_Idx, Nd} -> atom2list(Nd)
-                          end,
-            StateData = State#state{n = N,
-                                    coord_pl_entry = CoordPLEntry,
-                                    preflist2 = Preflist},
-            ?DTRACE(Trace, ?C_PUT_FSM_PREPARE, [0],
-                    ["prepare", CoordPlNode]),
+            StateData =
+                State#state{
+                    n = N, coord_pl_entry = CoordPLEntry, preflist2 = Preflist
+                },
+            case Trace of
+                true ->
+                    CoordPlNode =
+                        case CoordPLEntry of
+                            undefined  ->
+                                undefined;
+                            {_Idx, Nd} ->
+                                atom2list(Nd)
+                        end,
+                    ?DTRACE(
+                        ?C_PUT_FSM_PREPARE, [0], ["prepare", CoordPlNode]
+                    );
+                _ ->
+                    ok
+            end,
             new_state_timeout(validate, StateData);
         {forward, ForwardNode} ->
             forward(ForwardNode, State)
@@ -1263,14 +1413,11 @@ add_errors_to_mbox_data(Preflist, Acc) ->
 
 %% @private decide if the coordinator has to be a local, causality
 %% advancing vnode, or no coordinator at all
--spec get_coordinator_type(options()) -> none | local.
-get_coordinator_type(Options) ->
-    case get_option(asis, Options, false) of
-        false ->
-            local;
-        true ->
-            none
-    end.
+-spec get_coordinator_type(boolean()) -> none | local.
+get_coordinator_type(false) ->
+    local;
+get_coordinator_type(true) ->
+    none.
 
 %% @private used by `coordinate_or_forward' above. Removes `Type' info
 %% from preflist entries and splits a preflist into local and remote.
@@ -1288,22 +1435,6 @@ partition_local_remote({{_Index, Node}=IN, _Type}, {L, R})
     {[IN | L], R};
 partition_local_remote({IN, _Type}, {L, R}) ->
     {L, [IN | R]}.
-
-%% @private get the soft-limit check option, and consult capabilities too.
-get_soft_limit_option(Options) ->
-    %% The logic here is to be as safe as possible. If caps system is
-    %% unavailble, then assume soft-limits are unsupported. If
-    %% capability _is_ available AND supported, then the value will be true
-    SoftLimitSupported = ?CAP_PUTFSM_SOFTLIMIT,
-    %% both the system (post forward) and the client (via options) can
-    %% turn off soft-limit checking. However, by default, we should
-    %% use them (if supported) - unless it is explicitly disabled by toggling the
-    %% mbox_check_enabled environment flag
-    SoftLimitedWanted =
-        app_helper:get_env(riak_kv, mbox_check_enabled, true) andalso
-        SoftLimitSupported andalso
-        get_option(mbox_check, Options, SoftLimitSupported),
-    SoftLimitedWanted.
 
 -spec conditional_check(
     {ok, riak_object:riak_object()}|{error, term()},
@@ -1387,12 +1518,6 @@ select_least_loaded_coordinator_test() ->
     ?assertEqual({forward, nodea}, select_least_loaded_coordinator([], MBoxData)),
     ?assertEqual({local, {100, nodea}}, select_least_loaded_coordinator(MBoxData, MBoxData)).
 
-get_coordinator_type_test() ->
-    Opts0 = proplists:unfold([asis]),
-    ?assertEqual(none, get_coordinator_type(Opts0)),
-    Opts1 = proplists:unfold([]),
-    ?assertEqual(local, get_coordinator_type(Opts1)).
-
 get_bucket_props_test_() ->
     BucketProps = [{bprop1, bval1},
                    {bprop2, bval2},
@@ -1428,15 +1553,13 @@ get_bucket_props_test_() ->
           begin
               Bucket = <<"bucket">>,
               %% amazing, not a ukeymerge
-              Props = get_bucket_props(Bucket),
+              Props = riak_kv_util:get_bucket_props(Bucket),
               %% i.e. a merge with defaults
               ?assertEqual([
                             {bprop1,bval1},
                             {bprop2,bval2},
                             {prop1,val1},
-                            {prop1,val1},
                             {prop2,bval9},
-                            {prop2,val2},
                             {prop3,val3}
                            ], Props)
           end)
@@ -1445,7 +1568,7 @@ get_bucket_props_test_() ->
        ?_test(
           begin
               Bucket = {<<"type">>, <<"bucket">>},
-              Props = get_bucket_props(Bucket),
+              Props = riak_kv_util:get_bucket_props(Bucket),
               %% i.e. no merge with defaults
               ?assertEqual(BucketProps, Props)
           end
@@ -1490,12 +1613,9 @@ partition_local_remote_test() ->
                                                            ])).
 
 get_n_val_test() ->
-    Opts0 = [],
     BProps = [{n_val, 3}, {other, props}],
-    ?assertEqual(3, get_n_val(Opts0, BProps)),
-    Opts1 = [{n_val, 1}],
-    ?assertEqual(1, get_n_val(Opts1, BProps)),
-    Opts2 = [{n_val, 4}],
-    ?assertEqual({error, {n_val_violation, 4}}, get_n_val(Opts2, BProps)).
+    ?assertEqual(3, get_n_val(false, BProps)),
+    ?assertEqual(1, get_n_val(1, BProps)),
+    ?assertEqual({error, {n_val_violation, 4}}, get_n_val(4, BProps)).
 
 -endif.

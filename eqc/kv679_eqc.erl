@@ -410,7 +410,7 @@ coord_put(VId, Epoch, {ok, LocalObj}, IncomingObject) ->
                           Acted when is_integer(Acted) ->
                               maybe_new_epoch_actor(VId, Epoch, LocalObj, IncomingObject)
                       end,
-    Obj = riak_object:update(false, LocalObj, IncomingObject, Actor, StartTime),
+    Obj = riak_object:update(false, LocalObj, IncomingObject, Actor, StartTime, false, true),
     {ok, Dot} = vclock:get_dot(Actor, riak_object:vclock(Obj)),
     {Epoch2, Obj, Dot}.
 

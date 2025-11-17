@@ -28,7 +28,8 @@
 
 -export([new/2]).
 -export([get/3,get/4,get/5]).
--export([put/2,put/3,put/4,put/5,put/6]).
+-export([put/2,put/3]).
+-export([put/4,put/5,put/6]).
 -export([delete/3,delete/4,delete/5,reap/3,reap/4]).
 -export([delete_vclock/4,delete_vclock/5,delete_vclock/6]).
 -export([list_keys/2,list_keys/3,list_keys/4]).
@@ -380,36 +381,65 @@ get(Bucket, Key, R, Timeout, {?MODULE, [_Node, _ClientId]}=THIS) when
 %%      Return as soon as the default W value number of nodes for this bucket
 %%      nodes have received the request.
 %% @equiv put(RObj, [])
-put(RObj, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [], THIS).
+put(RObj, {?MODULE, [_Node, _ClientId]}=THIS) ->
+    put(RObj, [], THIS).
 
-
-normal_put(RObj, Options, {?MODULE, [Node, ClientId]}) ->
+-spec put(riak_object:riak_object(), riak_kv_put_fsm:options(), riak_client()) ->
+    ok |
+    {ok, riak_object:riak_object()} |
+    {error, notfound} |
+    {error, timeout} |
+    {error, {n_val_violation, N::integer()}} |
+    {error, Err :: term()}.
+%% @doc Store RObj in the cluster.
+put(RObj, Options, {?MODULE, [Node, ClientId]}) when is_list(Options) ->
     Me = self(),
     ReqId = mk_reqid(),
+    {Opts0, RObj0} =
     case ClientId of
         undefined ->
-            case node() of
-                Node ->
-                    riak_kv_put_fsm:start({raw, ReqId, Me}, RObj, Options);
-                _ ->
-                    %% Still using the deprecated `start_link' alias for `start'
-                    %% here, in case the remote node is pre-2.2:
-                    proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
-                                        [{raw, ReqId, Me}, RObj, Options])
-            end;
-        _ ->
-            UpdObj = riak_object:increment_vclock(RObj, ClientId),
-            case node() of
-                Node ->
-                    riak_kv_put_fsm:start_link({raw, ReqId, Me}, UpdObj, [asis|Options]);
-                _ ->
-                    proc_lib:spawn_link(Node, riak_kv_put_fsm, start_link,
-                                        [{raw, ReqId, Me}, RObj, [asis|Options]])
-            end
+            {Options, RObj};
+        ClientId ->
+            {[asis|Options], riak_object:increment_vclock(RObj, ClientId)}
     end,
-    %% TODO: Investigate adding a monitor here and eliminating the timeout.
-    Timeout = recv_timeout(Options),
-    wait_for_reqid(ReqId, Timeout).
+    R =
+        case node() of
+            Node ->
+                riak_kv_put_fsm:start({raw, ReqId, Me}, RObj0, Opts0);
+            _ ->
+                %% This is required when riak_test (or anything) calls
+                %% riak_client direct
+                proc_lib:spawn_link(
+                    Node,
+                    riak_kv_put_fsm,
+                    start_link,
+                    [{raw, ReqId, Me}, RObj, Options]
+                )
+        end,
+    case R of
+        consistent ->
+            consistent_put(RObj, Options, {?MODULE, [Node, ClientId]});
+        write_once ->
+            write_once_put(Node, RObj, Options, {?MODULE, [Node, ClientId]});
+        _ ->
+            Timeout = recv_timeout(Options),
+            wait_for_reqid(ReqId, Timeout)
+    end;
+%% @doc deprecated - but required in riak_test
+put(RObj, W, {?MODULE, [_Node, _ClientId]}=THIS) ->
+    put(RObj, [{w, W}, {dw, W}], THIS).
+
+%% @doc deprecated - but required in riak_test
+put(RObj, W, DW, {?MODULE, [_Node, _ClientId]}=THIS) ->
+    put(RObj, [{w, W}, {dw, DW}], THIS).
+
+%% @doc deprecated - but required in riak_test
+put(RObj, W, DW, Timeout, {?MODULE, [_Node, _ClientId]}=THIS) ->
+    put(RObj,  [{w, W}, {dw, DW}, {timeout, Timeout}], THIS).
+
+%% @doc deprecated - but required in riak_test
+put(RObj, W, DW, Timeout, Options, {?MODULE, [_Node, _ClientId]}=THIS) ->
+    put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout} | Options], THIS).
 
 consistent_put(RObj, Options, {?MODULE, [Node, _ClientId]}) ->
     Bucket = riak_object:bucket(RObj),
@@ -452,84 +482,6 @@ consistent_put_type(RObj, Options) ->
             %% overwrite
             %% TODO: Expose client option to explicitly request overwrite
             put_once
-    end.
-
-%% @spec put(RObj :: riak_object:riak_object(), riak_kv_put_fsm:options(), riak_client()) ->
-%%       ok |
-%%       {ok, details()} |
-%%       {ok, riak_object:riak_object()} |
-%%       {ok, riak_object:riak_object(), details()} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()} |
-%%       {error, Err :: term(), details()}
-%% @doc Store RObj in the cluster.
-put(RObj, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
-    case consistent_object(Node, riak_object:bucket(RObj)) of
-        true ->
-            consistent_put(RObj, Options, THIS);
-        false ->
-            maybe_normal_put(RObj, Options, THIS);
-        {error,_}=Err ->
-            Err
-    end;
-
-%% @spec put(RObj :: riak_object:riak_object(), W :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
-%% @doc Store RObj in the cluster.
-%%      Return as soon as at least W nodes have received the request.
-%% @equiv put(RObj, [{w, W}, {dw, W}])
-put(RObj, W, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [{w, W}, {dw, W}], THIS).
-
-%% @spec put(RObj::riak_object:riak_object(),W :: integer(),RW :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
-%% @doc Store RObj in the cluster.
-%%      Return as soon as at least W nodes have received the request, and
-%%      at least DW nodes have stored it in their storage backend.
-%% @equiv put(Robj, W, DW, default_timeout())
-put(RObj, W, DW, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [{w, W}, {dw, DW}], THIS).
-
-%% @spec put(RObj::riak_object:riak_object(), W :: integer(), RW :: integer(),
-%%           TimeoutMillisecs :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
-%% @doc Store RObj in the cluster.
-%%      Return as soon as at least W nodes have received the request, and
-%%      at least DW nodes have stored it in their storage backend, or
-%%      TimeoutMillisecs passes.
-put(RObj, W, DW, Timeout, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    put(RObj,  [{w, W}, {dw, DW}, {timeout, Timeout}], THIS).
-
-%% @spec put(RObj::riak_object:riak_object(), W :: integer(), RW :: integer(),
-%%           TimeoutMillisecs :: integer(), Options::list(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
-%% @doc Store RObj in the cluster.
-%%      Return as soon as at least W nodes have received the request, and
-%%      at least DW nodes have stored it in their storage backend, or
-%%      TimeoutMillisecs passes.
-put(RObj, W, DW, Timeout, Options, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout} | Options], THIS).
-
-maybe_normal_put(RObj, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
-    case write_once(Node, riak_object:bucket(RObj)) of
-        true ->
-            write_once_put(Node, RObj, Options, THIS);
-        false ->
-            normal_put(RObj, Options, THIS);
-        {error,_}=Err ->
-            Err
     end.
 
 write_once_put(Node, RObj, Options, {?MODULE, [_Node, _ClientId]}) when Node =:= node()->
@@ -1252,18 +1204,6 @@ consistent_object(Node, Bucket) when Node =:= node() ->
     riak_kv_util:consistent_object(Bucket);
 consistent_object(Node, Bucket) ->
     case rpc:call(Node, riak_kv_util, consistent_object, [Bucket]) of
-        {badrpc, {'EXIT', {undef, _}}} ->
-            false;
-        {badrpc, _}=Err ->
-            {error, Err};
-        Result ->
-            Result
-    end.
-
-write_once(Node, Bucket) when Node =:= node() ->
-    riak_kv_util:get_write_once(Bucket);
-write_once(Node, Bucket) ->
-    case rpc:call(Node, riak_kv_util, get_write_once, [Bucket]) of
         {badrpc, {'EXIT', {undef, _}}} ->
             false;
         {badrpc, _}=Err ->

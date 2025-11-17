@@ -296,5 +296,8 @@ put_merge(CurObj, UpdObj, Options) ->
     %% doesn't support epochs in this test, it is safe to set
     %% IsNewEpoch to false
     IsNewEpoch = false,
-    {_, ResObj} = riak_kv_vnode:put_merge(Coord, false, CurObj, UpdObj, {IsNewEpoch, VnodeId}, Ts),
+    {_, ResObj} =
+        riak_kv_vnode:put_merge(
+            Coord, false, CurObj, UpdObj, {IsNewEpoch, VnodeId}, Ts, false, true
+        ),
     ResObj.

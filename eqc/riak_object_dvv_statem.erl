@@ -288,7 +288,7 @@ coord_put(VNode, Value, Time, VNodeData) ->
 coord_put_ro(VNode, NewObj, undefined, Time) ->
     riak_object:increment_vclock(NewObj, VNode, Time);
 coord_put_ro(VNode, NewObj, OldObj, Time) ->
-    riak_object:update(false, OldObj, NewObj, VNode, Time).
+    riak_object:update(false, OldObj, NewObj, VNode, Time, false, true).
 
 %% Update the DVVSet as if in a co-ordinating vnode
 coord_put_dvv(VNode, DVV, undefined) ->

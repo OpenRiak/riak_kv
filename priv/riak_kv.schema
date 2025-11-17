@@ -664,13 +664,13 @@
 
 %% @doc Controls which binary representation of a riak value is stored
 %% on disk.
-%% * 0: Original erlang:term_to_binary format. Higher space overhead.
+%% * 0: No longer supported.
 %% * 1: New format for more compact storage of small values.
-%% If using the leveled backend object_format 1 will always be used, when
-%% persisting data into the backend - even if 0 has been configured here
+%% This configuration will now be ignored as of Riak 3.4
 {mapping, "object.format", "riak_kv.object_format", [
   {default, 1},
-  {datatype, [{integer, 1}, {integer, 0}]}
+  {datatype, [{integer, 1}, {integer, 0}]},
+  hidden
 ]}.
 
 {translation, "riak_kv.object_format",

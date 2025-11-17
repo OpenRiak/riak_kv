@@ -254,18 +254,7 @@ prepare(timeout, StateData=#state{bkey=BKey={Bucket,_Key},
                                   options=Options,
                                   trace=Trace}) ->
     ?DTRACE(Trace, ?C_GET_FSM_PREPARE, [], ["prepare"]),
-    {ok, DefaultProps} = application:get_env(riak_core,
-                                             default_bucket_props),
-    BucketProps = riak_core_bucket:get_bucket(Bucket),
-    %% typed buckets never fall back to defaults
-    Props =
-        case is_tuple(Bucket) of
-            false ->
-                lists:keymerge(1, lists:keysort(1, BucketProps),
-                               lists:keysort(1, DefaultProps));
-            true ->
-                BucketProps
-        end,
+    BucketProps = riak_kv_util:get_bucket_props(Bucket),
     DocIdx = riak_core_util:chash_key(BKey, BucketProps),
     Bucket_N = get_option(n_val, BucketProps),
     CrdtOp = get_option(crdt_op, Options),
@@ -298,7 +287,7 @@ prepare(timeout, StateData=#state{bkey=BKey={Bucket,_Key},
                                 StateData#state{
                                             starttime=riak_core_util:moment(),
                                             n = N,
-                                            bucket_props=Props,
+                                            bucket_props=BucketProps,
                                             preflist2 = Preflist2,
                                             tracked_bucket = StatTracked,
                                             crdt_op = CrdtOp,
@@ -733,10 +722,14 @@ read_repair(GetCoreIndices, RepairObj,
         _ ->
             ok
     end,
-    riak_kv_vnode:readrepair(DocIdxList, BKey, RepairObj, ReqId,
-                             StartTime, [{returnbody, false},
-                                         {bucket_props, BucketProps},
-                                         {crdt_op, CrdtOp}]),
+    riak_kv_vnode:readrepair(
+        DocIdxList,
+        BKey,
+        RepairObj,
+        ReqId,
+        StartTime, 
+        [{returnbody, false}, {bucket_props, BucketProps}, {crdt_op, CrdtOp}]
+    ),
     ok = riak_kv_stat:update({read_repairs, RepairPreflist}).
 
 -spec read_repair_index(
