@@ -260,4 +260,4 @@ The fetch API is currently source-only, and has no documented support for extern
 
 ## Legacy Query API
 
-> TODO: Point to legacy docs, and refer to replacement Query API
+> TODO: Point to legacy docs, and refer to replacement Query API.  Note that legacy docs do not recognise the potential use of regular expressions.

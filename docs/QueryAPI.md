@@ -1,10 +1,12 @@
 # Riak KV - Query API
 
-Riak supports a query language for secondary indexes, whereby range queries can be run on indexes, with the index entries containing additional projected attributes beyond the sort key.  Queries can apply further filtering on the index entries within the range, by applying a filter expression to those projected attributes.
+Secondary indexes may be added to Riak objects, and Riak provides a Query API for those indexes.  Riak supports range queries, to be run across entries on an index, but the index entries may also contain additional projected attributes beyond the sort key.  The Query API can be used to apply a filter expression to those projected attributes, in order to reduce the returned responses to only those entries where the attributes pass the filter.
 
-Through this combination of querying ranges and filtering on projected attributes, Riak can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index entries with the required combination of sort keys and overloaded terms (i.e. projected attributes).
+Through this combination of querying ranges and filtering on projected attributes, Riak can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index entries with the required combination of sort keys and attributes.  The queries are distributed across the cluster, running in parallel across different partitions of the data (i.e. vnodes), and supporting low-latency responses to relatively complex queries.
 
-Riak can also combine the results of different queries using set operations, where the set operations are distributed across the cluster for efficiency.  There is also support in the Riak Query API for different accumulation options, to improve the efficiency of querying in report production.
+As well as single queries Riak can also handle combination queries.  In combination queries, multiple queries are run as part of the same request and the results of each query are combined using a set operation before results are accumulated to construct the response.  Those set operations are also distributed across the cluster for efficiency; the application of a set operation happens at the scale of the vnode, not the scale of the cluster.  All combination queries are run on a single snapshot per vnode; so the results should always be consistent from the perspective of each potential key in the result set.
+
+The result sets for queries are not limited to returning lists of object keys, there is also support in the Riak Query API for different accumulation options to improve the efficiency of querying in report production.
 
 For further detail on the Query API:
 
@@ -15,16 +17,18 @@ For further detail on the Query API:
 - [An example using the API for reporting](#example-3---reporting-index)
 - [Setting performance expectations for queries](#performance-expectation)
 - [A more formal description of the Query API](#query---definition)
+- [An overview of the expected performance of queries in Riak](#performance-and-efficiency)
 - [Some notes on the underlying implementation](#notes-on-implementation)
 
 ## Secondary Indexes - Adding Index Entries to an Object
 
-Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field, a term and an object key: where a field is a name for an index within a bucket, and a term is a sortable binary string that represents a value for a given key on that index, and the object key is the standard result of the query.
+Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field, a term and an object key: where a field is a name for an index within a bucket, and a term is a sortable binary string that represents a value for a given key on that index, and the object key is the standard result of the query.  All indexes and queries are limited to a single Bucket.
 
-Indexes are only used via the Query API, but are [referenced in the Object API](/docs/ObjectAPI.md#index-entries).
+Indexes are added using [the Object API](/docs/ObjectAPI.md#index-entries).
 
-- When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored index entries, and only make the necessary key changes.  An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field.
-- When an object is fetched from Riak, it will be returned with all its current Index values.
+- When an object is PUT into Riak, the PUT should include ALL the index entries for that object - the entirety of the current expected state.  Internally Riak will calculate the delta from the previously stored index entries, and only make the necessary key changes.
+- An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field.
+- When an object is fetched from Riak using the Object API, it will be returned with all its current Index values.
 
 There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  It is expected that applications which use secondary indexes within Riak will write an extension to the Riak client, or within the application; where that extension will examine the object body and calculate the required index entries, before completing a PUT.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.  
 
@@ -38,30 +42,40 @@ Index terms can be extended by projecting additional attributes onto the sort ke
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
-There is no pre-defined way to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  There are mechanisms available within Riak to extract, filter-on and return projected attributes at query time - and it is a requirement of application design to ensure that projected attributes are appended in a way that is both flexible and efficient when extracting and filtering.
+There is no pre-defined way to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  Projected attributes are extracted from index entries at query time, normally using an `evaluation_expression` within the Query API; and so index entries should be added so that the extraction is supported.
+
+Different extraction functions within the Query API `evaluation_expression` have different costs at query time, but also have differing impacts with regards to flexibility in support of schema change.  For example, using an `index` evaluation function is more efficient than a `kvsplit` function at query time, but when changing the schema `kvsplit` may in many scenarios simplify the management of that change.
 
 ## Secondary Indexes - Querying Index Entries Overview
 
-### Functional Overview
+Riak querying is intended to provide flexible and performant functionality in the context of a Key-Value score.  The database will be limited in terms of the expressiveness when compared to alternatives designed with a focus on queryability:
+
+> The aim of Riak development is to provide a database that performs efficient, scalable and predictable CRUD operations, and is just-queryable-enough to avoid the need of third party database integration in most use cases.
+
+Riak does support via [an external replication API](/docs/NextGenReplGuide.md), the ability for the developer to  manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.
+
+### Functional Summary
 
 A query consists of the [following components](#query_list-required):
 
-- A field (required).
-- A range (required).
-- An evaluation expression (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
-- A filter expression (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (i.e. the map being the output of an evaluation expression).
-- A regular expression (optional); a potentially less flexible, but commonly more performant alternative to evaluation and filter expressions - where a regular expression is used to match against a whole term, including the unevaluated projected attributes, in order to filter the entry into the query results.
-  - A regular expression is a way of condensing evaluation and filter expressions into one stage.
+- An index field (required).
+- A query range (required).
+- An `evaluation_expression` (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
+- A `filter_expression` (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (i.e. the map being the output of an evaluation expression).
+- A regular expression (optional); a potentially less flexible, but sometimes more performant alternative to evaluation and filter expressions - where a regular expression is used to match against a whole term, including the unevaluated projected attributes, in order to filter the entry into the query results.
+  - The regular expression is primarily provided for backwards compatibility with the [legacy index-query feature used prior to Riak 3.4](/docs/OtherAPI.md#legacy-query-api).
+  - A regular expression is a way of condensing evaluation and filter expressions into one stage, but it should not be assumed to be more performant.
+  - Escaping regular expressions correctly so that they can be passed to Riak via the JSON-based Query API, may add significant complexity to development using regular expressions.  - The use of evaluation and filter expressions is preferred to the use of regular expressions.
 
 Queries can be sent individually, but it is also possible to send multiple queries along with an aggregation expression to define how the query results will be combined (e.g. using `INTERSECT`, `UNION`, `NOT`) - where Riak will provide a single set of results as a response based on the aggregation expression.
 
-Queries, both single and aggregated, also support an optional accumulation method; a mechanism for describing the type of results required, and how those results should be sorted (e.g. returning just object keys, keys by term, keys by specific projected attribute, counts by attribute etc).
+Queries, both single and aggregated, also support an optional accumulation method; a mechanism for describing the type of results required, and how those results should be sorted (e.g. returning just object keys, keys by term, keys by specific projected attribute, counts, counts by attribute value etc).
 
 Queries are requested by posting [a JSON object which defines the query](#query-json---definition) to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
 
-The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client, or to avoid difficulty with escaping special characters embedded within query elements.  There are also specific options to govern pagination of results, and timeout of queries.
+The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client (i.e. to substitute into a standard query the user input), or to avoid difficulty with escaping special characters embedded within query elements.  There are also specific options to govern pagination of results, and timeout of queries.
 
-### Non-functional Overview
+### Non-functional Summary
 
 The distributed nature of querying in Riak means that large numbers of results can be processed and filtered with relatively low latency.  The processing of queries is naturally parallel within Riak, and is performant as a result.
 
@@ -69,9 +83,7 @@ However, in the development of Riak it is assumed that in most production Riak s
 
 It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
 
-There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for available CPU cores to complete the query, there is no constraint on how many Ccores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will balance use between queries and other user requests; there is no specific ring-fencing of resources for the purpose of querying.
-
-The aim of Riak development is to provide a database that performs efficient, scalable and predictable CRUD operations, and is just-queryable-enough to avoid the need of third party database integration in most use cases.  However, Riak does support via an external replication API, the ability for the developer to  manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.
+There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for available CPU cores to complete the query, there is no constraint on how many cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will balance use between queries and other user requests; there is no specific ring-fencing of resources for the purpose of querying.
 
 ## Example (1) - A Simple People Search Index
 
@@ -177,7 +189,7 @@ Note that, in this particular case, there would be a significant performance imp
     }
 ```
 
-The query could be further optimised as this (although in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE):
+The query may be further optimised using a regular expression.  Some functionality may be harder to implement in regular expressions - in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE.  Regular expressions make handling range checks on projected attributes much more difficult:
 
 ```json
     {
@@ -193,7 +205,7 @@ The query could be further optimised as this (although in this case it will also
     }
 ```
 
-Building such optimisations into queries can add significant complications to application code, and extend greatly the complexity of testing that application code. 
+This regular expression based query is not guaranteed to be quicker than using the filter and evaluation expressions in the previous example.  Further, even if it does improve performance, building such optimisations into queries can add significant complications to application code, and add to the complexity of testing that application code.
 
 ### Example (1) - Inexact Match
 
@@ -379,11 +391,11 @@ For this example we assume all the people exist in a hierarchy.  Each person is 
 
 For this a single index is used:
 
- - `healthreport_bin : <SHA><GP><DOB><STATUS_FLAGS>`
+- `healthreport_bin : <SHA><GP><DOB><STATUS_FLAGS>`
 
 So a test record may have an entry like:
 
- - `healthreport_bin: SHA0001GP00000119650501FYNNY`
+- `healthreport_bin: SHA0001GP00000119650501FYNNY`
 
 So if today's date is 30 May 2025, and one wishes to count all the female smokers over the age of 60 registered in SHA001
 
@@ -423,12 +435,6 @@ If the same results are required, but this time a count by age at today's date (
     }
 ```
 
-## Performance Expectation
-
-> TODO - stats on relative performance using the different approaches to querying
-
-> TODO - Note on the lack of optimisation for aggregation expressions
-
 ## Query - Definition
 
 ### Query JSON - Definition
@@ -442,7 +448,7 @@ The query should be posted as the HTTP body, to the query API for the relevant b
 #### `accumulation_option` (optional - default = keys)
 
 - There are six options for accumulating the results from a single query:
-  - `keys`; return a list of keys that matched in the query, where the keys have been de-duplicated and sorted.
+  - `keys`; return a list of keys that matched in the query, where the keys have been deduplicated and sorted.
   - `raw_keys`; return a list of keys that matched in the query, but in no specific order and where multiple matches for the same key will result in that key appearing multiple times within the results.
   - `terms`; return a list of term/key pairs, ordered by term.
   - `raw_terms`; return a list of term/key pairs, unsorted.
@@ -462,7 +468,7 @@ When using an accumulation option of `terms`, `raw_terms`, `term_with_rawcount` 
 
 The potential to limit the number of results returned by the query, to the first N results.  The query will terminate once sufficient results have been returned, and a continuation term will be returned along with the results, which can be passed into a subsequent query to return the next set of results after this point.  This allows for pagination of results.
 
-- Max results is only supported with an `accumulation_option` of `terms` or `raw_keys`.
+- The Max results option is only supported with an `accumulation_option` of `terms` or `raw_keys`.
   - Max results will return a continuation reference as part of the result, to be passed in as a continuation option; other `accumulation_option`s are not able to make a reliable continuation point.
 
 Note that as the query is distributed, and there is minimal difference for the performance of fetching 1 or 10K results, then pagination will not be efficient for user-facing page sizes (e.g. small batches of o(10)).  For pagination to the end user, it is normally better to fetch larger result sets to be cached and paginated within the application.
@@ -554,7 +560,7 @@ The functions that can be used in a pipeline are:
 
 `to_string ( IN_ID identifier , OUT_ID identifier )`
 
-- convert an integer back to a string where IN_ID has a integer value, and is mapped after string-conversion to the projected attribute with an OUT_ID identifier.  If the input value is already a string, the mapping will still occur without the conversion.
+- convert an integer back to a string where IN_ID has an integer value, and is mapped after string-conversion to the projected attribute with an OUT_ID identifier.  If the input value is already a string, the mapping will still occur without the conversion.
 
 `subtract ( X math_operand , Y math_operand , OUT_ID identifier )`
 
@@ -601,6 +607,118 @@ function ::=
     | contains (key, substr)
 ```
 
+## Performance and Efficiency
+
+There are multiple stages to producing a query result:
+
+- Setup and distribute the query;
+  - parse the API request, validate the request, start a query server, find a coverage plan, initiate snapshots of all vnodes required for the query.
+- Scan the index entries (concurrently across vnode backends);
+  - read and deserialise and merge blocks of index entries at each level so that index entries within the range can be passed in key order to be evaluated and filtered.
+- The filtering of each potential result within the range;
+- The buffering and potential deduplication of results at the vnode level.
+- the combination of query results using an aggregation expression.
+- The collation, aggregation, deduplication and sorting of results at a cluster level.
+- The transformation of results (into JSON) and transmission back as the API response.
+
+As queries depend on all these parts, and all these parts are impacted differently by different factors it is not possible to precisely predict query response times.
+
+> In general, though, when scanning less than 10K entries and filtering to less than 1K results most non-trivial cluster should be able support **query latency of o(10) ms**.
+
+### Setup and Distribute the Query
+
+The first stage, setup, is largely a fixed overhead regardless of query type.  The cost of the stage is primarily driven by the Ring Size of the cluster, which determines the number of snapshots that need to be taken in parallel.  A lower Ring Size will reduce the cost of this overhead, but in general a reduced Ring Size has a negative impact on performance - so reducing Ring Size with the intention to reduce query response times is not recommended.
+
+> The latency introduced in the setup phase is generally **less than o(1) ms** for small and mid-sized clusters.  
+
+Note though, that requests for snapshots are added to the vnode queue on each vnode.
+
+> On a busy cluster that query latency will be increased the delay of the longest vnode queue in the query coverage plan.
+
+The query coverage plan will distribute the query to at least `RingSize div n_val` vnodes, and the size of the vnode queue is not a factor in the calculation of the plan.  Once the snapshot is taken, all other phases of the query are independent of the vnode queue.
+
+> If there is significant network latency between nodes within a cluster, then that latency will impact the setup phase.  It is recommended to only use the Query API when network latency between cluster members is no more than o(1) ms.
+
+### Scanning
+
+The scanning stage of the query is in parallel with the filtering, buffering and collation of results.  As results are scanned they are passed in to the query pipeline for continuous processing.
+
+> In general a query should be able to scan, merge and select index entries at between **500K and 1M entries per CPU-core per second**.
+
+Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfillment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
+
+Index entries are stored in blocks of around 30 entries, so there is minimal difference between scanning 1 entry per vnode, and scanning 100.  Each block must be decompressed and deserialised every time the block is scanned, there is no caching of deserialised index entries.  The only caching between queries is of a small amount of block metadata and natural promotion to the file system page cache.
+
+> Spare memory will improve query performance by reducing disk wait times, but no database memory is ring-fenced for caching scanned index entries.
+
+### Filtering
+
+The filtering stage requires the application of an optional filter, to validate projected attributes overloaded on the index entry to filter the result in or out of the query.  The standard way of filtering projected attributes is through the combination of an `evaluation_expression` to extract the attributes required by the `filter_expression`.
+
+> The overhead of combining an `evaluation_expression` and a `filter_expression` is normally between 20% and 60% depending on the complexity of the expressions.  Queries with a filter will generally only be able to process between **200K and 500K entries per CPU-core per second**.
+
+Filtering results will reduce the cost of downstream processes significantly, especially deduplication, sorting and deserialisation.  These costs though are dependent on the accumulation_option, the `raw_count` option only has minimal downstream costs.
+
+> When using any `accumulation_option` other than `raw_count`, being more specific in the evaluation and filter of index entries will probably improve performance - regardless of the complexity of the required expressions.
+
+### Buffering
+
+Once a result has been filtered it is added to the local (per-vnode) buffer for that query.  The buffer will aggregate results, and then for large queries periodically (based on the count of results added to the buffer) send interim result sets back to the query server collating results for the cluster.  The query buffer will wait to receive a reply from the server before proceeding.
+
+> The number of concurrent CPU cores that may be used by a query will be constrained by the delay awaiting an acknowledgement from the central query server.  This will depend on network latency within the cluster and the work required in the collation phase for the chosen `accumulation_option`.  Low latency clusters returning `raw_count` should normally scale to make use of **o(100) CPU cores per query**.  Higher latency clusters using `keys`, `count` or `term_with_keys` may not scale beyond **o(10) CPU cores per query**.
+
+If `keys`, or `count` or `term_with_count` are used as the `accumulation_option` there is a need to deduplicate the results.  For `keys` this deduplication will occur centrally at the query_server; but this will have a significant impact on query performance as the number of filtered results grows.
+
+For `count` and `term_with_count`, there is an optimisation to deduplicate results at the vnode level. However, even with this optimisation, for large numbers of post-filter results the overhead of deduplication may become a dominant factor in overall query cost and latency.
+
+> At 10K filtered results per vnode, the deduplication overhead will typically be 10%, at 100K filtered results per vnode it will be around 50%, and at over 1M results per vnode the overhead may be an order of magnitude.
+
+For each `accumulation_option` option there is a `raw` option that does not deduplicate the results.  Always use the `raw` option for large result sets if deduplication is not necessary.  For instance; if the application enforces cardinality rules so that each object may only have one entry on the index, or duplicate results can be handled by the application.
+
+> A mid-size cluster should be able to `raw_count` **100M unfiltered index entries in o(10) ms**; however the `count` of such a result set would take o(100) ms.
+
+If using the `raw` option is not possible and a large result set is expected, then dividing the query into multiple sub-queries by range and accepting the increased per-query overhead is generally a better option than using the non-`raw` option.  The need for a `raw` option is unnecessary if combined result set sizes are less than 100K keys.
+
+Partitioning of results is best done by breaking up the sort key range; the `max_results` option cannot be used on `count`-like queries.
+
+The `max_results` (and then `continuation`) option may be used to partition results into multiple queries, but this is [only supported with the `terms` and `raw_keys` accumulation option](#max_results-optional).
+
+> When setting `max_results` with a `raw_keys` query, a `terms` query will be run internally, and the terms stripped before sending the keys in the response.  Setting `max_results` on a `raw_keys` query will therefore lead to the performance overheads of a `terms` query i.e. extra data transmitted within the cluster, and a sorting overhead at the query server.
+
+### Aggregation of Combination Queries
+
+For combination queries, each query is run in-turn, and is always run.  Once all queries have been run the `aggregation_expression` is applied to the result set at the vnode level.
+
+> In most scenarios, the distributed running of the `aggregation_expression` means that latency of that aggregation is not significant in overall query latency, as the set operations are performed on vnode-sized sets not cluster-sized sets.
+
+If the `aggregation_expression` is based on `INTERSECT` there may be situations where the result set of latter queries are going to be intersected with an empty set, and therefore running the latter query is unnecessary:
+
+> There is presently no optimisation that would not run queries based on partial completion of the `aggregation_expression`.
+
+Aggregation queries, which use set expressions to combine results across multiple queries, do not use the query buffer until all queries are complete and the `aggregation_expression` has been applied on that vnode's results.
+
+> As the query buffer is bypassed a cancelled query will not terminate early for combination queries.
+
+Support for `aggregation_expression`s in Riak 3.4 is a work in progress and may [be optimised in future releases](#further-improvements).
+
+### Central Collation of Query Results
+
+The query server which prompted the setup of the query, will also be responsible for collation of results.  This server will always reside on the node which received the query request.
+
+> It is important to distribute query requests evenly across a cluster due to the overheads of collation, and if necessary mark down nodes with specific temporary overheads within the load-balancer's active configuration.
+
+The query server will acknowledge results received in batches, but for `count`, `term_with_count` and `term_with_rawcount` queries only a `ping` will be sent for acknowledgement.  For these queries partial result sets are not collated, just the final result for the vnode.
+
+The `keys` and `term_with_keys` result set both require sorting on the query server.  The sorting takes place in parallel to vnode querying and batches of results arrive, but may delay the query server in acknowledging results.  The vnode queries cannot outrun the centralised sorting process.
+
+### Transformation of Results
+
+The final stage of handling the request is the formation of the response into a JSON message.  The cost of this stage is directly linked to the size of the final result set, although this is normally a minority of the overall cost.
+
+There is no protection against overloading memory with the results of an individual query.
+
+> The node handling the request must have enough memory to hold all the results in memory, and during transformation the memory overhead may be doubled.  Consideration of this is required, especially when running non-`count` queries that return o(10m) results or greater.
+
 ## Notes on Implementation
 
 ### Siblings
@@ -611,31 +729,12 @@ Riak supports the `allow_mult = true` state, whereby the history of changes to a
 
 Testing is currently only undertaken on ascii-based index terms, although filter and evaluation expressions have been designed to support unicode.  There are a number of potential issues with unicode support, not least with support for unicode in HTTP headers, so end-to-end tested Unicode support is currently deferred to a future release.
 
-### Performance and Efficiency
-
-Index entries are stored in the leveled ledger (or key store).  The index entries are packed into blocks of up to 64 entries, and to query a given vnode backend each level of the key store must be checked and compared (to ensure entries at a lower level have not been replaced by those awaiting compaction at a higher level).  The query is distributed across `RingSize div n_val` vnodes in parallel.  So with a ring size of 512, and a `n_val` of 3 there will be 171 parallel queries running across the cluster to complete the query.
-
-Where the number of index entries to be scanned per vnode is bigger than the block size (e.g. > 10K results in total) this can be fast and efficient.  For a smaller number of results per vnode, the query will still be fast, but it is relatively less efficient.
-
-There is an overhead per-vnode to setup the snapshot for the query, including running the query against the in-memory part, and then a cost which is correlated to the number of compressed blocks of index entries that need to be serialised (normally one per level if there are less than 64 entries in the range per vnode).  Reducing the ring size will generally improve the efficiency of secondary index queries, but will not necessarily improve the speed.  If, for example, 1% of requests are complex 2i queries, there can be a 10-20% CPU utilisation cost for every doubling of the ring size.
-
-However, reducing the ring size does not help the long-term scalability of a cluster, and improve other operations.  Reducing the planned ring size, simply to optimise query performance, would not normally be recommended.
-
-If applying either an evaluation/filter expression or a regular expression it is normally the expression that dominates the CPU utilisation.  Writing the expression using regex is normally between 10%  and 50% more efficient than using an evaluation and a filter expression (the regular expressions are compiled before being distributed to each vnode).  The cost of this expression is proportional to the number of keys in the sort key range (not the number of keys that are deserialised).
-
-Aggregation of queries is performed at a vnode-level, before results are returned to be aggregated for the client - so even when cross-cluster result sets are large the aggregation operations are sub-divided into relatively small set operations.
-
 ### Consistency
 
 Index changes are not deferred to an async process, at a vnode level all index changes are made as a transaction with the object change.  Outside of failure scenarios, secondary index queries will almost always immediately reflect the results of any changes in the object (with caveats related to unreliable latency across intra-cluster networking communication).
 
 In failure and recovery scenarios, false negatives are possible (i.e. results may be missing until anti-entropy mechanisms correct) but results will be eventually consistent.  The query uses a coverage plan which will check only one (of N) potential copies of the data, and so should a vnode be temporarily incorrect, the entropy is not detected as part of the query.  The `participate_in_coverage` configuration option (which can be applied at run-time) is used to mitigate this - this can be used to prevent a node with a known entropy issue from being involved in queries. 
 
-### Notes on Implementation - Further Improvements
+### Further Improvements
 
-The evaluation and filter expression language is a work in progress.  Extensions to the existing solution under consideration for Riak 4.0 are:
-
-- An evaluation function that calculate the Jaro-similarity between an attribute value and a given string (Erlang has included `jaro_similarity/2` since OTP 27);
-- An evaluation function that converts a given string into a soundex representation of that string
-  - Currently Riak users have implemented Soundex support simply by adding additional indexes with soundex variations of the required terms.
-- A special index type that is an alternative to the `_bin` type that will allow for passing in an encoded JSON object with projected attributes and `sort_key` specifically defined; so that the index can then be queried without need for an `evaluation_expression`.
+Improving the functionality of the Query API is an active goal of the OpenRiak devleopment team.  Notifications on planed improvements will be added to the [OpenRiak dsicsssions board](https://github.com/orgs/OpenRiak/discussions).
