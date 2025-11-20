@@ -1,12 +1,12 @@
 # Riak KV - Query API
 
-Secondary indexes may be added to Riak objects, and Riak provides a Query API for those indexes.  Riak supports range queries, to be run across entries on an index, but the index entries may also contain additional projected attributes beyond the sort key.  The Query API can be used to apply a filter expression to those projected attributes, in order to reduce the returned responses to only those entries where the attributes pass the filter.
+Secondary indexes may be added to Riak objects, and Riak provides a Query API for those indexes.  The API supports range queries, to be run across the sorted terms on an index, but the terms may also contain projected attributes appended to the sort key.  The Query API can be passed evaluation and filter expressions: to first evaluate the term to extract the attributes, and then filter the terms by testing the attribute values against query conditions.
 
-Through this combination of querying ranges and filtering on projected attributes, Riak can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index entries with the required combination of sort keys and attributes.  The queries are distributed across the cluster, running in parallel across different partitions of the data (i.e. vnodes), and supporting low-latency responses to relatively complex queries.
+Through this combination of querying ranges and filtering on projected attributes, the API can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index terms with a suitable combination of sort keys and attributes.  The queries are distributed across the cluster, running in parallel across different partitions of the data (the vnodes), and through that parallelism supporting low-latency responses to relatively complex queries, even where significant numbers of index entries need to be processed.
 
-As well as single queries Riak can also handle combination queries.  In combination queries, multiple queries are run as part of the same request and the results of each query are combined using a set operation before results are accumulated to construct the response.  Those set operations are also distributed across the cluster for efficiency; the application of a set operation happens at the scale of the vnode, not the scale of the cluster.  All combination queries are run on a single snapshot per vnode; so the results should always be consistent from the perspective of each potential key in the result set.
+The result sets for queries are not limited to returning lists of object keys, there is also support in the Query API for different accumulation options.  As well as returning object keys, accumulation options can be used to efficiently count results, and group both results and counts by specific projected attributes.
 
-The result sets for queries are not limited to returning lists of object keys, there is also support in the Riak Query API for different accumulation options to improve the efficiency of querying in report production.
+As well as single queries the API can also handle combination queries.  In combination queries, multiple queries are run as part of the same request and the results of each query are combined using a set operation before results are accumulated to construct the response.  Those set operations are also distributed across the cluster for efficiency; the application of a set operation happens at the scale of the vnode, not the scale of the cluster.  All combination queries are run on a single snapshot per vnode; so the results should always be consistent from the perspective of each potential key in the result set.
 
 For further detail on the Query API:
 
@@ -30,9 +30,9 @@ Indexes are added using [the Object API](/docs/ObjectAPI.md#index-entries).
 - An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field.
 - When an object is fetched from Riak using the Object API, it will be returned with all its current Index values.
 
-There is no out-of-the-box support for schema management within Riak, as Riak is intended to be independent of the format of the actual object body.  It is expected that applications which use secondary indexes within Riak will write an extension to the Riak client, or within the application; where that extension will examine the object body and calculate the required index entries, before completing a PUT.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.  
+There is no direct support for schema management within Riak, as Riak is designed to act independently of the format and the content of the application-provided object body.  It is expected that for an application to make use of secondary indexes within Riak, the object-handling logic within the application will require an extension; where that extension will examine the object body, and calculate the required index entries before completing a PUT.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
 
-The design of secondary indexes in Riak makes them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.
+The design of secondary indexes in Riak makes them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by a number of factors](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries ot be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
 
 Index entries can be made up of simple sort keys:
 
@@ -42,7 +42,7 @@ Index terms can be extended by projecting additional attributes onto the sort ke
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
-There is no pre-defined way to project attributes onto an index term in Riak 3.4; the definition, formatting and appending of projected attributes is the responsibility of the application.  Projected attributes are extracted from index entries at query time, normally using an `evaluation_expression` within the Query API; and so index entries should be added so that the extraction is supported.
+There is no pre-defined way to map project attributes onto an index term in Riak; the definition, formatting and appending of projected attributes is the responsibility of the application.  Projected attributes are extracted from index entries at query time, normally using an `evaluation_expression` within the Query API; and so index entries should be added so that the extraction is supported by the [expression language](#evaluation-expression---definition).
 
 Different extraction functions within the Query API `evaluation_expression` have different costs at query time, but also have differing impacts with regards to flexibility in support of schema change.  For example, using an `index` evaluation function is more efficient than a `kvsplit` function at query time, but when changing the schema `kvsplit` may in many scenarios simplify the management of that change.
 
@@ -54,7 +54,7 @@ Riak querying is intended to provide flexible and performant functionality in th
 
 Riak does support via [an external replication API](/docs/NextGenReplGuide.md), the ability for the developer to  manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.
 
-### Functional Summary
+### Querying - Functional Summary
 
 A query consists of the [following components](#query_list-required):
 
@@ -63,19 +63,21 @@ A query consists of the [following components](#query_list-required):
 - An `evaluation_expression` (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
 - A `filter_expression` (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (i.e. the map being the output of an evaluation expression).
 - A regular expression (optional); a potentially less flexible, but sometimes more performant alternative to evaluation and filter expressions - where a regular expression is used to match against a whole term, including the unevaluated projected attributes, in order to filter the entry into the query results.
-  - The regular expression is primarily provided for backwards compatibility with the [legacy index-query feature used prior to Riak 3.4](/docs/OtherAPI.md#legacy-query-api).
-  - A regular expression is a way of condensing evaluation and filter expressions into one stage, but it should not be assumed to be more performant.
-  - Escaping regular expressions correctly so that they can be passed to Riak via the JSON-based Query API, may add significant complexity to development using regular expressions.  - The use of evaluation and filter expressions is preferred to the use of regular expressions.
+  - The regular expression is primarily provided for backwards compatibility with the [legacy index-query feature used prior to Riak 3.4](/docs/OtherAPI.md#legacy-query-api).  The use of evaluation and filter expressions is preferred to the use of regular expressions, and are often at least as performant as regular expressions.
+  - Regular expressions are [PCRE-style regular expressions](https://www.pcre.org/), but are not compiled prior to being used.
+  - Escaping regular expressions correctly so that they can be passed via the JSON-based Query API, may add significant complexity to the development process.
 
 Queries can be sent individually, but it is also possible to send multiple queries along with an aggregation expression to define how the query results will be combined (e.g. using `INTERSECT`, `UNION`, `NOT`) - where Riak will provide a single set of results as a response based on the aggregation expression.
 
 Queries, both single and aggregated, also support an optional accumulation method; a mechanism for describing the type of results required, and how those results should be sorted (e.g. returning just object keys, keys by term, keys by specific projected attribute, counts, counts by attribute value etc).
 
-Queries are requested by posting [a JSON object which defines the query](#query-json---definition) to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
+The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client (i.e. to substitute into a standard query the user input), or to avoid difficulty with escaping special characters embedded within query elements.Within the API a prefix of `:` to a reference indicates that the reference should be replaced using an entry in the `substitutions` map.  Projected attribute keys, the whole term (`$term`) and the object key (`$key`) are identified through use of a `$` prefix.
 
-The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client (i.e. to substitute into a standard query the user input), or to avoid difficulty with escaping special characters embedded within query elements.  There are also specific options to govern pagination of results, and timeout of queries.
+There are also specific options to govern pagination of results, and timeout of queries.
 
-### Non-functional Summary
+Queries requests are made by posting [a JSON object which defines the query](#query-json---definition) to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
+
+### Querying - Non-functional Summary
 
 The distributed nature of querying in Riak means that large numbers of results can be processed and filtered with relatively low latency.  The processing of queries is naturally parallel within Riak, and is performant as a result.
 
@@ -84,6 +86,12 @@ However, in the development of Riak it is assumed that in most production Riak s
 It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
 
 There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for available CPU cores to complete the query, there is no constraint on how many cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will balance use between queries and other user requests; there is no specific ring-fencing of resources for the purpose of querying.
+
+Understanding the [detailed guidance about query performance](#performance-and-efficiency) is important, but in summary:
+
+- Try to minimise the number of index terms within the range of the query;
+- Use a more efficient `accumulation_option` where possible (i.e. prefer a `raw` option);
+- Use single queries with filtering of projected attributes in preference to combination queries, as a method for supporting conjunction queries.
 
 ## Example (1) - A Simple People Search Index
 
@@ -96,7 +104,7 @@ In this example, the database contains people whose records are stored under a u
 
 For all queryable attributes approximate entries are allowed.  The Date of Birth can be a range rather than a specific date, the names and post codes require a minimal prefix (the first two characters), but wildcards may be provided for unknown parts.
 
-For this example, a single index per record is constructed to support these queries, whereby the Date Of Birth would be the sort key, the family name, given names and postcode could be added as projected attributes - with `|` used as a delimiter between the types of attributes and `.` used as a delimiter between the individual attributes of a given type (which in this case is only for given names).
+For this example, a single index per record is constructed to support these queries, whereby the Date Of Birth would be the sort key, the current family name, given names and current home postcode could be added as projected attributes - with `|` used as a delimiter between the types of attributes and `.` used as a delimiter between the individual attributes of a given type (which in this case is only for given names).
 
 So a sample person:
 
@@ -148,13 +156,13 @@ To find an exact match on a subset of the provided data (e.g. Date Of Birth = 19
     }
 ```
 
-This query defines some `substitutions`, of the delimiters (to simplify escaping required when passing text into the expressions), and of the actual terms to be queried (which can make it easier within the application to transpose user input into standard query templates).  The substitutions can be referred to within expressions by prepending the substitution name with `:`.
+This query defines some `substitutions`, of the delimiters (to simplify escaping required when passing text into the expressions), and of the actual terms to be queried (which can make it easier within the application to transpose user input into standard query templates).  The substitutions are referred to within expressions by prefixing the substitution name with `:`.
 
 e.g. the substitution of `{"qfn", : "SMITH", "qgn", "ANNE"}` will translate the `filter_expression` `"($fn = :qfn ) AND (:qgn IN $gn)"` into `"($fn = SMITH ) AND (ANNE IN $gn)"`.
 
-The query list in this case contains only one query, and that identifies the index field ("index_name"), and the start and end terms.  Note that as the projected attributes are appended the sort key, although the query is for an exact sort key it must be range query which covers all possible projected attributes (in this case by appending to the end_term a character "~" that has a value higher than the delimiter "|" in the ascii table).
+The query list in this case contains only one query, and that identifies the index field (`index_name`), and the start and end terms (`start_term` snd `end_term`).  Note that as the projected attributes are appended the sort key, although the query is for an exact sort key it must be range query which covers all possible projected attributes (in this case by appending to the end_term a character `~` that has a value higher than the delimiter `|` in the ascii table).
 
-The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. "|") and then up to four elements will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. ".").
+The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. `|`) and then up to four elements will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. `.`).
 
 So in this term there are two delimiters, one `|` which splits up a fixed number of attributes, and this is evaluated with the `delim` function which outputs elements directly into the map of attributes.  There is then a second delimiter `.` which splits one of those attributes, the given name attribute, into individual given names.  As there is a variable number of given names supported, the `split` function is used to output an attribute whose value is a list.  In this case the output name of the attribute `$gn` is the same as the input, so this alters the value in the attribute map rather than creating a new one.
 
@@ -189,7 +197,11 @@ Note that, in this particular case, there would be a significant performance imp
     }
 ```
 
-The query may be further optimised using a regular expression.  Some functionality may be harder to implement in regular expressions - in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE.  Regular expressions make handling range checks on projected attributes much more difficult:
+The optimisation will reduce the number of results that need to be scanned and processed, by requesting a more specific range.  To exploit such optimisations, there is a need for design effort to correctly order the projected attributes in the index term.
+
+> The potential for such optimisations is a key driver to using an append-then-evaluate approach to adding projected attributes to index entries; rather than keeping projected attributes in an unordered array separate to the sort key.
+
+The query _may_ be further optimised using a regular expression.  Some functionality may be harder to implement in regular expressions - in this case it will also hit a match on a given name that includes the letters ANNE rather than match only on a given name that is entirely ANNE.  Regular expressions make handling range checks on projected attributes much more difficult:
 
 ```json
     {
@@ -241,9 +253,10 @@ The evaluation expression language supports a number of different comparisons on
 
 There are three possible alternatives should a more complex match be required on such a sub-list:
 
-- Use the alternative `accumulation_option` of `terms` to the default (which is `keys`), and this will return a list of term/key tuples to filter in the application (rather than just a list of primary keys).  By default the whole term will be returned, but a specific projected attribute can be returned using the `accumulation_term` option, as long as the value of that attribute is a string.  Filtering in the database is generally quicker than filtering in the application though - due to the increased parallelism of the database filter, and the reduced serialisation and sorting costs.
+- Use the alternative `accumulation_option` of `terms` to the default (which is `keys`), and this will return a list of term/key tuples to filter in the application (rather than just a list of primary keys).  By default the whole term will be returned, but a specific projected attribute can be returned using the `accumulation_term` option, as long as the value of that attribute is a string.
+  - Filtering in the database is generally quicker than filtering in the application though - due to the increased parallelism of the database filter, and the reduced serialisation and sorting costs.
 - Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
-- Use a regular expression filter rather than an evaluation and filter expression.  Regular expression filters are [PCRE-style regular expressions](https://www.pcre.org/) which will return a result which matches on the regular expression.  These are generally more performant than applying filter and evaluation expressions.
+- Use a regular expression filter rather than an evaluation and filter expression, which may in this case be considered a more natural approach to wildcard matching on strings.
 
 ### Example (1) - Wildcards within terms
 
@@ -295,7 +308,7 @@ To produce this set of projected attributes to be passed to the filter:
 
 ## Example (2) - An Alternative People Search
 
-An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  In this case we can also introduce the concept of effective dates, where certain attributes (in particular Postal Code) are relevant only to certain timeframes - this then supports a search for people based on both the present information, and also the information at a given date in the past.
+An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  Further, In this case the concept of effective dates is introduced, where certain attributes (in particular Postal Code) are relevant only to certain timeframes.  Appending effective date ranges as projected attributes then supports a search for people based on both the present information, or potentially the information at a given date in the past.
 
 In this example there will be three indexes:
 
@@ -329,7 +342,7 @@ This strategy requires more index entries, but potentially simpler and more powe
     }
 ```
 
-The query definition above will search for every SMITH born in the first 6 months of 1964.  Note that the delimiter chosen ("|") is after all the standard text characters in the ASCII table (char 124), so that this will match on only the complete name SMITH, whereas `"start_term" : "SMITH"` would also match on any surname starting SMITH.
+The query definition above will search for every SMITH born in the first 6 months of 1964.  Note that the delimiter chosen (`|`) is after all the standard text characters in the ASCII table (char 124), so that this will match on only the complete name SMITH, whereas `"start_term" : "SMITH"` would also match on any surname starting SMITH.
 
 ```json
     {
@@ -349,7 +362,7 @@ The query definition above will search for every SMITH born in the first 6 month
 
 The query definition above will search for anyone who was born in the first 6 months of 1964, and was living in the LS9 postal area on 1st January 1980.
 
-If a compound query is required, while this can be managed on a single query with strategy (1) as index terms are pre-concatenated - an aggregation expression is required now to search for only the SMITHs that meet the address criteria.
+To query across both indexes, a compound query is required.  The following query could be managed on a single query with the [previous strategy](#example-1---a-simple-people-search-index).  In this strategy the family name and address information is split across different indexes, and multiple queries combined through an aggregation expression are now required to search for only the SMITHs that meet the address criteria.
 
 ```json
     {
@@ -381,13 +394,11 @@ If a compound query is required, while this can be managed on a single query wit
 
 It is possible to combine strategies (1) and (2) by using separate indices and overloading each term with all additional information.  The application would then need a query planning strategy to determine which index to use based on the information provided - i.e. the strategy would need to determine based on the query details which index would likely lead to the fewest number of index entries being scanned, and use that index and sort key combination.  Designing such a strategy would require up-front knowledge of how the data is distributed.
 
-When using an `aggregation_expression` it is not possible to also use an `accumulation_option` - so terms cannot be returned to the application for additional filtering.
-
 ## Example (3) - Reporting index
 
-As well as returning keys, and term/key tuples, when using individual queries it is also possible to return counts, and counts by term to assist in reporting.
+As well as returning keys, and term/key tuples; when using single queries it is also possible to return counts, and counts by term.  These alternative accumulators are commonly used to support report-style queries.
 
-For this example we assume all the people exist in a hierarchy.  Each person is assigned to a GP Provider, and every GP Provider belongs to a Strategic Health Authority (and these are represented by fixed-width codes).  People have a Date of Birth (from which we can calculate age), but also a series of characteristics which can be expressed in single character flags (e.g. administrative gender code, smoking status, death status, alcohol dependency etc).  This information is then required to do organisation, and population level reporting.
+For this example it is assumed all the people in the store exist in a hierarchy.  Each person is assigned to a GP Provider, and every GP Provider belongs to a Strategic Health Authority (and these are represented by fixed-width codes).  People have a Date of Birth (from which we can calculate age), but also a series of characteristics which can be expressed in single character flags (e.g. administrative gender code, smoking status, death status, alcohol dependency etc).  This information is then required to do organisation, and population level reporting.
 
 For this a single index is used:
 
@@ -397,7 +408,7 @@ So a test record may have an entry like:
 
 - `healthreport_bin: SHA0001GP00000119650501FYNNY`
 
-So if today's date is 30 May 2025, and one wishes to count all the female smokers over the age of 60 registered in SHA001
+So if today's date is 30 May 2025, to count all the female smokers over the age of 60 registered in SHA001
 
 ```json
     {
@@ -435,6 +446,10 @@ If the same results are required, but this time a count by age at today's date (
     }
 ```
 
+### Example (3) - Simple Variations and Limitations
+
+In using report-style queries, counting results or grouping counts by a projected attribute - the type of `accumulation_option` used is important.  There is support for both `raw` and non-`raw` forms of each `accumulation_option`.  The `raw` form of each accumulator [will be significantly more efficient when covering large result sets](#performance-and-efficiency), but it will not deduplicate the result set by object key before counting.
+
 ## Query - Definition
 
 ### Query JSON - Definition
@@ -443,43 +458,48 @@ The query should be posted as the HTTP body, to the query API for the relevant b
 
 #### `aggregation_expression` (optional)
 
-- If multiple queries are to be run, the aggregation expression is used to inform the database how those results should be combined, using $1, $2 etc to refer to the numeric aggregation_tag for each query - with the key words UNION, INTERSECT and SUBTRACT to show how the sets of results are to be combined.  Parenthesis may be used for clarity. e.g. ($1 INTERSECT $2) UNION ($3 SUBTRACT $1)
+- If multiple queries are to be run, the aggregation expression is used to inform the database how those results should be combined, using $1, $2 etc to refer to the numeric `aggregation_tag` for each query - with the key words `UNION`, `INTERSECT` and `SUBTRACT` to show how the sets of results are to be combined.  Parenthesis may be used for clarity. e.g. `($1 INTERSECT $2) UNION ($3 SUBTRACT $1)`
 
 #### `accumulation_option` (optional - default = keys)
 
-- There are six options for accumulating the results from a single query:
+- There are multiple options for accumulating the results from a single query:
   - `keys`; return a list of keys that matched in the query, where the keys have been deduplicated and sorted.
   - `raw_keys`; return a list of keys that matched in the query, but in no specific order and where multiple matches for the same key will result in that key appearing multiple times within the results.
   - `terms`; return a list of term/key pairs, ordered by term.
   - `raw_terms`; return a list of term/key pairs, unsorted.
   - `count`; return a count of unique keys that matched the query.
   - `raw_count`; return a count of matches against the query (i.e. unlike `count` if an object key appears against multiple terms matched within the query, with `raw_count` that key will be counted multiple times).
-  - `term_with_count`; return a count of unique key matches by term (where term is specified in `accumulation_term`) in no specific order.
-  - `term_with_rawcount`; return a count of key matches by term (where term is specific in `accumulation_term`) in no specific order, where a key which appears multiple times under that term will be counted multiple times.
-- If an `aggregation_expression` is used, only `raw_keys` and `raw_count` are valid accumulation options
-  - the behaviour of `raw_keys` and `raw_count` is equivalent to `keys` and `count` once passed through an `aggregation_expression`.
-- As the result count increases, so does the relative efficiency of a `raw` `accumulation_option` over the non-`raw` equivalent.
+  - `term_with_count`; return a count of unique key matches by term (where term is specified by the `accumulation_term`) in no specific order.
+  - `term_with_rawcount`; return a count of key matches by term (where term is specified by the `accumulation_term`) in no specific order, where a key which appears multiple times under that term will be counted multiple times.
+
+In some circumstances, there are constraints on the `accumulation_option` which can be used:
+
+- If an `aggregation_expression` is added to the query (i.e. it is a combination query), only `raw_keys` and `raw_count` are valid accumulation options.
+- If a `max_results` setting is added to the query, then only `terms` and `raw_keys` are valid accumulation options.
 
 #### `accumulation_term` (optional - default = $term)
 
-When using an accumulation option of `terms`, `raw_terms`, `term_with_rawcount` or `term_with_count`; the `accumulation_term` is the projected attribute returned from the evaluation function to be used. The default is $term - the whole term.
+When using an accumulation option of `terms`, `raw_terms`, `term_with_rawcount` or `term_with_count`; the `accumulation_term` is the projected attribute returned from the evaluation function to be used as the term in the accumulator. The default is $term - the whole term.
 
 #### `max_results` (optional)
 
-The potential to limit the number of results returned by the query, to the first N results.  The query will terminate once sufficient results have been returned, and a continuation term will be returned along with the results, which can be passed into a subsequent query to return the next set of results after this point.  This allows for pagination of results.
+The potential to limit the number of results returned by the query, to the first N results.  The query will terminate once sufficient results have been returned, and a `continuation` term will be returned along with the results, which can be passed into a subsequent query to return the next set of results after this point.  This allows for pagination of results.
 
 - The Max results option is only supported with an `accumulation_option` of `terms` or `raw_keys`.
-  - Max results will return a continuation reference as part of the result, to be passed in as a continuation option; other `accumulation_option`s are not able to make a reliable continuation point.
+  - Only the `terms` accumulator is able to make a reliable continuation point.
+  - Internally if using `raw_keys` with `max_results`, then the query will run as a `terms` query, with the terms being stripped immediately prior to returning a response.
 
-Note that as the query is distributed, and there is minimal difference for the performance of fetching 1 or 10K results, then pagination will not be efficient for user-facing page sizes (e.g. small batches of o(10)).  For pagination to the end user, it is normally better to fetch larger result sets to be cached and paginated within the application.
+Note that as the query is distributed, and there is minimal difference for the performance of fetching 1 or 10K results, then pagination will not be efficient for user-facing page sizes (e.g. small batches of o(10)).
+
+> For pagination to the end user, it is normally better to fetch larger result sets to be cached and paginated within the application.
 
 #### `continuation` (optional)
 
-A string returned from a previous query constrained by max_results, used to indicate the starting point for the next page of results.
+A string returned from a previous query constrained by `max_results`, used to indicate the starting point for the next page of results.
 
 #### `substitutions` (optional)
 
-An array of key/value pairs that match string that are referred to in queries to substitution values that should replace those keys in the query. e.g. `{"low_dob" : "19550301", "high_dob" : "19560630"}` can be passed as substitutions to populate an evaluation of `"$dob" BETWEEN ":low_dob" AND ":high_dob"`.  The values of substitutions should all be strings.
+An array of key/value pairs that are referred to in filter or evaluation expressions.  Where a substitution key is present in an expression (prefixed by `:`), the substitution value will be used to replace those keys before the query process parses the expression.  For example, `{"low_dob" : "19550301", "high_dob" : "19560630"}` can be passed as substitutions to populate an evaluation of `"$dob" BETWEEN ":low_dob" AND ":high_dob"`.  The values of substitutions should all be strings.
 
 #### `timeout` (optional)
 
@@ -495,14 +515,14 @@ Each query has the following parts:
 
 - `aggregation_tag` (optional)
   - required if an only if an `aggregation_expression` is used
-- `index_name` (should be a binary index)
-- `start_term`
-- `end_term`
+- `index_name` (required - should be a binary index)
+- `start_term` (required)
+- `end_term` (required)
 - `evaluation_expression` (optional)
   - an expression to extract projected attributes from the term.
 - `filter_expression` (optional)
   - an expression to filter results based on those projected attributes.
-  - Must be included if an `evaluation_expression` is included in the query
+  - Must be included if an `evaluation_expression` is included in the query, but can simply test `attribute_exists($key)` if no filter is required.
 - `regular expression` (optional)
   - alternative to using evaluation or filter expressions, which can potentially be used to improve the performance of queries.
   - must not be included if filter/evaluation expressions form part of the query.
@@ -641,7 +661,7 @@ The query coverage plan will distribute the query to at least `RingSize div n_va
 
 ### Scanning
 
-The scanning stage of the query is in parallel with the filtering, buffering and collation of results.  As results are scanned they are passed in to the query pipeline for continuous processing.
+The scanning stage of the query is in parallel with the filtering, buffering and collation of results.  As results are scanned they are passed into the query pipeline for continuous processing.
 
 > In general a query should be able to scan, merge and select index entries at between **500K and 1M entries per CPU-core per second**.
 
