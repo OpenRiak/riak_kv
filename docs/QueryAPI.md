@@ -763,4 +763,4 @@ In failure and recovery scenarios, false negatives are possible (i.e. results ma
 
 ### Further Improvements
 
-Improving the functionality of the Query API is an active goal of the OpenRiak devleopment team.  Notifications on planed improvements will be added to the [OpenRiak dsicsssions board](https://github.com/orgs/OpenRiak/discussions).
+Improving the functionality of the Query API is an active goal of the OpenRiak devleopment team.  Notifications on planned improvements will be added to the [OpenRiak dsicsssions board](https://github.com/orgs/OpenRiak/discussions).
