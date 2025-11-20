@@ -2,7 +2,7 @@
 
 Secondary indexes may be added to Riak objects, and Riak provides a Query API for those indexes.  The API supports range queries, to be run across the sorted terms on an index, but the terms may also contain projected attributes appended to the sort key.  The Query API can be passed evaluation and filter expressions: to first evaluate the term to extract the attributes, and then filter the terms by testing the attribute values against query conditions.
 
-Through this combination of querying ranges and filtering on projected attributes, the API can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index terms with a suitable combination of sort keys and attributes.  The queries are distributed across the cluster, running in parallel across different partitions of the data (the vnodes), and through that parallelism supporting low-latency responses to relatively complex queries, even where significant numbers of index entries need to be processed.
+Through this combination of querying ranges and filtering on projected attributes, the API can support conjunction queries.  The capability and efficiency of these conjunction queries is dependent on work in the application to map the object schema to a set of index terms with a suitable combination of sort keys and attributes.  The queries are distributed across the cluster, running in parallel across different partitions of the data (the vnodes); and through that parallelism offer low-latency responses to relatively complex queries, even where significant numbers of index entries are covered by the range of the query.
 
 The result sets for queries are not limited to returning lists of object keys, there is also support in the Query API for different accumulation options.  As well as returning object keys, accumulation options can be used to efficiently count results, and group both results and counts by specific projected attributes.
 
@@ -22,7 +22,7 @@ For further detail on the Query API:
 
 ## Secondary Indexes - Adding Index Entries to an Object
 
-Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field, a term and an object key: where a field is a name for an index within a bucket, and a term is a sortable binary string that represents a value for a given key on that index, and the object key is the standard result of the query.  All indexes and queries are limited to a single Bucket.
+Querying in Riak is based around secondary indexes.  A Riak secondary index entry is a combination of a field, a term and an object key: where a field is a name for an index within a bucket, and a term is a sortable binary string that represents a value for a given key on that index, and the object key is the standard result of the query.  All indexes and queries are limited to the scope of a single Bucket.
 
 Indexes are added using [the Object API](/docs/ObjectAPI.md#index-entries).
 
@@ -30,9 +30,9 @@ Indexes are added using [the Object API](/docs/ObjectAPI.md#index-entries).
 - An individual object can have an unlimited number of index entries in total, and an unlimited number of terms on any given field.
 - When an object is fetched from Riak using the Object API, it will be returned with all its current Index values.
 
-There is no direct support for schema management within Riak, as Riak is designed to act independently of the format and the content of the application-provided object body.  It is expected that for an application to make use of secondary indexes within Riak, the object-handling logic within the application will require an extension; where that extension will examine the object body, and calculate the required index entries before completing a PUT.  It should be noted that as the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
+There is no direct support for schema management within Riak, as Riak is designed to act independently of the format and the content of the application-provided object body.  It is expected that for an application to make use of secondary indexes within Riak, the object-handling logic within the application will require an extension; where that extension will examine the object body, and calculate the required index entries before completing a PUT.  As the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
 
-The design of secondary indexes in Riak makes them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by a number of factors](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries ot be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
+The design of secondary indexes in Riak make them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by a number of factors](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries to be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
 
 Index entries can be made up of simple sort keys:
 
@@ -42,17 +42,17 @@ Index terms can be extended by projecting additional attributes onto the sort ke
 
 e.g. `surnamedob_bin: SMITH|19790613`
 
-There is no pre-defined way to map project attributes onto an index term in Riak; the definition, formatting and appending of projected attributes is the responsibility of the application.  Projected attributes are extracted from index entries at query time, normally using an `evaluation_expression` within the Query API; and so index entries should be added so that the extraction is supported by the [expression language](#evaluation-expression---definition).
+There is no pre-defined way to map project attributes onto an index term in Riak; the definition, formatting and appending of projected attributes is the responsibility of the application.  Projected attributes are extracted from index terms at query time, normally using an `evaluation_expression` within the Query API; and so index entries should be added so that the extraction is supported by the [expression language](#evaluation-expression---definition).
 
-Different extraction functions within the Query API `evaluation_expression` have different costs at query time, but also have differing impacts with regards to flexibility in support of schema change.  For example, using an `index` evaluation function is more efficient than a `kvsplit` function at query time, but when changing the schema `kvsplit` may in many scenarios simplify the management of that change.
+Different extraction functions within the Query API `evaluation_expression` have different costs at query time, but also have differing impacts with regards to flexibility in support of schema change.  For example, using an `index` evaluation function is more efficient than a `kvsplit` function at query time, but when changing the schema the use of `kvsplit` may simplify the management of that change.
 
 ## Secondary Indexes - Querying Index Entries Overview
 
-Riak querying is intended to provide flexible and performant functionality in the context of a Key-Value score.  The database will be limited in terms of the expressiveness when compared to alternatives designed with a focus on queryability:
+The Query API is intended to provide flexible and performant functionality in the context of a Key-Value store:
 
 > The aim of Riak development is to provide a database that performs efficient, scalable and predictable CRUD operations, and is just-queryable-enough to avoid the need of third party database integration in most use cases.
 
-Riak does support via [an external replication API](/docs/NextGenReplGuide.md), the ability for the developer to  manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.
+Riak does support via [an external replication API](/docs/NextGenReplGuide.md), the ability to manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.  The automation of such integration is outside of the current functional scope of Riak.
 
 ### Querying - Functional Summary
 
@@ -62,20 +62,22 @@ A query consists of the [following components](#query_list-required):
 - A query range (required).
 - An `evaluation_expression` (optional); used to decode projected attributes to provide a map of those attributes to be processed via a filter expression.
 - A `filter_expression` (optional); used to filter results in/out of queries by applying checks to a map of projected attributes discovered on the index entry (i.e. the map being the output of an evaluation expression).
-- A regular expression (optional); a potentially less flexible, but sometimes more performant alternative to evaluation and filter expressions - where a regular expression is used to match against a whole term, including the unevaluated projected attributes, in order to filter the entry into the query results.
+- A `regular_expression` (optional); a potentially less flexible, but sometimes more performant alternative to evaluation and filter expressions - where a regular expression is used to match against a whole term, including the unevaluated projected attributes, in order to filter the entry into the query results.
   - The regular expression is primarily provided for backwards compatibility with the [legacy index-query feature used prior to Riak 3.4](/docs/OtherAPI.md#legacy-query-api).  The use of evaluation and filter expressions is preferred to the use of regular expressions, and are often at least as performant as regular expressions.
   - Regular expressions are [PCRE-style regular expressions](https://www.pcre.org/), but are not compiled prior to being used.
-  - Escaping regular expressions correctly so that they can be passed via the JSON-based Query API, may add significant complexity to the development process.
+  - Escaping regular expressions correctly, so that they can be passed via the JSON-based Query API, may add significant complexity to the development process.
 
 Queries can be sent individually, but it is also possible to send multiple queries along with an aggregation expression to define how the query results will be combined (e.g. using `INTERSECT`, `UNION`, `NOT`) - where Riak will provide a single set of results as a response based on the aggregation expression.
 
 Queries, both single and aggregated, also support an optional accumulation method; a mechanism for describing the type of results required, and how those results should be sorted (e.g. returning just object keys, keys by term, keys by specific projected attribute, counts, counts by attribute value etc).
 
-The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client (i.e. to substitute into a standard query the user input), or to avoid difficulty with escaping special characters embedded within query elements.Within the API a prefix of `:` to a reference indicates that the reference should be replaced using an entry in the `substitutions` map.  Projected attribute keys, the whole term (`$term`) and the object key (`$key`) are identified through use of a `$` prefix.
+The JSON query object can contain `substitutions`, a JSON array mapping keys with any string-based tag to values.  Substitutions are useful when a single query template is to be used within the application client (i.e. to substitute into a standard query the user input), or to avoid difficulty with escaping special characters embedded within query elements.  Within the API, a prefix of `:` to a reference indicates that the reference should be replaced using an entry in the `substitutions` map.
 
-There are also specific options to govern pagination of results, and timeout of queries.
+In the filter and evaluation expressions, projected attribute keys are identified through use of a `$` prefix.  All evaluations start with two default attributes: the whole term (`$term`) and the object key (`$key`).
 
-Queries requests are made by posting [a JSON object which defines the query](#query-json---definition) to the HTTP URI on Riak of `types/BucketType/buckets/Bucket/query`.  The results are returned as a JSON object.
+The API also supports options to govern pagination of results, and timeout of queries.
+
+Query requests are made by posting [a JSON object which defines the query](#query-json---definition) to a HTTP URI on Riak of `types/<BucketType>/buckets/<Bucket>/query`.  The results are returned as a JSON object, the format of those results is determined by the `accumulation_option` requested.
 
 ### Querying - Non-functional Summary
 
@@ -83,24 +85,26 @@ The distributed nature of querying in Riak means that large numbers of results c
 
 However, in the development of Riak it is assumed that in most production Riak systems less than 1% of all transactions are secondary index queries, and this is reflected in the transaction mix of pre-release non-functional testing.  A secondary index query will normally be between 1 order and 2 orders of magnitude more expensive in terms of CPU cost, spread across the cluster, than a standard GET.  To complete a query it is necessary to complete an operation in at least `RingSize div n_val` vnodes, rather than `n_val` vnodes for a GET.
 
-It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
+> It is possible to drive up the volume of 2i queries, with real-world production examples of more than 10K queries per second being achieved - but such relatively high query volumes are not core to the Riak use case.
 
-There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.  Queries for large sets of results are possible in a single round trip.  The query process will be greedy for available CPU cores to complete the query, there is no constraint on how many cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will balance use between queries and other user requests; there is no specific ring-fencing of resources for the purpose of querying.
+There is a relatively fixed cost per query, even where 0 results are returned; there is a marginal difference in the cost of scanning 10K index entries and scanning 10.
+
+Queries that cover large sets of results are possible in a single round trip.  The query process will be greedy for available CPU cores to complete the query, there is no constraint on how many cores a query can use - up to a maximum of `RingSize div n_val` across the cluster.  The Erlang scheduler will balance use between queries and other user requests; there is no specific ring-fencing of resources for the purpose of querying.
 
 Understanding the [detailed guidance about query performance](#performance-and-efficiency) is important, but in summary:
 
 - Try to minimise the number of index terms within the range of the query;
 - Use a more efficient `accumulation_option` where possible (i.e. prefer a `raw` option);
-- Use single queries with filtering of projected attributes in preference to combination queries, as a method for supporting conjunction queries.
+- To support conjunction queries, prefer the use single queries with filtering of projected attributes over combination queries.
 
 ## Example (1) - A Simple People Search Index
 
 In this example, the database contains people whose records are stored under a unique individual identifier (the primary Key used in Riak).  There is also a requirement to search for people to find potential matches where the unique identifier is not known, and in these searches the following criteria can be provided to the query:
 
 - Date Of birth (required).
-- Primary family name (optional).
+- Current family name (optional).
 - All known given names (optional).
-- Primary [postal code](https://en.wikipedia.org/wiki/Postal_code) (optional).
+- Current home [postal code](https://en.wikipedia.org/wiki/Postal_code) (optional).
 
 For all queryable attributes approximate entries are allowed.  The Date of Birth can be a range rather than a specific date, the names and post codes require a minimal prefix (the first two characters), but wildcards may be provided for unknown parts.
 
@@ -162,7 +166,7 @@ e.g. the substitution of `{"qfn", : "SMITH", "qgn", "ANNE"}` will translate the 
 
 The query list in this case contains only one query, and that identifies the index field (`index_name`), and the start and end terms (`start_term` snd `end_term`).  Note that as the projected attributes are appended the sort key, although the query is for an exact sort key it must be range query which covers all possible projected attributes (in this case by appending to the end_term a character `~` that has a value higher than the delimiter `|` in the ascii table).
 
-The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. `|`) and then up to four elements will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. `.`).
+The evaluation expression is a pipeline of evaluation functions to be applied to each index term.  The first evaluation function `delim($term, :dl1, ($dob, $fn, $gn, $pc))` instructs the query to split the query term using the delimiter identified by the substitution `dl1` (i.e. `|`) and then up to four elements will be placed in the projected attributes maps as `$dob`, `$fn`, `$gn` and `$pc` respectively.  The second evaluation function `split($gn, :dl2, $gn)` is used to take the value of the attribute `$gn` and create a new attribute `$gn` which is a list obtained by splitting the attribute value on the delimiter identified by the substitution `dl2` (i.e. `.`).
 
 So in this term there are two delimiters, one `|` which splits up a fixed number of attributes, and this is evaluated with the `delim` function which outputs elements directly into the map of attributes.  There is then a second delimiter `.` which splits one of those attributes, the given name attribute, into individual given names.  As there is a variable number of given names supported, the `split` function is used to output an attribute whose value is a list.  In this case the output name of the attribute `$gn` is the same as the input, so this alters the value in the attribute map rather than creating a new one.
 
@@ -177,7 +181,7 @@ After applying the `evaluation_expression`, the `filter_expression` will receive
     }
 ```
 
-The filter does not need to qualify the date of birth, as this is already qualified by the range.  However, it needs to check that the Primary Family Name is as expected `($fn = :qfn)` and that the query given name is in the list of given names produced `(:gqn IN $gn)`.
+The filter does not need to qualify the date of birth, as this is already qualified by the range.  However, it needs to check that the current Family Name is as expected `($fn = :qfn)` and that the query given name is in the list of given names produced `(:gqn IN $gn)`.
 
 Note that, in this particular case, there would be a significant performance improvement by rewriting the query as:
 
@@ -253,7 +257,7 @@ The evaluation expression language supports a number of different comparisons on
 
 There are three possible alternatives should a more complex match be required on such a sub-list:
 
-- Use the alternative `accumulation_option` of `terms` to the default (which is `keys`), and this will return a list of term/key tuples to filter in the application (rather than just a list of primary keys).  By default the whole term will be returned, but a specific projected attribute can be returned using the `accumulation_term` option, as long as the value of that attribute is a string.
+- Use the alternative `accumulation_option` of `terms` to the default (which is `keys`), and this will return a list of term/key tuples to filter in the application (rather than just a list of object keys).  By default the whole term will be returned, but a specific projected attribute can be returned using the `accumulation_term` option, as long as the value of that attribute is a string.
   - Filtering in the database is generally quicker than filtering in the application though - due to the increased parallelism of the database filter, and the reduced serialisation and sorting costs.
 - Use an alternative representation and the `contains` evaluation function - e.g. storing given names with a preceding and succeeding delimiter `.ANNE.MARIE.ANNE-MARIE.`, would allow for: `contains($gn, "ANNE")` to find any mention of ANNE in any part of any given name; `contains($gn, ".ANNE.")` to find only where the whole given name is ANNE; `contains($gn, ".ANNE") OR contains($gn, "ANNE.")` to find where the given name either begins or ends with ANNE.
 - Use a regular expression filter rather than an evaluation and filter expression, which may in this case be considered a more natural approach to wildcard matching on strings.
@@ -308,7 +312,7 @@ To produce this set of projected attributes to be passed to the filter:
 
 ## Example (2) - An Alternative People Search
 
-An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  Further, In this case the concept of effective dates is introduced, where certain attributes (in particular Postal Code) are relevant only to certain timeframes.  Appending effective date ranges as projected attributes then supports a search for people based on both the present information, or potentially the information at a given date in the past.
+An alternative strategy to option (1), would be to use multiple indexes, with the Date Of Birth as a projected attribute.  Further, in this example the concept of effective dates is introduced, where certain attributes (in particular Postal Code) are relevant only to certain timeframes.  Appending effective date ranges as projected attributes then supports a search for records based on both the present information, or potentially the information at a given date in the past.
 
 In this example there will be three indexes:
 
@@ -362,7 +366,7 @@ The query definition above will search for every SMITH born in the first 6 month
 
 The query definition above will search for anyone who was born in the first 6 months of 1964, and was living in the LS9 postal area on 1st January 1980.
 
-To query across both indexes, a compound query is required.  The following query could be managed on a single query with the [previous strategy](#example-1---a-simple-people-search-index).  In this strategy the family name and address information is split across different indexes, and multiple queries combined through an aggregation expression are now required to search for only the SMITHs that meet the address criteria.
+To query across both indexes, a combination query is required.  The following query could be managed on a single query with the [previous strategy](#example-1---a-simple-people-search-index), however, in this strategy the family name and address information is split across different indexes. Multiple queries combined through an aggregation expression are now required to search for only the SMITHs that meet the address criteria.
 
 ```json
     {
@@ -533,7 +537,9 @@ There are two parts to using expressions in a Riak query: an evaluation expressi
 
 #### Evaluation Expression - Definition
 
-The evaluation pipeline receives a map of projected attributes containing two Identifier/Value pairs - $term, $key.  The $term is the index term that has been matched (as it is within the sorted key range for the given index field and bucket), and the $key is the value of the Key.  Both $term and $key will be strings.  All pipeline functions will update the map, potentially adding new projected attributes, or adjusting the value for existing attributes - and the map will be forwarded onto the next stage for processing.
+The evaluation pipeline receives a map of projected attributes containing two Identifier/Value pairs - $term, $key.  The $term is the index term that has been matched (as it is within the sorted key range for the given index field and bucket), and the $key is the value of the Key.  Both $term and $key will be strings.  
+
+The `evaluation_expression` is a pipeline of individual functions, joined using the `|` operator.  All pipeline functions will update the map, potentially adding new projected attributes, or adjusting the value for existing attributes - and the map will be forwarded onto the next stage for processing.
 
 Values of the projected attributes in the map always start as strings in the pipeline, but may be explicitly converted to lists of strings, or to an integer - and in the case of an integer can also be converted back to a string.  Functions in the pipeline that receive inputs of the wrong type are skipped.
 
@@ -634,7 +640,7 @@ There are multiple stages to producing a query result:
 - Setup and distribute the query;
   - parse the API request, validate the request, start a query server, find a coverage plan, initiate snapshots of all vnodes required for the query.
 - Scan the index entries (concurrently across vnode backends);
-  - read and deserialise and merge blocks of index entries at each level so that index entries within the range can be passed in key order to be evaluated and filtered.
+  - read, deserialise and merge blocks of index entries at each level so that index entries within the range can be passed in key order to be evaluated and filtered.
 - The filtering of each potential result within the range;
 - The buffering and potential deduplication of results at the vnode level.
 - the combination of query results using an aggregation expression.
@@ -643,7 +649,7 @@ There are multiple stages to producing a query result:
 
 As queries depend on all these parts, and all these parts are impacted differently by different factors it is not possible to precisely predict query response times.
 
-> In general, though, when scanning less than 10K entries and filtering to less than 1K results most non-trivial cluster should be able support **query latency of o(10) ms**.
+> In general though, when scanning less than 10K entries and filtering to less than 1K results, most Riak clusters on modern hardware should be able to support **query latency of o(10) ms**.
 
 ### Setup and Distribute the Query
 
@@ -657,7 +663,7 @@ Note though, that requests for snapshots are added to the vnode queue on each vn
 
 The query coverage plan will distribute the query to at least `RingSize div n_val` vnodes, and the size of the vnode queue is not a factor in the calculation of the plan.  Once the snapshot is taken, all other phases of the query are independent of the vnode queue.
 
-> If there is significant network latency between nodes within a cluster, then that latency will impact the setup phase.  It is recommended to only use the Query API when network latency between cluster members is no more than o(1) ms.
+> If there is significant network latency between nodes within a cluster, then that latency will impact the setup phase.  It is recommended to only use the Query API when network latency between cluster members is not significantly greater than 1 ms.
 
 ### Scanning
 
@@ -667,25 +673,25 @@ The scanning stage of the query is in parallel with the filtering, buffering and
 
 Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfillment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
 
-Index entries are stored in blocks of around 30 entries, so there is minimal difference between scanning 1 entry per vnode, and scanning 100.  Each block must be decompressed and deserialised every time the block is scanned, there is no caching of deserialised index entries.  The only caching between queries is of a small amount of block metadata and natural promotion to the file system page cache.
+Index entries are stored in blocks of around 30 entries, so there is minimal difference between scanning 1 entry per vnode, and scanning 100.  Each block must be decompressed and deserialised every time the block is scanned, there is no caching of deserialised index entries.  The only caching between queries is of a small amount of block metadata and natural promotion of blocks to the file system page cache.
 
 > Spare memory will improve query performance by reducing disk wait times, but no database memory is ring-fenced for caching scanned index entries.
 
 ### Filtering
 
-The filtering stage requires the application of an optional filter, to validate projected attributes overloaded on the index entry to filter the result in or out of the query.  The standard way of filtering projected attributes is through the combination of an `evaluation_expression` to extract the attributes required by the `filter_expression`.
+The filtering stage requires the application of an optional filter, to validate projected attributes overloaded on the index entry to filter the result in or out of the query.  The standard way of filtering projected attributes is through the combination of an `evaluation_expression` (to extract the attributes) and a `filter_expression` (to test the attributes against query conditions).
 
 > The overhead of combining an `evaluation_expression` and a `filter_expression` is normally between 20% and 60% depending on the complexity of the expressions.  Queries with a filter will generally only be able to process between **200K and 500K entries per CPU-core per second**.
 
-Filtering results will reduce the cost of downstream processes significantly, especially deduplication, sorting and deserialisation.  These costs though are dependent on the accumulation_option, the `raw_count` option only has minimal downstream costs.
+Filtering results will reduce the cost of downstream processes significantly, especially deduplication, sorting and deserialisation.  These costs though are dependent on the `accumulation_option`, but only the `raw_count` option has minimal downstream costs.
 
 > When using any `accumulation_option` other than `raw_count`, being more specific in the evaluation and filter of index entries will probably improve performance - regardless of the complexity of the required expressions.
 
 ### Buffering
 
-Once a result has been filtered it is added to the local (per-vnode) buffer for that query.  The buffer will aggregate results, and then for large queries periodically (based on the count of results added to the buffer) send interim result sets back to the query server collating results for the cluster.  The query buffer will wait to receive a reply from the server before proceeding.
+Once a result has been filtered it is added to the local per-vnode buffer for that query.  The buffer will aggregate results, and then for large queries periodically (based on the count of results added to the buffer) send interim result sets back to the query server - the process collating results across the cluster.  The query buffer will wait to receive a reply from the server before proceeding.
 
-> The number of concurrent CPU cores that may be used by a query will be constrained by the delay awaiting an acknowledgement from the central query server.  This will depend on network latency within the cluster and the work required in the collation phase for the chosen `accumulation_option`.  Low latency clusters returning `raw_count` should normally scale to make use of **o(100) CPU cores per query**.  Higher latency clusters using `keys`, `count` or `term_with_keys` may not scale beyond **o(10) CPU cores per query**.
+> The number of concurrent CPU cores that may be used by a query will be constrained by the delay awaiting an acknowledgement from the query server.  This delay will depend on network latency within the cluster and the work required in the collation phase for the chosen `accumulation_option`.  Lower latency clusters returning `raw_count` should normally scale to make use of **o(100) CPU cores per query**.  Higher latency clusters using `keys`, `count` or `term_with_keys` may not scale beyond **o(10) CPU cores per query**.
 
 If `keys`, or `count` or `term_with_count` are used as the `accumulation_option` there is a need to deduplicate the results.  For `keys` this deduplication will occur centrally at the query_server; but this will have a significant impact on query performance as the number of filtered results grows.
 
@@ -695,7 +701,7 @@ For `count` and `term_with_count`, there is an optimisation to deduplicate resul
 
 For each `accumulation_option` option there is a `raw` option that does not deduplicate the results.  Always use the `raw` option for large result sets if deduplication is not necessary.  For instance; if the application enforces cardinality rules so that each object may only have one entry on the index, or duplicate results can be handled by the application.
 
-> A mid-size cluster should be able to `raw_count` **100M unfiltered index entries in o(10) ms**; however the `count` of such a result set would take o(100) ms.
+> A mid-size cluster should be able to `raw_count` **100M unfiltered index entries in less than 10 seconds**; however the `count` of such a result set could take o(100) seconds.
 
 If using the `raw` option is not possible and a large result set is expected, then dividing the query into multiple sub-queries by range and accepting the increased per-query overhead is generally a better option than using the non-`raw` option.  The need for a `raw` option is unnecessary if combined result set sizes are less than 100K keys.
 
