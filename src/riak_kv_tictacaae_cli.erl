@@ -125,14 +125,13 @@ rebuild_schedule_usage() ->
 
 rebuild_schedule_cmd([_, _, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
-    Partitions = extract_partitions(Options, Nodes),
-    ok = ensure_options_consistent(Nodes, Partitions),
+    Vnodes = extract_vnodes(Options, Nodes),
     case Args of
         [Arg1, Arg2] ->
             RS = {RW = ensure_valid_range(Arg1, 0, 5*365*24),  %% ~5 years in hours
                   RD = ensure_valid_range(Arg2, 0, 1*365*24*3600)},  %% one year
             post_set_fun(
-              set_rebuild_schedule(Nodes, Partitions, RS),
+              set_rebuild_schedule(Vnodes, RS),
               "rebuild_schedule",
               io_lib:format("RW: ~b, RD: ~b", [RW, RD]));
         [] ->
@@ -143,7 +142,7 @@ rebuild_schedule_cmd([_, _, _ | Args], _, Options) ->
                    end,
             [clique_status:table(
                [[{node, N}, {index, P}, {rebuild_schedule, FmtF(Res)}]
-                || {Res, {P, N}} <- get_rebuild_schedule(Nodes, Partitions)])];
+                || {Res, {P, N}} <- get_rebuild_schedule(Vnodes)])];
         _ ->
             clique_status:usage()
     end.
@@ -168,13 +167,13 @@ storeheads_usage() ->
 
 storeheads_cmd([_, _, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
-    Partitions = extract_partitions(Options, Nodes),
-    ok = ensure_options_consistent(Nodes, Partitions),
+    Vnodes = extract_vnodes(Options, Nodes),
+    io:format("Vnodes: ~p\n", [Vnodes]),
     case Args of
         [Arg1] ->
             Val = list_to_boolean(Arg1),
             post_set_fun(
-              set_storeheads(Nodes, Partitions, Val),
+              set_storeheads(Vnodes, Val),
               "storeheads",
               Val);
         [] ->
@@ -185,7 +184,7 @@ storeheads_cmd([_, _, _ | Args], _, Options) ->
                    end,
             [clique_status:table(
                [[{node, N}, {index, P}, {storeheads, FmtF(Res)}]
-                || {Res, {P, N}} <- get_storeheads(Nodes, Partitions)])];
+                || {Res, {P, N}} <- get_storeheads(Vnodes)])];
         _ ->
             clique_status:usage()
     end.
@@ -210,13 +209,12 @@ tokenbucket_usage() ->
 
 tokenbucket_cmd([_, _, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
-    Partitions = extract_partitions(Options, Nodes),
-    ok = ensure_options_consistent(Nodes, Partitions),
+    Vnodes = extract_vnodes(Options, Nodes),
     case Args of
         [Arg1] ->
             Val = list_to_boolean(Arg1),
             post_set_fun(
-              set_tokenbucket(Nodes, Partitions, Val),
+              set_tokenbucket(Vnodes, Val),
               "tokenbucket",
               Val);
         [] ->
@@ -227,7 +225,7 @@ tokenbucket_cmd([_, _, _ | Args], _, Options) ->
                    end,
             [clique_status:table(
                [[{node, N}, {index, P}, {tokenbucket, FmtF(Res)}]
-                || {Res, {P, N}} <- get_tokenbucket(Nodes, Partitions)])];
+                || {Res, {P, N}} <- get_tokenbucket(Vnodes)])];
         _ ->
             clique_status:usage()
     end.
@@ -343,10 +341,9 @@ rebuild_soon_usage() ->
 
 rebuild_soon_cmd([_, _, _, Arg], _, Options) ->
     Nodes = extract_nodes(Options),
-    Partitions = extract_partitions(Options, Nodes),
-    ok = ensure_options_consistent(Nodes, Partitions),
+    Vnodes = extract_vnodes(Options, Nodes),
     AffectedVNodes = prompt_nextrebuild(
-                       Nodes, Partitions, list_to_integer(Arg)),
+                       Vnodes, list_to_integer(Arg)),
     if length(Nodes) == 1 ->
             [clique_status_text(
                "scheduled rebuild of aae trees on ~b partition~s on ~s\n",
@@ -372,17 +369,16 @@ rebuild_now_usage() ->
 
 rebuild_now_cmd([_, _, _], _, Options) ->
     Nodes = extract_nodes(Options),
-    Partitions = extract_partitions(Options, Nodes),
-    ok = ensure_options_consistent(Nodes, Partitions),
-    send_rebuildpoke(Nodes, Partitions),
+    Vnodes = extract_vnodes(Options, Nodes),
+    send_rebuildpoke(Vnodes),
     if length(Nodes) == 1 ->
             [clique_status_text(
                "rebuilding aae trees on ~b partition~s on ~s\n",
-               [length(Partitions), ending(Partitions), hd(Nodes)])];
+               [length(Vnodes), ending(Vnodes), hd(Nodes)])];
        el/=se ->
             [clique_status_text(
-               "rebuilding aae trees on ~b nodes\n",
-               [length(Nodes)])]
+               "rebuilding aae trees on ~b nodes (~b partitions)\n",
+               [length(Nodes), length(Vnodes)])]
     end.
 
 post_set_fun(Res, Par, Val) ->
@@ -419,15 +415,26 @@ extract_nodes(Options) ->
         _ ->
             [node()]
     end.
-extract_partitions(Options, Nodes) ->
+extract_vnodes(Options, Nodes) ->
     PP = [P || {partition, P} <- Options],
     HaveAll = lists:member(all, PP) or (length(PP) == 0),
-    case HaveAll of
-        true when length(Nodes) == 1 ->
-            [I || {I, _} <- vnodes(hd(Nodes), all)];
-        false ->
-            PP
+    HaveManyNodes = length(Nodes) > 1,
+    case {HaveManyNodes, HaveAll} of
+        {true, false} ->
+            io:format("With more than a single node, only -p all is allowed\n", []),
+            throw(inconsistent_options);
+        {_, true} ->
+            lists:flatten([[{P, N} || {P, _} <- vnodes(N, all)] || N <- Nodes]);
+        {_, false} ->
+            lists:flatten([[{P, N} || {P, _} <- vnodes(N, PP)] || N <- Nodes])
     end.
+
+vnodes(Node, all) ->
+    {ok, Ring} = rpc:call(Node, riak_core_ring_manager, get_my_ring, []),
+    [VN || VN = {_, Owner} <- rpc:call(Node, riak_core_ring, all_owners, [Ring]), Owner =:= Node];
+vnodes(Node, List) ->
+    [{P, Node} || P <- List].
+
 
 to_node("all") ->
     all;
@@ -443,41 +450,25 @@ to_partition(A) ->
             {error, bad_partition}
     end.
 
-ensure_options_consistent(NN, Specific) when length(NN) > 1,
-                                             Specific /= all ->
-    io:format("With more than a single node, only -p all is allowed\n", []),
-    throw(inconsistent_options);
-ensure_options_consistent(_, _) -> ok.
+prompt_nextrebuild(Vns, Delay) ->
+    exec_command_on_vnodes(Vns, {aae_prompt_nextrebuild, [Delay]}).
+get_rebuild_schedule(Vns) ->
+    exec_command_on_vnodes(Vns, {aae_get_rebuild_schedule, []}).
+set_rebuild_schedule(Vns, RS) ->
+    exec_command_on_vnodes(Vns, {aae_set_rebuild_schedule, [RS]}).
+get_storeheads(Vns) ->
+    exec_command_on_vnodes(Vns, {aae_get_storeheads, []}).
+set_storeheads(Vns, A) ->
+    exec_command_on_vnodes(Vns, {aae_set_storeheads, [A]}).
+get_tokenbucket(Vns) ->
+    exec_command_on_vnodes(Vns, {aae_get_tokenbucket, []}).
+set_tokenbucket(Vns, A) ->
+    exec_command_on_vnodes(Vns, {aae_set_tokenbucket, [A]}).
+send_rebuildpoke(Vns) ->
+    exec_command_on_vnodes(Vns, {aae_rebuildpoke, []}).
 
-prompt_nextrebuild(NN, PP, Delay) ->
-    exec_command_on_vnodes(NN, PP, {aae_prompt_nextrebuild, [Delay]}).
-get_rebuild_schedule(NN, PP) ->
-    exec_command_on_vnodes(NN, PP, {aae_get_rebuild_schedule, []}).
-set_rebuild_schedule(NN, PP, RS) ->
-    exec_command_on_vnodes(NN, PP, {aae_set_rebuild_schedule, [RS]}).
-get_storeheads(NN, PP) ->
-    exec_command_on_vnodes(NN, PP, {aae_get_storeheads, []}).
-set_storeheads(NN, PP, A) ->
-    exec_command_on_vnodes(NN, PP, {aae_set_storeheads, [A]}).
-get_tokenbucket(NN, PP) ->
-    exec_command_on_vnodes(NN, PP, {aae_get_tokenbucket, []}).
-set_tokenbucket(NN, PP, A) ->
-    exec_command_on_vnodes(NN, PP, {aae_set_tokenbucket, [A]}).
-send_rebuildpoke(NN, PP) ->
-    exec_command_on_vnodes(NN, PP, {aae_rebuildpoke, []}).
-
-exec_command_on_vnodes(Nodes, Partitions, {F, A}) ->
-    lists:foldl(
-      fun(Node, Q) ->
-              VVNN = vnodes(Node, Partitions),
-              Res = [{rpc:call(Node, riak_kv_vnode, F, [VN | A]), VN} || VN <- VVNN],
-              Q ++ Res
-      end, [], Nodes).
-vnodes(Node, all) ->
-    {ok, Ring} = rpc:call(Node, riak_core_ring_manager, get_my_ring, []),
-    [VN || VN = {_, Owner} <- rpc:call(Node, riak_core_ring, all_owners, [Ring]), Owner =:= Node];
-vnodes(Node, List) ->
-    [{P, Node} || P <- List].
+exec_command_on_vnodes(Vnodes, {F, A}) ->
+    [{rpc:call(N, riak_kv_vnode, F, [VN | A]), VN} || {_, N} = VN <- Vnodes].
 
 list_to_boolean("true") -> true;
 list_to_boolean("enabled") -> true;
