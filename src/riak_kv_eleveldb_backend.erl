@@ -100,12 +100,13 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()) -> {ok, [atom()]}.
+-spec capabilities(state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_) ->
     {ok, ?CAPABILITIES}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
@@ -365,12 +366,13 @@ delete(Bucket, PrimaryKey, IndexSpecs, #state{ref=Ref,
     end.
 
 %% @doc Fold over all the buckets
--spec fold_buckets(riak_kv_backend:fold_buckets_fun(),
-                   any(),
-                   [],
-                   state()) -> {ok, any()} | {async, fun()}.
-fold_buckets(FoldBucketsFun, Acc, Opts, #state{fold_opts=FoldOpts,
-                                               ref=Ref}) ->
+-spec fold_buckets(
+    riak_kv_backend:fold_buckets_fun(),
+    any(),
+    [],
+    state()) ->
+        {ok, any()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
+fold_buckets(FoldBucketsFun, Acc, Opts, #state{fold_opts=FoldOpts, ref=Ref}) ->
     FoldFun = fold_buckets_fun(FoldBucketsFun),
     FirstKey = to_first_key(undefined),
     FoldOpts1 = [{first_key, FirstKey} | FoldOpts],
@@ -393,10 +395,12 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{fold_opts=FoldOpts,
     end.
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, term()} | {async, fun()}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, term()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
 fold_keys(FoldKeysFun, Acc, Opts, #state{fold_opts=FoldOpts,
                                          fixed_indexes=FixedIdx,
                                          legacy_indexes=WriteLegacyIdx,
@@ -462,8 +466,7 @@ fold_keys(FoldKeysFun, Acc, Opts, #state{fold_opts=FoldOpts,
             {ok, KeyFolder()}
     end.
 
-fold_indexes(FoldIndexFun, Acc, _Opts, #state{fold_opts=FoldOpts,
-                                              ref=Ref}) ->
+fold_indexes(FoldIndexFun, Acc, _Opts, #state{fold_opts=FoldOpts, ref=Ref}) ->
     FirstKey = to_index_key(<<>>, <<>>, <<>>, <<>>),
     FoldOpts1 = [{first_key, FirstKey} | FoldOpts],
     FoldFun = fold_indexes_fun(FoldIndexFun),
@@ -508,12 +511,13 @@ legacy_key_fold(_Ref, _FoldFun, Acc, _FoldOpts, _Query) ->
     Acc.
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()}.
-fold_objects(FoldObjectsFun, Acc, Opts, #state{fold_opts=FoldOpts,
-                                               ref=Ref}) ->
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
+fold_objects(FoldObjectsFun, Acc, Opts, #state{fold_opts=FoldOpts, ref=Ref}) ->
     %% Figure out how we should limit the fold: by bucket, by
     %% secondary index, or neither (fold across everything.)
     Bucket = lists:keyfind(bucket, 1, Opts),

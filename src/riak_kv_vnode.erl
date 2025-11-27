@@ -1917,10 +1917,53 @@ handle_coverage_request(kv_aaefold_request, Req, FilterVNodes, Sender, State) ->
     Query = riak_kv_requests:get_query(Req),
     InitAcc = riak_kv_requests:get_initacc(Req),
     Nval = riak_kv_requests:get_nval(Req),
-    handle_coverage_aaefold(Query, InitAcc, Nval, 
-                            FilterVNodes, Sender, 
-                            State);
+    handle_coverage_aaefold(
+        Query, InitAcc, Nval, FilterVNodes, Sender, State);
+handle_coverage_request(kv_query_request, Req, FilterVNodes, Sender, State) ->
+    Bucket = riak_kv_requests:get_bucket(Req),
+    Query = riak_kv_requests:get_query(Req),
+    AccType = riak_kv_requests:get_accumulation_type(Req),
+    ReturnTerms = riak_kv_requests:get_return_terms(Req),
+    BufferSize = riak_kv_requests:get_buffer_size(Req),
+    ResultFun = result_fun_ack(Bucket, Sender),
+    BufferMod = riak_kv_query_buffer,
+    Buffer = riak_kv_query_buffer:new(BufferSize, AccType, ResultFun),
+    BackendMod = State#state.mod,
+    {ok, Capabilities} = BackendMod:capabilities(State#state.modstate),
+    Opts =
+        maybe_enable_async_fold(State#state.async_folding, Capabilities, []),
 
+    FilterVNode = proplists:get_value(State#state.idx, FilterVNodes),
+    Filter = 
+        riak_kv_coverage_filter:build_filter(
+            Bucket,
+            riak_kv_requests:get_item_filter(Req),
+            FilterVNode
+        ),
+    % Build the fold and finish functions
+    Extras = fold_extras_keys(State#state.idx, Bucket),
+    FoldFun = fold_fun(keys, BufferMod, Filter, Extras),
+    FinishFun = finish_fun(BufferMod, Sender),
+    case lists:member(complex_query, Capabilities) of
+        true ->
+            Work = 
+                BackendMod:complex_query(
+                    FoldFun,
+                    Buffer,
+                    Bucket,
+                    Query,
+                    ReturnTerms,
+                    Opts,
+                    State#state.modstate),
+            case Work of
+                {ok, Acc} ->
+                    FinishFun(Acc);
+                {async, AsyncWork} ->
+                    {async, {fold, AsyncWork, FinishFun}, Sender, State}
+            end;
+        false ->
+            {reply, {error, {queries_not_supported, BackendMod}}, State}
+    end;
 handle_coverage_request(kv_hotbackup_request, Req, _FilterVnodes, Sender,
                 State=#state{mod=Mod, modstate=ModState}) ->
     % If the backend is hot_backup capability, run the backup via the node
@@ -3794,8 +3837,9 @@ result_fun_ack(Bucket, Sender) ->
                     erlang:demonitor(Monitor, [flush]),
                     throw(stop_fold);
                 {'DOWN', Monitor, process, Pid, Reason} ->
-                    ?LOG_ERROR("Process ~w down for reason ~w", 
-                                    [Pid, Reason]),
+                    ?LOG_ERROR(
+                        "Process ~w down for reason ~w",  [Pid, Reason]
+                    ),
                     throw(receiver_down)
             end
     end.
@@ -3814,7 +3858,7 @@ stop_fold({Pid, Ref}) ->
 %% @private
 finish_fun(BufferMod, Sender) ->
     fun(Buffer) ->
-            finish_fold(BufferMod, Buffer, Sender)
+        finish_fold(BufferMod, Buffer, Sender)
     end.
 
 %% @private
