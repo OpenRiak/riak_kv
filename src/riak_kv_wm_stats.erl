@@ -25,9 +25,10 @@
 %% webmachine resource exports
 -export([
          init/1,
+         service_available/2,
+         is_authorized/2,
          encodings_provided/2,
          content_types_provided/2,
-         service_available/2,
          forbidden/2,
          malformed_request/2,
          produce_body/2,
@@ -39,10 +40,46 @@
 -include_lib("webmachine/include/webmachine.hrl").
 -include("riak_kv_wm_raw.hrl").
 
--record(ctx, {timeout = ?TIMEOUT :: non_neg_integer()}).
+-record(ctx,
+    {
+        timeout = ?TIMEOUT :: non_neg_integer(),
+        security 
+            %% Stats not currently subject to grant check so security context
+            %% will be ignored.
+    }
+).
 
 init(_) ->
     {ok, #ctx{}}.
+
+service_available(ReqData, Ctx) ->
+    {true, ReqData, Ctx}.
+
+is_authorized(ReqData, Ctx) ->
+    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
+        true ->
+            {true, ReqData, Ctx};
+        false ->
+            case riak_api_web_security:is_authorized(ReqData) of
+                false ->
+                    {"Basic realm=\"Riak\"", ReqData, Ctx};
+                {true, SecContext} ->
+                    {true, ReqData, Ctx#ctx{security=SecContext}};
+                insecure ->
+                    {
+                        {halt, 426},
+                        wrq:append_to_resp_body(
+                            <<
+                                "Security is enabled and "
+                                "Riak does not accept credentials over HTTP. Try HTTPS "
+                                "instead. Or configure `permit_insecure_http_ops`"
+                            >>,
+                            ReqData
+                        ),
+                        Ctx
+                    }
+            end
+    end.
 
 %% @spec encodings_provided(webmachine:wrq(), context()) ->
 %%         {[encoding()], webmachine:wrq(), context()}
@@ -68,9 +105,6 @@ content_types_provided(ReqData, Context) ->
     {[{"application/json", produce_body},
       {"text/plain", pretty_print}],
      ReqData, Context}.
-
-service_available(ReqData, Ctx) ->
-    {true, ReqData, Ctx}.
 
 malformed_request(RD, Ctx) ->
     case wrq:get_qs_value("timeout", RD) of

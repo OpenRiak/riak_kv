@@ -141,7 +141,9 @@ Configuration items of notable importance are:
 
 ### Configuration of Riak - Delete Mode
 
-[TODO - Rather than write another section here, PR to make delete_mode configurable via riak.conf]
+There are three supported [delete modes in Riak](/docs/InitialDesignDecisions.md#deleting-data): `keep`, an interval or `immediate`.
+
+If delete_mode is set to `keep`, every delete will leave a permanent tombstone, that will need to be reaped at a later date (i.e. once tombstones have been securely replicated around connected clusters).  This will minimise the chance that values are resurrected through anti-entropy processes.  An interval will automate the reap process, and can be set to the number of milliseconds after the writing of the tombstone; which should be kept to less than 5 minutes.  Setting the delete mode to `immediate` will bypass the tombstone process, and delete directly without first writing a tombstone.
 
 ### Configuration of Riak - Bucket Properties
 

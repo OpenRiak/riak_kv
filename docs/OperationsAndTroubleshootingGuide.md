@@ -262,7 +262,129 @@ Each worker pool will regularly log its current queue length and last checkout t
 
 ## Enabling Riak Security
 
-> TODO - Section on applying authentication and authorisation 
+> Riak is expected to be deployed into secure environments, it is not a database designed for direct exposure on public networks.
+
+Riak does have the optional capability to enable additional security controls, which are disabled by default.  However:
+
+- It is commonly easier to provide stronger security controls than the Riak security measures, by using standard DevOps security tools to protect Riak;
+  - Particularly when using the HTTP API, e.g. through the use of Web Application Firewalls or other HTTP proxying and filtering capability.
+- The Riak security controls are designed to protect Riak from remote connections;
+  - The controls can be applied to local connections, but enabling Riak security is insufficient to protect Riak from localhost attacks.
+
+There are three parts to Riak's security mechanism:
+
+- [TLS enablement](#tls-enablement);
+- [Enabling Security and restricting the Source of requests](#enabling-security-and-restricting-source);
+- [Granting permissions for specific actions](#granting-permissions-for-specific-actions).
+
+### TLS Enablement
+
+In Riak 3.4, support is provided for TLS 1.2 only.
+
+The process for enabling TLS differs between the HTTP and PB interfaces.  For HTTP, there are two steps to enabling TLS on the API:
+
+- Configure a listener on HTTPS within `riak.conf` - `listener.https.internal = <ip>:<port>`.
+- Configure file paths within `riak.conf` to valid [`PEM` files](https://en.wikipedia.org/wiki/Privacy-Enhanced_Mail) for three components:
+  - `ssl.certfile = <file_path>`;
+    - the pem file for the server certificate to be used by the Riak node in TLS negotiation.
+  - `ssl.keyfile = <file_path>`;
+    - the private key for the server certificate, which may be the same file as the `ssl.certfile`.
+  - `ssl.cacertfile = <file_path>`;
+    - the CA certificate that signed the server certificate.
+
+The configuration will start a HTTPS listener, and any HTTP client will be able to send any supported HTTP request via TLS using that listener.
+
+For the PB interface, it is not possible to enable TLS in isolation without [adding further security measures](#enabling-security-and-restricting-source).  The configuration of file paths to certificate and key files is required as a prerequisite for applying those measures.  No independent listener is used for PB when security is enabled, the standard listener will expect TLS negotiation if and only if security is enabled.
+
+> Riak does not support any automated certificate management, or notification on pending certificate expiry.
+
+### Enabling Security and Restricting Source
+
+To provide further security, the Riak security mechanism should be enabled. This is not possible through configuration; it must be enabled via the command line:
+
+```console
+riak admin security enable
+```
+
+This is a cluster-wide setting, and will change the behaviour across the cluster with almost immediate effect.  Once security is enabled, any request to Riak sent without TLS enablement and a valid username will be blocked.
+
+> Security enablement is not per API, both the HTTP and PB transports are impacted by enabling security, cluster-wide.
+
+If enablement causes unexpected problems, it may be disabled again:
+
+```console
+riak admin security disable
+```
+
+Prior to Riak 3.4, some HTTP API requests could still be sent to the plain text listener after the enablement of security, and also sent without passing a valid username to the HTTPS listener.  The rest endpoints that remained insecure were: stats, AAE folds and the queue API.  This allowed operational queries to continue unimpaired by the enablement of security.
+
+To preserve the old behaviour, and allow insecure use via HTTP of operational calls when security is enabled, the configuration option in `riak.conf` of `permit_insecure_http_ops = enabled` can be used.
+
+> Although the CLI uses the terms `user` and `password`; these would normally translate to an `application_instance` and `shared_secret` in an actual implementation.  There is no expectation that Riak security should manage the real-world usernames and passwords of operators, developers or application end-users.
+
+Once security is enabled, all requests will need to have a valid `user` and a valid `source`.  There are three types of `source`:
+
+- `trust`;
+  - Applies no conditions beyond a source IP address filter;
+- `password`;
+  - Requires the user provide a valid password, as well as matching on a source IP address filter,
+  - Passwords should be assigned via the `riak admin security` CLI, as use of PAM-based authentication is deprecated.
+- `certificate`;
+  - Supported for **the PB API only**,
+  - Requires that the username match the certificate name,
+  - By inference requires the session to have included a valid client certificate in the TLS negotiation,
+  - The client certificate must be signed by the same CA as the server certificate, the `ssl.cacertfile`.
+
+A very basic setup would be:
+
+```console
+riak admin security enable
+riak admin security add-user proxy_waf
+riak-admin security add-source all 192.168.6.7/32 trust
+```
+
+This would permit access to the APIs only from the IP address `192.168.6.7` (this may be the address of a web application firewall, for example), and trust all access from that source as long as the username of `proxy_waf` is provided within the Authorization header.
+
+> In this simple case, this is functionally equivalent to applying an IP filter on the node through a standard filter utility, but it is not the security equal of that measure.  An IP filter would prevent connections being made from an unauthorised host, whereas the Riak security control allows connections and requests to be sent, but blocks requests during the processing of those requests; which presents a broader attack surface.
+
+On the PB API, a stronger level of security could be applied with:
+
+```console
+riak admin security enable
+riak admin security add-user app.acme.org
+riak-admin security add-source all 192.168.8.0/24 certificate
+```
+
+This would permit access from the whole of the network `192.168.8.0/24` (this may be a network hosting application instances allowed to send Riak requests) for any application instance with a valid certificate as long as the certificate name matches `app.acme.org`.
+
+> In this case, this is functionally equivalent to requiring TLS mutual authentication on the PB API, but it is not the security equal of that measure.  A connection would still be accepted from any IP address, and an unauthenticated TLS negotiation allowed; at this stage the PB API will only accept an authentication request, and this will now only work if the IP address is valid and the certificate matches.
+
+There are a number of options around the configuration of security sources in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
+
+> The use of PAM-based authentication is deprecated and may be removed in a future release.
+
+When enabling the use of certificates, the CRL within the configured CA certificate will be checked for every connection attempt.  If there are issues with either the performance of the CRL check, or the reachability of the CRL endpoint; the crl check can be disabled via a hidden `riak.conf` setting - `check_crl = disabled`.
+
+### Granting permissions for specific actions
+
+There are specific actions within the API, to which specific permissions can be granted - restrictions both on the action alone, and constraints on performing the action by bucket type.
+
+The actions supported by permission grants are:
+
+- [`riak_kv.get`](/docs/ObjectAPI.md#http-api-definition---fetch)
+- [`riak_kv.put`](/docs/ObjectAPI.md#http-api-definition---store)
+- [`riak_kv.delete`](/docs/ObjectAPI.md#http-api-definition---delete)
+- [`riak_kv.list_keys`](/docs/OtherAPI.md#the-list-api)
+- [`riak_kv.list_buckets`](/docs/OtherAPI.md#the-list-api)
+- [`riak_kv.mapreduce`](/docs/OtherAPI.md#the-mapreduce-api)
+- `riak_kv.index`;
+  - used to control both the [legacy query api](/docs/OtherAPI.md#legacy-query-api) and the [Query API](/docs/QueryAPI.md).
+
+For all other API endpoints, only `source` protection is applied.
+
+> With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
+
+There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
