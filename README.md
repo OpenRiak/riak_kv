@@ -27,7 +27,7 @@ Overview documentation on is available in this repository.  The documentation is
 - [Initial Design Decisions](/docs/InitialDesignDecisions.md);
 - [Install and Start Guide](/docs/InstallAndStartGuide.md);
 - [Building and then Scaling a Cluster](/docs/BuildAndScaleClusterGuide.md);
-- [Replication Guide](/docs/NextGenReplGuide.md);
+- [Replication Guide](/docs/ReplicationGuide.md);
 - [Object API](/docs/ObjectAPI.md);
 - [Query API](/docs/QueryAPI.md);
 - [OtherAPI](/docs/OtherAPI.md);
