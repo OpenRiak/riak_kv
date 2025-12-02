@@ -48,6 +48,7 @@
 -export([
          init/1,
          service_available/2,
+         is_authorized/2,
          allowed_methods/2,
          malformed_request/2,
          content_types_provided/2,
@@ -71,7 +72,9 @@
             object_format = internal :: internal|internal_aaehash,
                             %% object format to be used in response
             method :: 'GET'|'PUT'|'POST'|undefined,
-            get_type :: fetch|membership|post|undefined
+            get_type :: fetch|membership|post|undefined,
+            security        %% AAE Fold not currently subject to grant check
+                            %% so security context will be ignored.
 
          }).
 -type context() :: #ctx{}.
@@ -103,6 +106,31 @@ service_available(RD, Ctx=#ctx{riak=RiakProps}) ->
              Ctx}
     end.
 
+is_authorized(ReqData, Ctx) ->
+    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
+        true ->
+            {true, ReqData, Ctx};
+        false ->
+            case riak_api_web_security:is_authorized(ReqData) of
+                false ->
+                    {"Basic realm=\"Riak\"", ReqData, Ctx};
+                {true, SecContext} ->
+                    {true, ReqData, Ctx#ctx{security=SecContext}};
+                insecure ->
+                    {
+                        {halt, 426},
+                        wrq:append_to_resp_body(
+                            <<
+                                "Security is enabled and "
+                                "Riak does not accept credentials over HTTP. Try HTTPS "
+                                "instead.  Or configure `permit_insecure_http_ops`"
+                            >>,
+                            ReqData
+                        ),
+                        Ctx
+                    }
+            end
+    end.
 
 allowed_methods(RD, Ctx) ->
     {['GET', 'POST'], RD, Ctx}.
