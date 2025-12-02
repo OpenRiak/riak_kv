@@ -264,7 +264,7 @@ Each worker pool will regularly log its current queue length and last checkout t
 
 > Riak is expected to be deployed into secure environments, it is not a database designed for direct exposure on public networks.
 
-Riak does have the optional capability to enable additional security controls, controls which are disabled by default.  However:
+Riak does have the optional capability to enable additional security controls, which are disabled by default.  However:
 
 - It is commonly easier to provide stronger security controls than the Riak security measures, by using standard DevOps security tools to protect Riak;
   - Particularly when using the HTTP API, e.g. through the use of Web Application Firewalls or other HTTP proxying and filtering capability.
@@ -300,7 +300,7 @@ For the PB interface, it is not possible to enable TLS in isolation without [add
 
 ### Enabling Security and Restricting Source
 
-To provide further security, the Riak security mechanism should be enabled. This is not possible through configuration, it must be enabled via the command line:
+To provide further security, the Riak security mechanism should be enabled. This is not possible through configuration; it must be enabled via the command line:
 
 ```console
 riak admin security enable
@@ -341,7 +341,7 @@ riak-admin security add-source all 192.168.6.7/32 trust
 
 This would permit access to the APIs only from the IP address `192.168.6.7` (this may be the address of a web application firewall, for example), and trust all access from that source as long as the username of `proxy_waf` is provided within the Authorization header.
 
-> In this simple case, this is functionally equivalent to applying an IP filter on the node through a standard filter utility, but it is not the security equal of that measure.  An IP filter would prevent connections being made from an unauthorised host, whereas the Risk security control allows connections and requests to be sent, but blocks requests during the processing of those requests; which presents a broader attack surface.
+> In this simple case, this is functionally equivalent to applying an IP filter on the node through a standard filter utility, but it is not the security equal of that measure.  An IP filter would prevent connections being made from an unauthorised host, whereas the Riak security control allows connections and requests to be sent, but blocks requests during the processing of those requests; which presents a broader attack surface.
 
 On the PB API, a stronger level of security could be applied with:
 
@@ -378,7 +378,7 @@ The actions supported by permission grants are:
 
 For all other API endpoints, only `source` protection is applied.
 
-> With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  One the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
+> With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
 
 There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
 
