@@ -40,7 +40,7 @@ For discussions on Riak development see https://github.com/orgs/OpenRiak/discuss
 
 ## Testing
 
-```bash
+```console
 ./rebar3 do xref, dialyzer, eunit
 ./rebar3 as test eqc --testing_budget 600
 ```

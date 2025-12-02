@@ -78,7 +78,7 @@ Riak is deployed using [a modified version of the relx release generator](https:
 
 For locally deployed instances (i.e. via `make rel` or `make devrel`), can be controlled using the `bin/riak` script:
 
-```bash
+```console
 bin/riak daemon
 bin/riak ping
 bin/riak stop
@@ -88,7 +88,7 @@ bin/riak stop
 
 Help for further console activities can be found via:
 
-```bash
+```console
 bin/riak --help
 bin/riak admin --help
 bin/riak admin cluster --help
@@ -96,7 +96,7 @@ bin/riak admin cluster --help
 
 For instances deployed through packages, startup and shutdown should be controlled using `systemd` e.g.:
 
-```bash
+```console
 service riak start
 service riak ping
 service riak stop
@@ -165,7 +165,7 @@ Riak objects are placed into buckets.  The configuration of the handling of buck
 
 For help in enabling properties on typed buckets see:
 
-```bash
+```console
 rel/riak/bin/riak admin bucket-type --help
 ```
 

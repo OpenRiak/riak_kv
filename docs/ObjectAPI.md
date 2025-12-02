@@ -43,7 +43,7 @@ The [Bucket Type](/docs/InstallAndStartGuide.md#configuration-of-riak---bucket-p
 
 A Bucket Type cannot be used via the API until it has been created and activated, to do this see:
 
-```bash
+```console
 riak admin bucket-type --help
 ```
 
@@ -147,7 +147,7 @@ There are four levels of strictness to the application of conditions:
 
 The level of strictness is set for the entire cluster, using the `conditional_put_mode` and `token_request_mode` configuration items in `riak.conf`:
 
-```shell
+```console
 riak admin describe conditional_put_mode
 riak admin describe token_request_mode
 ```
@@ -198,7 +198,7 @@ Supported HTTP request headers for PUT:
 
 ### Example PUT request
 
-```curl
+```console
 curl -v -XPUT
  -d '{"bar":"baz"}'
  -H "Content-Type: application/json"
@@ -228,7 +228,7 @@ Expected HTTP response headers for GET:
 
 ### Example GET request
 
-```curl
+```console
 curl -v
   http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
   -H "Accept: multipart/mixed"
@@ -249,7 +249,7 @@ Supported HTTP request headers for DELETE:
 
 ### Example DELETE request
 
-```curl
+```console
 curl -v -X DELETE
   http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
   -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="

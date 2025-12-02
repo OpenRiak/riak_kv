@@ -164,7 +164,7 @@ When nodes join a cluster, the handoff process is two-ways; the joining node is 
 
 For details of the cluster management commands:
 
-```bash
+```console
 riak admin cluster --help
 ```
 
