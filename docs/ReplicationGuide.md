@@ -655,4 +655,4 @@ The use of `riak_repl` is deprecated, and when a retirement schedule is agreed i
 
 ## Replication scope
 
-Replication in Riak between clusters is limited in scope to objects only.  Cluster metadata, including bucket type configurations and authentication credentials are not replicated.  When enabling bucket types, the enablement must be triggered on each and every cluster that may receive an object for that bucket type.
+Replication in Riak between clusters is limited in scope to objects only.  Cluster metadata, including bucket type configurations, bucket properties and authentication credentials are not replicated.  When enabling bucket types, the enablement must be triggered on each and every cluster that may receive an object for that bucket type.
