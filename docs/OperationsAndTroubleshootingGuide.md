@@ -320,16 +320,20 @@ Prior to Riak 3.4, some HTTP API requests could still be sent to the plain text 
 
 To preserve the old behaviour, and allow insecure use via HTTP of operational calls when security is enabled, the configuration option in `riak.conf` of `permit_insecure_http_ops = enabled` can be used.
 
+> Although the CLI uses the terms `user` and `password`; these would normally translate to an `application_instance` and `shared_secret` in an actual implementation.  There is no expectation that Riak security should manage the real-world usernames and passwords of operators, developers or application end-users.
+
 Once security is enabled, all requests will need to have a valid `user` and a valid `source`.  There are three types of `source`:
 
 - `trust`;
   - Applies no conditions beyond a source IP address filter;
 - `password`;
-  - Requires the user provide a valid password, as well as matching on a source IP address filter;
+  - Requires the user provide a valid password, as well as matching on a source IP address filter,
+  - Passwords should be assigned via the `riak admin security` CLI, as use of PAM-based authentication is deprecated.
 - `certificate`;
   - Supported for **the PB API only**,
   - Requires that the username match the certificate name,
-  - By inference requires the session to have included a valid client certificate in the TLS negotiation.
+  - By inference requires the session to have included a valid client certificate in the TLS negotiation,
+  - The client certificate must be signed by the same CA as the server certificate, the `ssl.cacertfile`.
 
 A very basic setup would be:
 
