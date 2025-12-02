@@ -1745,3 +1745,27 @@
       (is_integer(Value) andalso Value > 0 andalso Value < 300000)
   end
 }.
+
+%% @doc Permit some operations over `http` when security is enabled
+%% Prior to the Riak 3.4 release, some HTTP operations were not subject to
+%% authentication scope checks when security was enabled.  These operations
+%% could continue to be used over the HTTP transport.
+%%
+%% The allowed HTTP operations were:
+%% - Riak stats requests;
+%% - AAE folds;
+%% - Fetch requests (from replication queues).
+%%
+%% Following the Riak 3.4 release these operations are not by default
+%% permitted.  Once security is enabled, then requests will need to be sent via
+%% the HTTPS transport, with a valid username.
+%%
+%% This configuration switch allows for the previous behaviour to be maintained
+%% to provide for backwards compatability and ease transition to Riak 3.4.
+%%
+%% This configuration option may be removed in a future Riak release.
+{mapping, "permit_insecure_http_ops", "riak_kv.permit_insecure_http_ops", [
+    {datatype, {flag, enabled, disabled}},
+    {default, disabled},
+    {commented, disabled}
+]}.
