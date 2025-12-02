@@ -205,7 +205,7 @@ curl -v -XPUT
  -H "x-riak-index-twitter_bin: jsmith123"
  -H "x-riak-index-email_bin: jsmith@riak.com, jsmith_personal@btinternet.com"
  -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
- http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey?returnbody=true
+ http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
 ```
 
 ## HTTP API Definition - Fetch
@@ -229,7 +229,9 @@ Expected HTTP response headers for GET:
 ### Example GET request
 
 ```curl
-curl -v http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "Accept: multipart/mixed"
+curl -v
+  http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
+  -H "Accept: multipart/mixed"
 ```
 
 ## HTTP API Definition - Delete
@@ -248,7 +250,9 @@ Supported HTTP request headers for DELETE:
 ### Example DELETE request
 
 ```curl
-curl -v -X DELETE http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
+curl -v -X DELETE
+  http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
+  -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
 ```
 
 ## Accessing Legacy Objects
