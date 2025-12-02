@@ -1620,10 +1620,13 @@ take_first_workitem_test() ->
     TwentyFourHoursAgo = Mega * ?MEGA + Sec - (60 * 60 * 24),
     OrigStartTime =
         beginning_of_next_period(
-            {TwentyFourHoursAgo div ?MEGA,
+            {
+                TwentyFourHoursAgo div ?MEGA,
                 TwentyFourHoursAgo rem ?MEGA,
-                Micro},
-                SC),
+                Micro
+            },
+            SC
+        ),
     SchedRem =
         lists:map(fun(I) -> {I, no_check} end, lists:seq(2, SC)),
     ScheduleStartTime =
@@ -1651,6 +1654,17 @@ take_first_workitem_test() ->
         take_next_workitem(SchedRem, Wants, ScheduleStartTime, {1, 8, 4}, SC),
     {no_check, PromptN2YetMoreSeconds, _, ScheduleStartTime} = 
         take_next_workitem(SchedRem, Wants, ScheduleStartTime, {2, 8, 1}, SC),
+    io:format(
+        user,
+        "Now ~w ST ~w S2 ~w S3 ~w S4 ~w~n",
+        [
+            {Mega, Sec, Micro},
+            ScheduleStartTime,
+            PromptS2YetMoreSeconds,
+            PromptS3YetMoreSeconds,
+            PromptS4YetMoreSeconds
+        ]
+    ),
     ?assertMatch(true, PromptS4YetMoreSeconds > PromptS3YetMoreSeconds),
     ?assertMatch(true, PromptS3YetMoreSeconds > PromptS2YetMoreSeconds),
     ?assertMatch(true, PromptN2YetMoreSeconds > PromptS4YetMoreSeconds).
