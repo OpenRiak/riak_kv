@@ -40,7 +40,7 @@ The Riak replication and reconciliation (full-sync) system has the following fea
   - Support for low-impact suspension and resumption of replication,
   - Prevents recipient clusters from being overwhelmed by replicated PUT volumes.
 - Provides very efficient reconciliation to confirm whole clusters are synchronised;
-  - i.e. Confirmation that across multiple clusters all objects both exist, and are at the same version.
+  - i.e. Confirmation that across multiple clusters all objects are at the same version.
 - Efficient and fast resolution of small deltas between clusters;
   - With a specific focus on accelerating the recovery of recently occurring deltas (e.g. following a failure or real-time replication).
 - Uses an API which is reusable for replication to and reconciliation with non-Riak databases.
@@ -156,6 +156,8 @@ There are two configuration items required to set up a source for real-time repl
 
 For replication, the real-time replication source must be enabled on every node in the cluster, as a PUT may be coordinated from any vnode (on any node), regardless of which node received the PUT request.
 
+> By convention, the name of the queues are normally aligned with the names of the cluster that is to consume from the queue i.e. `<sink_cluster_name>`.  However, the name can be anything descriptive for the context in which the queue is to be used.
+
 ### Enable a Real-Time Sink
 
 There are five configuration items required to set up a sink for real-time replication.  They are all set via `riak.conf`:
@@ -163,6 +165,7 @@ There are five configuration items required to set up a sink for real-time repli
 - `replrtq_enablesink = enabled`.
 - `replrtq_sinkqueue = <sink_cluster_name>`;
   - The name of the queue, on any source node or cluster from which this sink may need to consume replication events.
+  - The name of the queue does not need to be the cluster name, it can be any description that is helpful in context.
 - `replrtq_sinkpeers = <ip_addr>:<port>:<protocol>|<ip_addr>:<port>:<protocol>` ...
   - A pipe delimited list of peers by IP, port and protocol (`pb` or `http`).
     - For efficiency, it is recommended to use the PB protocol.
@@ -181,15 +184,29 @@ There are five configuration items required to set up a sink for real-time repli
 
 A backoff algorithm is used on the sink to reduce the frequency of requests to nodes returning error responses, and increase the frequency to nodes continuously having ready replication events on the queue.  This means that sink workers will automatically favour fetching from nodes with backlogs of replication activity.
 
+### Security Configuration
+
+The real-time connections may be secured, by [enabling security on the source cluster](./OperationsAndTroubleshootingGuide.md#enabling-riak-security).  The securing of communications for replication is supported only with the PB transport in Riak 3.4.
+
+When communication is secured, then a security-source needs to be defined on the replication-source cluster.  For Riak 3.4, this has been tested only with a `certificate` requirement for authentication.  Authentication by certificate requires the following configuration on the sink nodes:
+
+- `repl_cacert_filename`;
+  - A filepath to a PEM file for the CA which has signed the source certificate, required by the sink node to validate the peer relationship.
+- `repl_cert_filename`;
+  - A filepath to a PEM file for a certificate to be used by this sink node.
+  - This does not need to be unique within the cluster.
+- `repl_key_filename`;
+  - A filepath to a PEM file that has a private key associated with the certificate (i.e. `repl_cert_filename`) to be used.
+- `repl_username`;
+  - A valid username enabled on the source cluster.
+  - The username should match the certificate name when `certificate` is defined as the security type in security-source setup on the (replication) source cluster.
+
+The replication functions do not have associated `grant` actions within the security configuration.  However, it is possible to block replication connections from issuing other functions (e.g. access to the Query or Object API), by blocking the `grants` for those actions.
+
 ### Additional Configuration
 
 Further configuration can be added for replication using `riak.conf`:
 
-- Security configuration to enable authentication and encryption of replication traffic;
-  - `repl_cacert_filename` (required on the source);
-  - `repl_cert_filename` (required on the sink);
-  - `repl_key_filename` (required on the sink, the key associated with the certificate in `repl_cert_filename`);
-  - `repl_username` (required on the sink).
 - `replrtq_compressonwire`;
   - To enable compression of replicated objects, with compression using the zlib compression library.
   - Compression should only be enabled if objects are known to be compressible, as zlib may be computationally expensive when only limited compression can be achieved.
@@ -197,6 +214,9 @@ Further configuration can be added for replication using `riak.conf`:
   - The `r` value on the fetch of a replication object from the source (if it has not been queued), and the `w` value on the `PUSH` of the object into the sink.
   - The default is `one`, to ensure a minimal delay in real-time replication, but it is recommended to use the safer option of `quorum` instead.
   - Setting to a value other than `one` will reduce the risk of mailbox overloads related to replication backlogs.
+  - A third option of `all` may be used;
+    - This will ensure that workers move at the pace of the slowest vnode.
+    - This is only to be used if there are repeated issues with replication-related load prompting vnode mailbox overload scenarios, where it is not possible to resolve those issues through reducing worker counts.
 - `replrtq_prompt_max_seconds`;
   - The peer discovery is refreshed periodically based on this timer.
   - if a node is joined, downed or left; the change in peer availability will be detected at the next prompt.
@@ -363,9 +383,33 @@ There is a log on each sink node of the replication timings:
 
 The `mean_repltime` is a measure of the delta between the last-modified-date on the replicated object and the time the replication was completed - so this may vary if prompting replication due to real-time changes, reconciliation or seeding.  The `lmdin_<x>` counts are the counts of replicated objects which were replicated within a second, minute, hour, day or over a day.
 
+### Making runtime changes to the Source
+
+There are four functions on the source that may be [called from the `remote_console`](./OperationsAndTroubleshootingGuide.md#remote-console).  To suspend and resume a queue:
+
+```erlang
+riak_kv_replrtq_src:suspend_rtq(QueueName).
+```
+
+```erlang
+riak_kv_replrtq_src:resume_rtq(QueueName).
+```
+
+To check the length of the queue, and if necessary clear the queue (for example if a mistaken `repl_keys_range` fold has been prompted):
+
+```erlang
+riak_kv_replrtq_src:length_rtq(QueueName).
+```
+
+```erlang
+riak_kv_replrtq_src:clear_rtq(QueueName).
+```
+
+> Clearing a queue will clear all entries from the queue, regardless of priority.
+
 ### Making runtime changes to the Sink
 
-More workers and sink peers can be added at run-time via the `remote_console`, by resetting the worker counts.  This reset is a cluster-wide change, not just a change on the local node:
+More workers and sink peers can be added at [runtime via the `remote_console`](./OperationsAndTroubleshootingGuide.md#remote-console), by resetting the worker counts.  This reset is a cluster-wide change, not just a change on the local node:
 
 ```erlang
 riak_client:replrtq_reset_all_workercounts(WorkerCount, PerPeerLimit)
