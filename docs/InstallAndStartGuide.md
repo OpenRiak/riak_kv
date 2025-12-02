@@ -38,7 +38,7 @@ Some points to note when installing Erlang:
 
 ### Download Riak
 
-Riak is available to clone at https://github.com/OpenRiak/riak.
+Riak is [available to clone on github](https://github.com/OpenRiak/riak).
 
 Each major release has an associated branch which represents current development activity.  For Riak 3.2 this is `openriak-3.2`, For Riak 3.4 this is `openriak-3.4`.  Building from these branches may contain unreleased changes.
 
@@ -104,7 +104,9 @@ service riak stop
 
 Help for further console activities can be found by using the standard `riak` script e.g. `sudo riak admin --help`
 
-Starting Riak may require a higher `ulimit` to be set within the shell - a limit of 100000 will be acceptable for small-scale non-production systems, but larger limits will be needed for full-scale production systems.  When Riak is installed as a package, then the default limit is increased using the `LimitNOFILE` file option within the systemd service definition.
+> Running Riak may require a much higher `ulimit` than the default set by the Operating System.
+
+A `ulimit` of 100000 will be acceptable for small-scale non-production systems, but larger limits will be needed for full-scale production systems.  When Riak is installed as a package, then the default limit is increased using the `LimitNOFILE` file option within the systemd service definition.
 
 ### Configuration of Riak - key riak.conf changes
 

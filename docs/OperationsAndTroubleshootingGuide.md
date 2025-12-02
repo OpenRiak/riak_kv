@@ -48,11 +48,11 @@ A proactive replace is a cluster administration change, and [follows the standar
 
 The plan should be planned, reviewed, committed and then monitored as with other changes.
 
-The node may have its `location` set prior to the `join`, but the location will be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster as a separate change activity.
+The node cannot have its `location` set prior a `replace`, as the location must be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster as a separate change activity.
 
 See `riak admin cluster --help` for further details on the required inputs to cluster change commands.
 
-During the replace operation the replacement node should have `participate_in_coverage` disabled, and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
+During the replace operation the replacement node should have [`participate_in_coverage` disabled](#riak_client-remote_console-commands), and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
 
 After completing a proactive replace operation, it may be necessary to realign node naming with design documents or monitoring systems; to rename a replacement node with the name of the node it replaced.  Once the replace operation is complete, it is possible to rename a node while it is down using `reip_manual` - see `riak admin reip_manual --help`.  The ring_directory is normally named `ring` in the platform data directory.  It will contain files such as `riak_core_ring.default.20221122164111`, where the middle term between the periods (in this case `default`) represents the required cluster name.
 
@@ -88,7 +88,7 @@ When replacing a failed node, the situation differs depending on whether the new
 
 If `force_replace` has been used, then the replacement node can be renamed at a later date using `riak admin reip_manual`.
 
-The new node should be started with `participate_in_coverage` disabled, as it will at this stage be a full member of the cluster but have no data.  It is also more efficient to suspend anti-entropy until the repair is complete.
+The new node should be started with [`participate_in_coverage` disabled](#riak_client-remote_console-commands), as it will at this stage be a full member of the cluster but have no data.  It is also more efficient to suspend anti-entropy until the repair is complete.
 
 ```console
 riak eval "riak_client:tictacaae_suspend_node()."
@@ -103,7 +103,7 @@ To improve the performance of repair, the `repair_span` configuration in the [ri
 
 The combination of `repair_span = double_pair, repair_deferred = enabled` is significantly more effective when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are persistently at 100% CPU utilisation due to the handling of application requests.
 
-Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
+Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then [`participate_in_coverage` can be re-enabled](#riak_client-remote_console-commands).
 
 ### Rolling Replacement
 
@@ -165,13 +165,13 @@ Riak upgrades are all designed to support in-place rolling upgrades across the c
 
 The following upgrade path has been specifically tested:
 
-2.2.3 -> 2.2.5 -> 2.9.n -> 3.0.n -> 3.2.n -> 3.4.n
+`2.2.3` -> `2.2.5` -> `2.9.n` -> `3.0.n` -> `3.2.n` -> `3.4.n`
 
 More direct upgrade paths skipping steps may be possible.  New features are added using either a negotiation of capability within the cluster, or with the feature disabled by default in configuration.  Once a capability is mature, after at least two steps in the path, the negotiation may be retired and replaced with a static assumption of capability.
 
-> When using the eleveldb backend  with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
+> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
 
-It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from 3.0.n to 3.4.n are not supported unless 3.0.n is built with OTP 22, and 3.4.n is built with OTP 24.
+It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from `3.0.n` to `3.4.n` are not supported unless `3.0.n` is built with OTP 22, and `3.4.n` is built with OTP 24.
 
 It is recommended to test all upgrades in pre-production environments.  If no pre-production environment is available, then a pilot node should be upgraded first in the cluster for an agreed time period (e.g. 24 hours).  If there are issues with the upgrade, then the pilot node can be stopped, cleared and [repaired](#reactive-replacement).  Most large-scale production users of Riak rely on pre-production testing or pilot nodes to assure changes, and do not depend on a [backup/restore safety net](#backup-options) during a rolling upgrade.
 

@@ -170,17 +170,25 @@ riak admin cluster --help
 
 The process of joining, is a five stage process:
 
-- staging changes;
-- plan the change;
-- verify the plan;
-- commit the change;
-- await handoffs.
+- [staging changes](#join-process---staging-a-change);
+- [plan the change](#join-process---plan-a-change);
+- [verify the plan](#join-process---verify-the-plan);
+- [commit the change](#join-process---commit-the-plan);
+- [await handoffs](#join-process---await-handoffs).
 
 ### Join process - staging a change
 
 There must first be the staging of a `join`, an act that simply informs the cluster of the intention to make a change.  To perform the join the joining node must be started and be configured with the same `ring_size` as the existing cluster, and must have its location set (if a location-aware cluster is required).  The join command is issued on the joining node.
 
 Only nodes configured with the same `ring_size` as the cluster, can be joined into the cluster.
+
+If [locations are to be used](#join-process---choose_claim_v4-recommended) within the cluster, then location changes must also be staged:
+
+```console
+riak admin cluster location --help
+```
+
+There is no ability to learn a location (e.g. by detecting a placement group).  Allocating a node to a location, and tracking those mappings is a manual process.
 
 ### Join process - plan a change
 
