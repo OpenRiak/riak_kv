@@ -3,6 +3,7 @@
 The following sections provide guidance when operating or troubleshooting a Riak cluster:
 
 - [Handling failure - replace, repair and recover](#replace-repair-and-recover)
+- [Upgrading Riak on a node](#upgrading-a-node)
 - [Using the remote console](#remote-console)
 - [Accessing extended configuration options](#extending-configuration)
 - [Making use of logging and statistics](#logging-and-statistics)
@@ -12,21 +13,26 @@ The following sections provide guidance when operating or troubleshooting a Riak
 - [Understanding the contents of a Riak cluster](#data-inspection)
 - [Volume and performance testing](#volume-and-performance-testing)
 - [Backing up a cluster](#backup-options)
+- [Operation checklist](#operation-checklist)
 - [Advanced troubleshooting of Riak internals](#advanced---troubleshoot-via-the-erlang-vm)
 
 ## Replace, Repair and Recover
 
 There are several potential repair and recovery processes for handling different scenarios:
 
-- [proactive replace](#proactive-replace);
-- [reactive replace](#reactive-replace);
-- [leveled backend repair](#repair-an-individual-leveled-store);
-- [repairing a single vnode](#repair-an-individual-vnode);
-- [repairing a key range](#repair-key-ranges).
+- [Proactive replacement](#proactive-replacement)
+- [Reactive replacement](#reactive-replacement)
+- [Rolling replacement](#rolling-replacement)
+- [Rolling restart](#rolling-restart)
+- [Leveled backend repair](#repair-an-individual-leveled-store)
+- [Repairing a single vnode](#repair-an-individual-vnode)
+- [Repairing a key range](#repair-key-ranges)
 
 The most common repair requirements are for proactive replace, and reactive replace: testing these processes under load prior to production deployment of Riak is recommended.
 
-### Proactive Replace
+> All repair and replace operations are designed to be conducted under load.  In non-functional testing of Riak 3.4, an 8-node cluster is saturated with load (both Object API and Query API requests) to 100% CPU utilisation; and then a node is killed, cleared, re-joined and repaired under that load - with the target of never losing more 1/8th of the throughput.
+
+### Proactive Replacement
 
 It is possible to proactively replace a node in a Riak cluster, for example if:
 
@@ -42,21 +48,21 @@ A proactive replace is a cluster administration change, and [follows the standar
 
 The plan should be planned, reviewed, committed and then monitored as with other changes.
 
-The node may have its `location` set prior to the `join`, but the location will be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster as a separate change activity.
+The node cannot have its `location` set prior a `replace`, as the location must be ignored by the `replace` i.e. if the replacement node is in a different location to the existing node, this will not be factored in - the replace will transfer all vnodes to the new node, regardless of the `target_location_n_val` constraint.  Staging a location change after the `replace` has completed (i.e. following the `commit` and the transfers), may be used to `plan` a reshuffle of the cluster as a separate change activity.
 
 See `riak admin cluster --help` for further details on the required inputs to cluster change commands.
 
-During the replace operation the replacement node should have `participate_in_coverage` disabled, and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
+During the replace operation the replacement node should have [`participate_in_coverage` disabled](#riak_client-remote_console-commands), and have coverage support enabled only once all transfers have completed and (if configured) tictac anti-entropy has confirmed that all vnodes are in sync.
 
 After completing a proactive replace operation, it may be necessary to realign node naming with design documents or monitoring systems; to rename a replacement node with the name of the node it replaced.  Once the replace operation is complete, it is possible to rename a node while it is down using `reip_manual` - see `riak admin reip_manual --help`.  The ring_directory is normally named `ring` in the platform data directory.  It will contain files such as `riak_core_ring.default.20221122164111`, where the middle term between the periods (in this case `default`) represents the required cluster name.
 
-### Reactive Replace
+### Reactive Replacement
 
 If a node temporarily fails, then recovers without a loss of historic delta; the node will automatically rejoin the cluster and have any delta in data patched via anti-entropy mechanisms, without the need for operator intervention.
 
 If a node has failed following an incident, and all data on the node is lost, the cluster can still be recovered back to its previous state without requiring a backup of the failed node.
 
-Recovery of such a lost node requires a reactive replace.  There are three stages to replace and recover the node:
+Recovery of such a lost node requires a reactive replacement.  There are three stages to replace and recover the node:
 
 - [ensuring the node is downed](#administratively-downing-a-node);
 - [forcing the replace](#forcing-a-replace);
@@ -68,7 +74,7 @@ A node that is down, should not have a negative impact on the cluster.  There ma
 
 The status of all nodes in the cluster, from the perspective of another node can be gained by running:
 
-```bash
+```console
 riak admin cluster status
 ```
 
@@ -78,13 +84,13 @@ If a node is known to be not operational, it should be marked as down using `ria
 
 #### Forcing a Replace
 
-When replacing a failed node, the situation differs depending on whether the new node is to be given the same IP address as the replaced node.  If the new (replacement) node has been built with the same address and naming it can be re-joined by re-staging a join, planning the change and committing it (which should lead to no actual transfers).  If the new node has differing configuration, then the plan will require a `join` and a `force_replace` operation to be staged.
+When replacing a failed node, the situation differs depending on whether the new node is to be given the same IP address as the replaced node.  If the new (replacement) node has been built with the same address and naming it can be re-joined by re-staging a join, planning the change and committing it (which should lead to no actual transfers).  If the new node has a different configuration, then the plan will require a `join` and a `force_replace` operation to be staged.
 
 If `force_replace` has been used, then the replacement node can be renamed at a later date using `riak admin reip_manual`.
 
-The new node should be started with `participate_in_coverage` disabled, as it will at this stage be a full member of the cluster but have no data.  It is also more efficient to suspend anti-entropy until the repair is complete.
+The new node should be started with [`participate_in_coverage` disabled](#riak_client-remote_console-commands), as it will at this stage be a full member of the cluster but have no data.  It is also more efficient to suspend anti-entropy until the repair is complete.
 
-```bash
+```console
 riak eval "riak_client:tictacaae_suspend_node()."
 riak eval "riak_client:remove_node_from_coverage()."
 ```
@@ -97,7 +103,23 @@ To improve the performance of repair, the `repair_span` configuration in the [ri
 
 The combination of `repair_span = double_pair, repair_deferred = enabled` is significantly more effective when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are persistently at 100% CPU utilisation due to the handling of application requests.
 
-Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then `participate_in_coverage` can be re-enabled.
+Repair uses handoffs, and so can be tracked as with other cluster change operations.  Once handoffs are complete, Tictac AAE should be re-enabled, e.g. by using `riak_client:tictacaae_resume_node().`.  Once Tictac AAE confirms all vnodes are in-sync - then [`participate_in_coverage` can be re-enabled](#riak_client-remote_console-commands).
+
+### Rolling Replacement
+
+A rolling replacement is an extension of the [proactive replacement](#proactive-replacement) process.  In a rolling replacement, a group of new nodes are installed.  There is then a rolling process where some nodes are proactively replaced by the new nodes; and once those replaced nodes are free - they are use to proactively replace other nodes in the cluster.
+
+A proactive replacement should normally be done with a single node (i.e. a group of one), if location awareness is not configured.  If locations are enabled, then multiple nodes within each location can be safely subject to proactive replacement in the same cluster plan.  With location awareness the group of nodes used can be up to the minimum number of nodes within a location.
+
+The same process can be followed for changing hardware in a cluster, except that the replacements are always made to new hardware (or cloud instance types) rather than recovered nodes.
+
+### Rolling restart
+
+A rolling restart may be required for some configuration changes, or as part of a Riak upgrade.  A stop and start of Riak will involve handoffs, just as with replacements.  The volume of data in those handoffs is minimal, just deltas received during the process - but it is important to wait for both the triggering and completion of handoffs before commencing the next batch of restart actions.
+
+The configuration of locations may speed rolling restarts, as all nodes in a location can be safely stopped and started concurrently.
+
+> Caution is required when performing a rolling restart when using the memory backend, as the pre-existing data is not transferred during the restart and is lost by the restart.
 
 ### Repair an individual leveled store
 
@@ -121,7 +143,7 @@ Where such corruption is limited to a leveled ledger, then [a repair via leveled
 
 The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  The vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
 
-```bash
+```console
 riak eval "riak_kv_vnode:repair(<partition_number>)."
 ```
 
@@ -136,6 +158,28 @@ Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for inform
 The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request; which, should there be a discrepancy, prompt a repair via `read_repair`.
 
 Repair key range operations are a potentially efficient method for repairing keys across a cluster following a known incident, the impact of which was restricted to a given time range; and may prove to be quicker in some circumstances than waiting for the delta to heal via active anti-entropy.
+
+## Upgrading a node
+
+Riak upgrades are all designed to support in-place rolling upgrades across the cluster - a [rolling restart](#rolling-restart) with a package deployment between the stop and start.  
+
+The following upgrade path has been specifically tested:
+
+`2.2.3` -> `2.2.5` -> `2.9.n` -> `3.0.n` -> `3.2.n` -> `3.4.n`
+
+More direct upgrade paths skipping steps may be possible.  New features are added using either a negotiation of capability within the cluster, or with the feature disabled by default in configuration.  Once a capability is mature, after at least two steps in the path, the negotiation may be retired and replaced with a static assumption of capability.
+
+> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
+
+It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from `3.0.n` to `3.4.n` are not supported unless `3.0.n` is built with OTP 22, and `3.4.n` is built with OTP 24.
+
+It is recommended to test all upgrades in pre-production environments.  If no pre-production environment is available, then a pilot node should be upgraded first in the cluster for an agreed time period (e.g. 24 hours).  If there are issues with the upgrade, then the pilot node can be stopped, cleared and [repaired](#reactive-replacement).  Most large-scale production users of Riak rely on pre-production testing or pilot nodes to assure changes, and do not depend on a [backup/restore safety net](#backup-options) during a rolling upgrade.
+
+If local changes have been made to `riak.conf`, the package manager should leave the `riak.conf` file unchanged during an upgrade.  A release change may alter a default value in configuration, and if that default value was originally added to the `riak.conf` uncommented - the new default will not take effect following the upgrade, as the `riak.conf` is not altered.
+
+> In configuration management of `riak.conf` files, the potential issue of changing defaults needs to be accounted for i.e. ensure the managed version of `riak.conf` is seeded with a new default `riak.conf` file produced for each release, before context-specific changes are applied.
+
+As with other rolling operations, the operations can be accelerated through the use of locations, by changing a location per-cycle not just a node per-cycle.  Awaiting both the triggering and completion of handoffs between cycles is required for a smooth transition.
 
 ## Remote Console
 
@@ -177,7 +221,7 @@ If an active remote_console session is detached in an unexpected way e.g. due to
 
 All single commands run from riak remote_console should be scriptable from the command line using `riak eval`:
 
-```bash
+```console
 riak eval "riak_client:repair_node()."
 ```
 
@@ -248,7 +292,28 @@ The stats represent the statistics on the node from which they were requested.  
 
 ### Logging and monitoring of read repairs
 
-> TODO
+Read repairs will be invoked directly when a user GET request reveals an out-of-date or missing object within the preflist
+
+> Although GETs will by default respond to the client on quorum responses, all GET processes continue to all responses have returned or timed out.  The read repair is then triggered if required, based on all responses ot just the quorum.
+
+Each read repair, will update the `read_repairs` and `read_repairs_total` statistic available [via riak stats](#riak-stats).  Other stats updates are also made:
+
+- `read_repairs_fallback_notfound`;
+- `read_repairs_fallback_outofdate`;
+- `read_repairs_primary_notfound`;
+- `read_repairs_primary_outofdate`.
+
+These stats indicate whether the vnode in need of repair was a primary or fallback, and whether it has been repaired as it had an out of date object, or the object was not found in that vnode.
+
+During a node failure, `n_val` fallback vnodes will be started for every unavailable primary vnode.  As the fallback vnodes start empty, a large number of read repairs may be immediately triggered, assuming the cluster is subject to application read requests.  This will in the short term impact performance, and in the long term impact handoff times when the node recovers - but in the medium term it will mean that the vnode has frequently accessed data to contribute to quorum.  The [`read_repair_primaryonly` configuration option](/docs/InstallAndStartGuide.md#configuration-of-riak---key-riakconf-changes) can be enabled to stop repairing fallback vnodes through read repair.
+
+Read repairs are also invoked by active anti-entropy.  When an intra-cluster AAE process detects a delta, it does not prompt it directly, it instead will prompt a GET request so that read repair will happen indirectly.
+
+If a repair has been prompted by a Tictac AAE anti-entropy exchange, setting the environment variable `riak_kv` `log_readrepair` to `true` will prompt the details of the Keys and compared Clocks to be logged for every repair.  This may be useful in trying to determine the root cause of discrepancies.
+
+```console
+riak eval "application:set_env(riak_kv, log_readrepair, true)"
+```
 
 ### Monitoring inter-cluster reconciliation
 
@@ -262,7 +327,129 @@ Each worker pool will regularly log its current queue length and last checkout t
 
 ## Enabling Riak Security
 
-> TODO - Section on applying authentication and authorisation 
+> Riak is expected to be deployed into secure environments, it is not a database designed for direct exposure on public networks.
+
+Riak does have the optional capability to enable additional security controls, which are disabled by default.  However:
+
+- It is commonly easier to provide stronger security controls than the Riak security measures, by using standard DevOps security tools to protect Riak;
+  - Particularly when using the HTTP API, e.g. through the use of Web Application Firewalls or other HTTP proxying and filtering capability.
+- The Riak security controls are designed to protect Riak from remote connections;
+  - The controls can be applied to local connections, but enabling Riak security is insufficient to protect Riak from localhost attacks.
+
+There are three parts to Riak's security mechanism:
+
+- [TLS enablement](#tls-enablement);
+- [Enabling Security and restricting the Source of requests](#enabling-security-and-restricting-source);
+- [Granting permissions for specific actions](#granting-permissions-for-specific-actions).
+
+### TLS Enablement
+
+In Riak 3.4, support is provided for TLS 1.2 only.
+
+The process for enabling TLS differs between the HTTP and PB interfaces.  For HTTP, there are two steps to enabling TLS on the API:
+
+- Configure a listener on HTTPS within `riak.conf` - `listener.https.internal = <ip>:<port>`.
+- Configure file paths within `riak.conf` to valid [`PEM` files](https://en.wikipedia.org/wiki/Privacy-Enhanced_Mail) for three components:
+  - `ssl.certfile = <file_path>`;
+    - the pem file for the server certificate to be used by the Riak node in TLS negotiation.
+  - `ssl.keyfile = <file_path>`;
+    - the private key for the server certificate, which may be the same file as the `ssl.certfile`.
+  - `ssl.cacertfile = <file_path>`;
+    - the CA certificate that signed the server certificate.
+
+The configuration will start a HTTPS listener, and any HTTP client will be able to send any supported HTTP request via TLS using that listener.
+
+For the PB interface, it is not possible to enable TLS in isolation without [adding further security measures](#enabling-security-and-restricting-source).  The configuration of file paths to certificate and key files is required as a prerequisite for applying those measures.  No independent listener is used for PB when security is enabled, the standard listener will expect TLS negotiation if and only if security is enabled.
+
+> Riak does not support any automated certificate management, or notification on pending certificate expiry.
+
+### Enabling Security and Restricting Source
+
+To provide further security, the Riak security mechanism should be enabled. This is not possible through configuration; it must be enabled via the command line:
+
+```console
+riak admin security enable
+```
+
+This is a cluster-wide setting, and will change the behaviour across the cluster with almost immediate effect.  Once security is enabled, any request to Riak sent without TLS enablement and a valid username will be blocked.
+
+> Security enablement is not per API, both the HTTP and PB transports are impacted by enabling security, cluster-wide.
+
+If enablement causes unexpected problems, it may be disabled again:
+
+```console
+riak admin security disable
+```
+
+Prior to Riak 3.4, some HTTP API requests could still be sent to the plain text listener after the enablement of security, and also sent without passing a valid username to the HTTPS listener.  The rest endpoints that remained insecure were: stats, AAE folds and the queue API.  This allowed operational queries to continue unimpaired by the enablement of security.
+
+To preserve the old behaviour, and allow insecure use via HTTP of operational calls when security is enabled, the configuration option in `riak.conf` of `permit_insecure_http_ops = enabled` can be used.
+
+> Although the CLI uses the terms `user` and `password`; these would normally translate to an `application_instance` and `shared_secret` in an actual implementation.  There is no expectation that Riak security should manage the real-world usernames and passwords of operators, developers or application end-users.
+
+Once security is enabled, all requests will need to have a valid `user` and a valid `source`.  There are three types of `source`:
+
+- `trust`;
+  - Applies no conditions beyond a source IP address filter;
+- `password`;
+  - Requires the user provide a valid password, as well as matching on a source IP address filter,
+  - Passwords should be assigned via the `riak admin security` CLI, as use of PAM-based authentication is deprecated.
+- `certificate`;
+  - Supported for **the PB API only**,
+  - Requires that the username match the certificate name,
+  - By inference requires the session to have included a valid client certificate in the TLS negotiation,
+  - The client certificate must be signed by the same CA as the server certificate, the `ssl.cacertfile`.
+
+A very basic setup would be:
+
+```console
+riak admin security enable
+riak admin security add-user proxy_waf
+riak-admin security add-source all 192.168.6.7/32 trust
+```
+
+This would permit access to the APIs only from the IP address `192.168.6.7` (this may be the address of a web application firewall, for example), and trust all access from that source as long as the username of `proxy_waf` is provided within the Authorization header.
+
+> In this simple case, this is functionally equivalent to applying an IP filter on the node through a standard filter utility, but it is not the security equal of that measure.  An IP filter would prevent connections being made from an unauthorised host, whereas the Riak security control allows connections and requests to be sent, but blocks requests during the processing of those requests; which presents a broader attack surface.
+
+On the PB API, a stronger level of security could be applied with:
+
+```console
+riak admin security enable
+riak admin security add-user app.acme.org
+riak-admin security add-source all 192.168.8.0/24 certificate
+```
+
+This would permit access from the whole of the network `192.168.8.0/24` (this may be a network hosting application instances allowed to send Riak requests) for any application instance with a valid certificate as long as the certificate name matches `app.acme.org`.
+
+> In this case, this is functionally equivalent to requiring TLS mutual authentication on the PB API, but it is not the security equal of that measure.  A connection would still be accepted from any IP address, and an unauthenticated TLS negotiation allowed; at this stage the PB API will only accept an authentication request, and this will now only work if the IP address is valid and the certificate matches.
+
+There are a number of options around the configuration of security sources in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
+
+> The use of PAM-based authentication is deprecated and may be removed in a future release.
+
+When enabling the use of certificates, the CRL within the configured CA certificate will be checked for every connection attempt.  If there are issues with either the performance of the CRL check, or the reachability of the CRL endpoint; the crl check can be disabled via a hidden `riak.conf` setting - `check_crl = disabled`.
+
+### Granting permissions for specific actions
+
+There are specific actions within the API, to which specific permissions can be granted - restrictions both on the action alone, and constraints on performing the action by bucket type.
+
+The actions supported by permission grants are:
+
+- [`riak_kv.get`](/docs/ObjectAPI.md#http-api-definition---fetch)
+- [`riak_kv.put`](/docs/ObjectAPI.md#http-api-definition---store)
+- [`riak_kv.delete`](/docs/ObjectAPI.md#http-api-definition---delete)
+- [`riak_kv.list_keys`](/docs/OtherAPI.md#the-list-api)
+- [`riak_kv.list_buckets`](/docs/OtherAPI.md#the-list-api)
+- [`riak_kv.mapreduce`](/docs/OtherAPI.md#the-mapreduce-api)
+- `riak_kv.index`;
+  - used to control both the [legacy query api](/docs/OtherAPI.md#legacy-query-api) and the [Query API](/docs/QueryAPI.md).
+
+For all other API endpoints, only `source` protection is applied.
+
+> With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
+
+There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
@@ -291,14 +478,14 @@ The bitcask backend operates at PUT time as an append-only database.  As bitcask
 
 If objects change; they are updated, deleted or they expire due to TTL - then bitcask must perform infrequent `merge` operations to update files so that replaced objects no longer consume space on disk.  Bitcask does not orchestrate merge operations so that they do not coincide, and the merge operations may have a significant impact on cluster performance when they are initiated.
 
-If storing mutable objects in Bitcask, then it is important to configure merge windows, windows in which merges are permitted to take place such that either:
+If storing mutable objects in bitcask, then it is important to configure merge windows, windows in which merges are permitted to take place such that either:
 
 - merges take place at different times on different nodes (or locations) so that only a single replica for each partition is impacted by a concurrent merge;
 - merges take place outside of peak hours of database usage.
 
 When testing the potential throughput of a bitcask-backed Riak database it is important to test with appropriate levels of mutation, and a realistic configuration of the bitcask merge window.
 
-For information on configuring bitcask merge see the `bitbask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema). 
+For information on configuring bitcask merge see the `bitbask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema).
 
 ### leveled compaction high/low hour
 
@@ -430,6 +617,49 @@ The tested mechanism for backing up a bitcask store, requires the node to be sto
 #### Backup - ring folder, and cluster metadata
 
 As well as the storage backend data folder, a Riak node also stores data in a ring folder, and in a cluster metadata folder - with both found in the `platform_data_dir` with a standard configuration.  Backing up these folders is critical to the recovery should all nodes in the cluster be lost.  They are required for the cluster to understand the distribution of data.  The restored data alone, without this metadata, will be inaccessible.
+
+## Operation Checklist
+
+In the guide to building and scaling a cluster, the section on [choosing infrastructure](/docs/BuildAndScaleClusterGuide.md#choosing-infrastructure) provides a checklist of things to consider at the design stage, and it is worth considering the issues highlighted in that guide when troubleshooting operational issues:
+
+- The need to avoid the accidental concurrent scheduling of expensive operational processes;
+  - Disk trim jobs,
+  - Software RAID integrity checks,
+  - Security software sweeps.
+- Other than operational tools, Riak should be the only software running on a node;
+  - By default in Riak, Erlang schedulers are not pinned to CPU cores, but software consuming an entire core can still cause variation in performance.
+- Subtle network issues may occur in distributed systems below network bandwidth limits;
+  - TCP TIME_WAIT delays leading to port exhaustion and 1s, 3s or 5s SYN connection delays,
+  - TCP slow-start triggered by packet loss related to Incast and buffer overflows.
+- HTTP limits on request and response header sizes, and character usage may exist throughout the software stack;
+  - In application HTTP clients and also in proxies.
+- Avoid operating-system optimisations that may cause periodic spikes in activity related to garbage collection or realignment;
+  - `transparent_huge_pages` should be disabled to avoid unpredictable resource consumption.
+
+Monitoring of activity related to these issues is important.  Further, it is vital to monitor the key infrastructure limits relevant to Riak environments.
+
+- All critical space limits must be proactively monitored, to react when within 20% of thresholds:
+  - Disk space.
+  - Memory used by the Riak process,
+    - Low thresholds for memory should be used because of the value in over-provisioning memory, and the possibility for large requests to trigger volatile changes in memory demand.
+  - Open file descriptors.
+- Utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
+  - Interface bandwidth.
+  - CPU utilisation.
+  - Disk I/O operations (especially when I/O is limited by cloud providers).
+  - Disk `await` times.
+
+> The thresholds for monitoring may vary depending on operational speed with which new nodes can be procured, initialised and deployed to.
+
+Riak should be deployed into consistent environments using automation where possible:
+
+- When building Riak, the local SSL library will be used to provide support for TLS security;
+  - Consistency of environments between packaging and deployment is important.
+- The `riak.conf` file should be under configuration control;
+  - the version in configuration management should be updated afresh when Riak is upgraded, to ensure the deployed version reflects new defaults.
+- Bucket properties need to be consistent across clusters, and so may be managed through automated configuration.
+
+Automation of Riak operations is recommended where possible.  However, care must be taken to ensure operational scripts wait for node transfers to complete when performing changes - and this must account for the fact that handoffs may not trigger immediately.
 
 ## Advanced - troubleshoot via the Erlang VM
 

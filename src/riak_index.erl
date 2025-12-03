@@ -110,7 +110,10 @@ parse_object_hook(RObj) ->
             case parse_object(RObj) of
                 {ok, ParsedFields} ->
                     MD1 = riak_object:get_metadata(RObj),
-                    MD2 = dict:store(?MD_INDEX, ParsedFields, MD1),
+                    MD2 =
+                        riak_object:metadata_store(
+                            ?MD_INDEX, ParsedFields, MD1
+                        ),
                     riak_object:update_metadata(RObj, MD2);
                 {error, Reasons} ->
                     {fail, Reasons}
@@ -137,7 +140,7 @@ parse_object(RObj) ->
     %% be called on a write with siblings, so we need to examine *all*
     %% metadatas.
     F = fun(X, Acc) ->
-                case dict:find(?MD_INDEX, X) of
+                case riak_object:metadata_find(?MD_INDEX, X) of
                     {ok, IFs} ->
                         IFs ++ Acc;
                     error ->

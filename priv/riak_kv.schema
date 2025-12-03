@@ -683,6 +683,18 @@
  end
 }.
 
+%% @doc Controls which version of metadata is used.
+%% Legacy version is v0.
+%% Version v1 has improved performance, but all nodes in cluster will need
+%% to support version 1 before this can be enabled.  v1 is introduced with
+%% Riak 3.4
+%% From Riak 4.0 option will be removed, and all metadata will use v1.
+{mapping, "metadata.format", "riak_kv.metadata_version", [
+  {default, v0},
+  {datatype, [{atom, v0}, {atom, v1}]},
+  {commented, v0}
+]}.
+
 %% @doc Controls the size of the metadata cache for each vnode. Set to
 %% 'off' to disable the cache.  This shouldn't be necessary on-disk
 %% based backends, but can help performance in some cases (i.e. memory
@@ -1690,4 +1702,70 @@
 {mapping, "dollarkey_readtombs", "riak_kv.dollarkey_readtombs", [
     {datatype, {flag, enabled, disabled}},
     {default, enabled}
+]}.
+
+%% @doc delete_mode
+%% Set the delete_mode for the node (should be set to the same value across all
+%% reconciling clusters).
+%%
+%% There are three options:
+%% - keep (recommended)
+%% - immediate
+%% - Milliseconds (default = 3000)
+%%
+%% If delete_mode is set to keep, every delete will leave a permanent
+%% tombstone, that will need to be reaped at a later date (i.e. once tombstones
+%% have been securely replicated around connected clusters).  This will
+%% minimise the chance that values are resurrected through anti-entropy
+%% processes.
+%%
+%% If delete_mode is immediate, then tombstones are not used - every delete is
+%% a direct delete in the backend (though that may involve a backend
+%% tombstone).
+%%
+%% If a timeout is set in Milliseconds, every delete at a vnode will first
+%% write a tombstone, but a timer will be prompted to reap that tombstone after
+%% that interval.  Setting large values is not recommended, as this may lead to
+%% a significant number of concurrent timers, especially when running large
+%% erase jobs.  Any positive value may be set via advanced.config, but here
+%% timout is limited to 5 minutes.
+{mapping, "delete_mode", "riak_kv.delete_mode", [
+  {default, 3000},
+  {datatype, [{atom, keep}, {atom, immediate}, integer]},
+  {validators, ["delete_mode_validator"]}
+]}.
+
+{
+  validator,
+ "delete_mode_validator",
+ "must be immediate or keep, or an integer between "
+ "0 and 300000 (5 minutes) - use advanced.config for other values",
+  fun(Value) ->
+    (Value == keep) orelse (Value == immediate) orelse
+      (is_integer(Value) andalso Value > 0 andalso Value < 300000)
+  end
+}.
+
+%% @doc Permit some operations over `http` when security is enabled
+%% Prior to the Riak 3.4 release, some HTTP operations were not subject to
+%% authentication scope checks when security was enabled.  These operations
+%% could continue to be used over the HTTP transport.
+%%
+%% The allowed HTTP operations were:
+%% - Riak stats requests;
+%% - AAE folds;
+%% - Fetch requests (from replication queues).
+%%
+%% Following the Riak 3.4 release these operations are not by default
+%% permitted.  Once security is enabled, then requests will need to be sent via
+%% the HTTPS transport, with a valid username.
+%%
+%% This configuration switch allows for the previous behaviour to be maintained
+%% to provide for backwards compatability and ease transition to Riak 3.4.
+%%
+%% This configuration option may be removed in a future Riak release.
+{mapping, "permit_insecure_http_ops", "riak_kv.permit_insecure_http_ops", [
+    {datatype, {flag, enabled, disabled}},
+    {default, disabled},
+    {commented, disabled}
 ]}.

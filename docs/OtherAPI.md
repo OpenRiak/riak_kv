@@ -1,4 +1,4 @@
-# Riak KV - The Other APIs
+# Riak KV - Other APIs
 
 The majority of work within Riak KV can be done using the [Object API](/ObjectAPI.md), and the [Query API](/QueryAPI.md).  There are though additional APIs, with specific purposes:
 
@@ -7,12 +7,21 @@ The majority of work within Riak KV can be done using the [Object API](/ObjectAP
 - [The Data Type API](#the-data-type-api)
 - [The Map/Reduce API](#the-mapreduce-api)
 - [The List API](#the-list-api)
+- [The Strong Consistency API](#strong-consistency-api)
+- [The Write Once Path API](#write-once-path-api)
 
 ## AAE Fold API
 
 The AAE Fold API requires the configuration of `tictacaae_active = active`, otherwise folds will fail.  When using a single leveled backend, this should use the native keystore within leveled.
 
-When using any other backend or multi-backend this will require an additional parallel key-store, which may have an impact on the achievable PUT throughput, and the memory used by Riak.  The use of a parallel backend also requires periodic key-store rebuilds, to ensure that the key-store correctly represents the content in the backend store.  The parallel store must be configured with `tictacaae_storeheads = enabled` to use the full functionality of AAE Folds.
+When using any other backend or multi-backend this will require an additional parallel keystore, which may have an impact on the achievable PUT throughput, and the memory used by Riak.  The use of a parallel backend also requires periodic keystore rebuilds, to ensure that the keystore correctly represents the content in the backend store.
+
+> When using parallel mode, the parallel store must be configured with `tictacaae_storeheads = enabled` to use the full functionality of AAE Folds.
+
+The AAE Fold API:
+
+- Supports [a number of different fold types](#supported-fold-types);
+- [Are throttled to minimise the impact on other cluster operations, and have query options that may improve efficiency](#performance-and-efficiency).
 
 The AAE Fold API has four potential interfaces:
 
@@ -20,37 +29,6 @@ The AAE Fold API has four potential interfaces:
 - [AAE Folds via remote_console](#aae-folds-via-the-remote-console); 
 - [AAE Folds via HTTP](#aae-folds-via-http);
 - [AAE Folds via protocol buffers](#aae-folds-via-pb).
-
-### AAE Fold efficiency
-
-Some considerations on the efficiency of AAE Folds:
-
-- Using a restricted key_range is the most reliable method of improving the speed and efficiency of aae folds;
-- A modified date range will reduce the volume of data to be processed and returned, but significant gains are only made when setting a "high" low modified date.  Old content below the low modified data can be skipped over without reading, but new content since the high modified date must still be read and deserialised.
-- The segment_filter can skip the reading and deserialising of slots (each slot contains 128 keys, split into 5 blocks) by checking in the slot header, with approximately 99.6% of blocks skipped when checking for a single segment.
-- The segment_filter can be used for sampling, or approximations.  With the standard tree size, there are a `1024 * 1024` segments, so choosing a random slice of 64 segments in that integer space will give results from `1 / (8 * 1024)`th of the key-space.
-  - Use of a contiguous slice is more efficient than selecting random slices, as when checking Segments only the first 15 of the 20 bits (assuming standard tree size) in a segment ID are used.
-  - When folds are used with Riak anti-entropy mechanisms, the `max_results` settings are used to control the size of the list of segment IDs passed into a fold.
-
-### Node worker pools
-
-AAE folds use node worker pools.  These pools are defined to constrain concurrency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler for that core. The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
-
-- none; do not use node worker pools.
-  - aae_folds and other operational work will be fairly scheduled by the erlang scheduler alongside other activity.
-- single; use a single pool of work for all operational work.
-  - This means the whole bandwidth for operational work cna be consumed by any operational work.
-  - No segmentation, so one set of jobs may prevent other work from finding available capacity.
-- dscp; divides pools up into categories based on the network pooling strategy of differentiated services.
-  - There is no Expedited Forwarding queue, this is assumed to be the `vnode_worker_pool`.
-  - There are four Assured Forwarding queues: AF1 (cached tree rebuilds, hot backups); AF2 (legacy key-listing); AF3 (AAE folds); AF4 (AAE folds).
-  - there is a single Best Endeavours queue, this is used for the rebuild of parallel aae store rebuilds.
-
-When queueing items via a fold (e.g. `repl_keys_range`, `repair_keys_range`, `find_tombs` and `reap_tombs`), if a smaller node worker pool is used, then items will be added to the queue in batches by vnode.  When items are dequeued, this may result in phases of concentrated activity on particular preflists.
-
-#### Dynamic changes to node worker pools
-
-> TODO: Depends on PR
 
 ### Supported fold types
 
@@ -76,14 +54,14 @@ For a given set of segment IDs return all the keys and clocks within those segme
 
 - If a full-sync manager process detects a false delta, it will temporarily set enable the `aae_fetchclocks_repair` option, and this will cause this query to repair the cached tree for the given segment IDs, as well as collect the results to return.
   - It is possible to force this repair option via configuration or environment variable change.
-- Uses the AF3 queue when running node worker pools in DSCP mode.
+- Uses the AF3 queue when running node worker pools in `dscp` mode.
   - These queries will bypass the pool, running immediately, when repair is required.
 
 #### merge_tree_range
 
 Outputs a full merkle tree representing the overall cluster state for a given bucket.
 
-- Relatively slow compared to `_nval` equivalent queries, as no cached trees can be used, requires a fold over the actual keys to calculate the tree.
+- Relatively slow compared to `_nval` equivalent queries, as no cached trees can be used; requiring a fold over the actual keys to calculate the tree.
 - Setting filters is recommended to speed up the query (unless buckets are small).
 
 #### fetch_clocks_range
@@ -91,7 +69,7 @@ Outputs a full merkle tree representing the overall cluster state for a given bu
 Equivalent to fetch_clocks_nval but with Bucket and KeyRange constraints.
 
 - Unlike fetch_clocks_nval, this will never result in a repair of cached trees.
-- Uses the AF3 queue when running node worker pools in DSCP mode.
+- Uses the AF3 queue when running node worker pools in `dscp` mode.
 
 #### repl_keys_range
 
@@ -99,7 +77,7 @@ Used to replicate a range of keys to another cluster (or indeed any consumer of 
 
 - When adding to the replication queue, will be added with a lower priority when compared to real-time replication.
 - Each replication queue has a small in-memory part but a large on-disk part.  The size of the on-disk component is controlled in `riak.conf` via `replrtq_overflow_limit`.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### repair_keys_range
 
@@ -107,21 +85,21 @@ Used to prompt read repair in a bucket, to fix an entropy problem within the clu
 
 - Uses the `riak_kv_reader` queue, and consumption from that queue is constrained by having a single process per node handling queued repairs.
 - The reader queue has a small in-memory part but a large on-disk part.  The `reader_overflow_limit` is not configurable via `riak.conf`.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### find_keys
 
 Outputs a list of keys in the bucket where the object has either a sibling_count or a size (in bytes) that exceeds a certain threshold, potentially limited by key range or modified date range.
 
-- Commonly used as an operational query (e.g. "find all objects modified in past 24 hours with more than one sibling").
+- Commonly used as an operational query (e.g. "find all objects modified in the past 24 hours with more than one sibling").
 - May also be used to list keys, where using a `$key` query is not supported.  It is much slower (but potentially safer) than `$key` query due to the constraints of the [node_worker_pools](#node-worker-pools).
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### find_tombs
 
 Outputs a list of tombstone keys (deleted keys where the tombstone has not been reaped) in the bucket, potentially limited by key range or modified date range.
 
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### erase_keys
 
@@ -129,7 +107,7 @@ Prompts for a list of matching keys in the bucket to be erased via the `riak_kv_
 
 - Uses the `riak_kv_eraser` queue, and consumption from that queue is constrained by having a single process per node handling queued repairs, and by the configuration of the `tombstone_pause` within riak.conf.
 - The queue has a small in-memory part but a large on-disk part.  The size of the on-disk component is controlled in `riak.conf` via `eraser_overflow_limit`.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### reap_tombs
 
@@ -137,7 +115,7 @@ Prompts for a list of matching tombstones in the bucket to be erased via the `ri
 
 - Uses the `riak_kv_reaper` queue, and consumption from that queue is constrained by having a single process per node handling queued repairs, and by the configuration of the `tombstone_pause` within riak.conf.
 - The queue has a small in-memory part but a large on-disk part.  The size of the on-disk component is controlled in `riak.conf` via `reaper_overflow_limit`.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### object_stats
 
@@ -146,7 +124,7 @@ Returns a summary of stats for objects within the bucket, potentially limited by
 - Returns an output like `[{total_count, 1000}, {total_size, 1000000},  {sizes, [{1, 800}, {2, 180}, {3, 20}]},  {siblings, [{1, 1000}]}]`.
   - The sizes are the count of objects by order of magnitude in bytes (e.g. 1 is 10 -> 100 bytes, 2 is 100 -> 1000 bytes etc).
   - The siblings are the count of objects with that count of siblings.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
 
 #### list_buckets
 
@@ -155,7 +133,63 @@ Returns a list of buckets, assuming the given n_val.
 - The list may be incomplete if the passed n_val is greater than the configured n_val of some buckets.
 - will only return buckets that contain objects.
 - Uses a skipping cursor in both `native` and the `leveled_ko` type of parallel store, so that the fold is much more efficient than folding over all keys.
-- Uses the AF4 queue when running node worker pools in DSCP mode.
+- Uses the AF4 queue when running node worker pools in `dscp` mode.
+
+### Performance and Efficiency
+
+The AAE Fold implementation has similarities to [the Query API](/docs/QueryAPI.md#performance-and-efficiency).  The sequence of operations for the fold is:
+
+- On the local node that received the request, a query server is started to orchestrate the fold across the cluster;
+  - In Riak 3.4 the query server has a different underlying implementation to the query server used in the Query API; but this may change to use a common implementation in a future release.
+- Folds are run over a covering set of vnodes, i.e. either `RingSize div n_val` or `(RingSize div n_val) + 1`.
+- Folds will first take a snapshot of each vnode, before running each vnode query against the snapshot.
+  - When running in parallel mode, this will be a snapshot of the parallel keystore, in native mode this will be a snapshot of the leveled ledger (the native keystore).
+  - The snapshot requests will need to wait in the vnode queue, but operations on the snapshot are not constrained by the queue.
+  - The snapshots have a timeout, and a fold that runs after the timeout is likely to fail;
+    - On native stores the timeout for AAE folds is configured via `leveled.snapshot_timeout_long`.  On parallel stores it defaults to 2 days.
+- The folds will then scan across the keys and metadata using the filters provided, accumulate results, and return the results to the controlling node for the query once complete.
+  - Unlike the Query API, there is no sending of partial results, and waiting for acknowledgement.
+  - AAE folds will continue to run, even when the query server for the request has timed out.
+  - If a queue-type accumulator is used, the results are sent to the queue in batches during the fold, and the final result returned to the query server is just a count.
+- Once all vnode folds have completed and sent results, the query server wil combine the results and return the final result-set back to the requestor.
+
+#### Node worker pools
+
+Riak API requests are generally not subject to constraints on the resources they use.  If there exists contention over available CPU cores within a busy cluster, the contention is managed by the Erlang scheduler, and the database backends are designed to degrade gradually - to slow smoothly as available resources are restricted.
+
+In contrast, the AAE Fold API has specific constraints on throughput, governed by the node worker pools.  These pools are defined to constrain concurrency for operational queries, to provide an upper limit on how many CPU cores may be used by different classes of operational work.  There is no guarantee that worker pools will be able to use their limit - use of each core is still managed fairly by the erlang scheduler for that core.
+
+The node worker pool can be configured via the `worker_pool_strategy` in riak.conf, and can be set to three different modes:
+
+- `none`; do not use node worker pools.
+  - aae_folds and other operational work will be fairly scheduled by the erlang scheduler alongside other activity.
+  - the folds will share the `vnode_worker_pool` used by folds for the Query API.
+- `single`; use a single pool of work for all operational work.
+  - This means the whole bandwidth for operational work can be consumed by any operational work.
+  - No segmentation, so one set of jobs may prevent other work from finding available capacity.
+- `dscp`; divides pools up into categories based on the network pooling strategy of differentiated services.
+  - There is no Expedited Forwarding queue, this is assumed to be the `vnode_worker_pool`.
+  - There are four Assured Forwarding queues: AF1 (cached tree rebuilds, hot backups); AF2 (legacy key-listing); AF3 (AAE folds); AF4 (AAE folds).
+  - There is a single Best Endeavours queue, this is used only for parallel aae store rebuilds.
+
+When queueing items via a fold (e.g. `repl_keys_range`, `repair_keys_range`, `find_tombs` and `reap_tombs`), if a smaller node worker pool is used, then items will be added to the queue in batches by vnode.  When items are dequeued, this may result in phases of concentrated activity on particular preflists.
+
+#### AAE Fold efficiency
+
+Some considerations on the efficiency of AAE Folds:
+
+- Using a restricted key_range is the most reliable method of improving the speed and efficiency of AAE Folds;
+- A modified date range will reduce the volume of data to be processed and returned, but significant gains are only made when setting a "high" low modified date.  Old content below the low modified data can be skipped over without reading, but new content since the high modified date must still be read and deserialised.
+- The segment_filter can skip the reading and deserialising of slots (each slot contains 128 keys, split into 5 blocks) by checking in the slot header, with approximately 99.6% of blocks skipped when checking for a single segment.
+- The segment_filter can be used for sampling, or approximations.  With the standard tree size, there are a `1024 * 1024` segments, so choosing a random slice of 64 segments in that integer space will give results from `1 / (8 * 1024)`th of the key-space.
+  - Use of a contiguous slice is more efficient than selecting random slices, as when checking Segments only the first 15 of the 20 bits (assuming standard tree size) in a segment ID are used.
+  - When folds are used with Riak anti-entropy mechanisms, the `max_results` settings are used to control the size of the list of segment IDs passed into a fold.
+
+The AAE folds will scan over blocks of keys and metadata.  The performance of AAE fold requests are impacted by the volume of metadata per key, and the throughput per CPU core is likely to be lower than with the [Query API](/docs/QueryAPI.md#performance-and-efficiency) - where only blocks of index entities need to be scanned.  Unlike the Query API, none of the accumulators are required to deduplicate, so there is no related impact on performance.
+
+Where a fold is returning a list of keys, or keys and clocks, it is necessary for the node coordinating the fold to hold the full result-set in memory; and on conclusion of the fold the results will need to be copied at least once to produce an API response.  The performance of the fold will also be impacted by an accumulator which grows with the number of entries covered.
+
+> It is important to consider the memory impact of running an AAE fold on the node that handles the request, especially when using a `find_keys` fold.
 
 ### AAE Folds via the Command Line
 
@@ -242,21 +276,55 @@ The [PB Object API is described in the riak_pb repository](https://github.com/Op
 
 ## The Fetch API
 
-The fetch API is currently source-only, and has no documented support for external use.
+The fetch API supports three requests:
+
+| URL | Request parameters | Method | Description |
+|:--------------|:--------------|:--------------|:--------------|
+| `/membership_request` | n/a | GET | Return a list of IP listeners and ports for members of the cluster |
+| `/queuename/<QueueName>` | `object_format = internal\|internal_aaehash` | GET | Consume the next object on queue referred to by Queue Name.  Object response may include segment ID and AAE hash of Key/VC if `internal_aaehash` chosen |
+| `/queuename/<QueueName>` | n/a | POST | Push a list of Keys and clocks onto the queue so that those objects may be fetched by a consumer of the queue |
+
+The fetch API is for internal use only in Riak 3.4.  The definition of the API may change in future releases.
 
 ## The Data Type API
 
-> TODO: Needs to point to legacy docs, and refer to roadmap item for long-term replacement
+Riak supports Conflict-Free Replicated Data-Types (CRDTs); specific object formats that can be merged within the database on conflict between versions, so that the application will not see siblings.
+
+There are four basic data-types supported:
+
+- counters;
+- grow-only sets;
+- sets;
+- maps,
+  - combinations of the above three types, with support for two additional types - registers and flags.
+
+Support for these data types is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/learn/concepts/crdts/index.html) for further information.
+
+Before using data-types, there are important caveats within the current implementation to consider:
+
+- All CRDTs implement "Action At a Distance", that is to say the application does not provide an identity of the actor making the request.  Due to this, other than for grow-only sets, CRDT updates are not idempotent.
+  - The correct handling of failure of an individual request is not presently defined.
+- Riak is designed for the storing of many keys, where the load of object requests is spread roughly evenly across the key-space; this is also true for CRDTs.  Do not use individual counters, for example a single hit counter for an application, that may create a __hot__ key that is accessed much more frequently than other keys.
+- Both sets and maps have specific constraints in Riak 3.4 where the growth of components within an object is not handled efficiently.
+- There is no in-built support for querying data within data-types, the Data Type API is incompatible with the [Query API](/docs/QueryAPI.md).
+
+> The approach to supporting data types is expected to be evolved significantly in future Riak releases; which may result in significant changes to both sets and maps, and change the use of those data types in future releases.
 
 ## The Map/Reduce API
 
-> TODO: Needs to point to legacy docs, and refer to roadmap item for long-term replacement
+The use of Map/Reduce API is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.
+
+For using Map/Reduce with Erlang functions, the API is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/developing/app-guide/advanced-mapreduce/index.html) for further information.  The Map/Reduce API no longer supports JavaScript functions.
+
+> For querying data the [Query API](/docs/QueryAPI.md) should be used in preference to the Map/Reduce API.  The Query API is under active development to expand the number of Map/Reduce use cases it covers, in particular the ability to prompt the fetching of multiple objects.
 
 ## The List API
 
-> TODO: formally deprecated, used Query API or AAE Fold
->
-> Recommendation to remove permission by default
+The list API supports the listing of keys and buckets.  The List API is deprecated in Riak 3.4, the [AAE Fold API](#aae-fold-api) should be used instead, with the fold functions [`list_buckets`](#list_buckets), [`find_keys`](#find_keys) and [`find_tombs`](#find_tombs).
+
+The APIs are unchanged since Riak 2.2.3, so refer to the legacy documentation for information on [list keys](https://docs.riak.com/riak/kv/2.2.3/developing/api/http/list-keys/index.html) o [list buckets](https://docs.riak.com/riak/kv/2.2.3/developing/api/http/list-buckets/index.html).
+
+> The use of list keys or list buckets may have a critical impact on the performance of production clusters.  The AAE Fold alternatives are safe to use on production systems as long as two copies of the result-set can be held within available memory on a single node.
 
 ## Legacy Query API
 
@@ -266,4 +334,18 @@ The binary secondary indexes supported by the legacy index queries, are compatib
 
 The functionality of the legacy query API is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/latest/developing/usage/secondary-indexes/index.html) for further information.
 
-Note that the legacy API had an undocumented feature that the query attribute `term_regex` could be used to pass regular expressions to filter terms from query results within the range.  This feature is replicated in the new Query API using the `regular_expression` option.
+> The legacy API had an undocumented feature that the query attribute `term_regex` could be used to pass regular expressions to filter terms from query results within the range.  This feature is replicated in the new Query API using the `regular_expression` option.
+
+## Strong Consistency API
+
+The use of the strong consistency API is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.
+
+From Riak 4.0, Riak will only have support for eventual consistency, but protection for conflicts can be improved through [conditional PUTs with token-based consensus](/docs/ObjectAPI.md#conditional-requests).
+
+The functionality of Strong Consistency is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/developing/app-guide/strong-consistency/index.html) for further information.
+
+## Write Once Path API
+
+The use of the write once path is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.
+
+The functionality of the Write Once Path is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/developing/app-guide/write-once/index.html) for further information.

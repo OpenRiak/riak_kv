@@ -15,7 +15,7 @@ For further detail on the Query API:
 - [An example people search](#example-1---a-simple-people-search-index)
 - [An alternative example for people search](#example-2---an-alternative-people-search)
 - [An example using the API for reporting](#example-3---reporting-index)
-- [Setting performance expectations for queries](#performance-expectation)
+- [Setting performance expectations for queries](#performance-and-efficiency)
 - [A more formal description of the Query API](#query---definition)
 - [An overview of the expected performance of queries in Riak](#performance-and-efficiency)
 - [Some notes on the underlying implementation](#notes-on-implementation)

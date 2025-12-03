@@ -1,6 +1,6 @@
 # Riak KV - Object API
 
-Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  When choosing between APIs, consider that:
+Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  Considerations to be made when choosing a transport protocol include:
 
 - The PB API is more performant, in particular when using significant numbers of index entries or user metadata due to the overheads of parsing HTTP headers, the delta between the APIs is generally between 5% and 15% in terms of request latency;
   - Improving relative HTTP performance is a key goal of Riak development for future releases.
@@ -10,9 +10,9 @@ Objects can be fetched and updated via either a HTTP or Protocol Buffer API.  Wh
   - Always ensure that objects will be supported via HTTP, even when using PB.
 - Using the HTTP API will provide greater flexibility to control access to Riak via standard internet infrastructure (e.g. Web-Application Firewalls, Proxies and Load-Balancers).
 
-> TODO - need a statement (or a pointer to discussions) about roadmap for API
+> New APIs added to Riak will be added to the HTTP API first.  It is expected that in the long term the performance of the HTTP API will be improved, and that the relative ubiquity of HTTP will evolve the choice of API towards HTTP being the default protocol.
 
-The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L45-L125).
+The [PB Object API is described in the riak_pb repository](https://github.com/OpenRiak/riak_pb/blob/e908ddaadc06cb56e248f197dc2dca7d759e53b2/src/riak_kv.proto#L45-L125), but the concepts are the same as for the HTTP API.
 
 The Riak Object HTTP API is described here:
 
@@ -35,13 +35,15 @@ The Riak object Identifier is split into three parts:
 - Bucket;
 - Key.
 
-Internally within Riak all three elements are binary identifiers,  With the Object HTTP API these elements are represented within the URL e.g. `/types/BucketType/buckets/Bucket/keys/Key`.  Although it is possible to use non-URL-safe identifiers using the Protocol Buffer API, it is important not to do so - as any object using a non-URL safe identifier will not be accessible via the HTTP API, as there is no encoding of non-Alphanumeric identifier parts.
+Internally within Riak all three elements are binary identifiers,  With the Object HTTP API these elements are represented within the URL e.g. `/types/BucketType/buckets/Bucket/keys/Key`.
 
-The Bucket Type is used to describe the properties of the object.  Properties are associated with a Bucket Type, and all Objects in the Buckets under that type will inherit those properties. The Bucket is a namespace, and a Bucket Type is allowed to have an arbitrary number of Buckets.  A Bucket cannot be moved between Bucket Types, but the properties of an individual Bucket may be changed to override that of the Bucket Type.  Keys are unique identifiers of an object within a Bucket.
+> Although it is possible to use non-URL-safe identifiers using the Protocol Buffer API, it is important not to do so - as any object using a non-URL safe identifier will not be accessible via the HTTP API, as there is no encoding of non-Alphanumeric identifier parts.
+
+The [Bucket Type](/docs/InstallAndStartGuide.md#configuration-of-riak---bucket-properties) is used to describe the properties of the object.  Properties are associated with a Bucket Type, and all Objects in the Buckets under that type will inherit those properties. The Bucket is a namespace, and a Bucket Type is allowed to have an arbitrary number of Buckets.  A Bucket cannot be moved between Bucket Types, but the properties of an individual Bucket may be changed to override that of the Bucket Type.  Keys are unique identifiers of an object within a Bucket.
 
 A Bucket Type cannot be used via the API until it has been created and activated, to do this see:
 
-```bash
+```console
 riak admin bucket-type --help
 ```
 
@@ -51,9 +53,11 @@ It is preferable to set the properties of a Bucket Type before using it.
 
 Within Riak, object values are generally opaque to Riak.  The schema of the value is managed by the application, not by Riak.  Values are normally binaries, but a content-type can be passed by the user and associated with the value - and any content type can be used, as Riak will not read the value it will store it.
 
-Riak is not optimised for small values, although there is no lower limit to the size of the value.  Typically values stored in Riak are between o(1KB) and o(1MB) in size, but are not constrained by these limits.
+Riak is not optimised for small values, although there is no lower limit to the size of the value.
 
-To Riak object values are generally opaque, but Riak does have support for data-types - specially formatted values where the handling of conflict is defined and managed within the database.  Although continued use of existing types is still supported, the use of such types for new use cases is not currently recommended, as the concept is intended to be evolved in Riak 4.0.
+> Typically values stored in Riak are between o(1KB) and o(1MB) in size, but are not constrained by these limits.
+
+To Riak object values are generally opaque, but Riak does have support for [data-types](/docs/OtherAPI.md#the-data-type-api); specially formatted values where the handling of conflict is deterministic and managed within the database, so the application does not see siblings even though [`allow_mult` is set to `true`](/docs/InstallAndStartGuide.md#property---allow_mult).
 
 ## Object Meta Content - the request and response headers
 
@@ -66,11 +70,9 @@ There are four object components that make use of HTTP headers:
 
 ### Version Vector
 
-The Riak version vector is relevant to the database, but generally opaque to the application.  The application should read the version vector (which will be presented base64 encoded), and present the read version vector when updating an object.  The application does not need to understand the contents of the version vector.
+The Riak [version vector](/docs/RiakTheoryGuide.md#version-vectors) is relevant to the database, but generally opaque to the application.  The application should read the version vector (which will be presented base64 encoded), and present the read version vector when updating an object.  The application does not need to understand the contents of the version vector.
 
-Internally, Riak tracks causality using [dotted version vectors](https://arxiv.org/abs/1011.5808), where the actors in the version vectors are the vnode IDs used to coordinate an update (each update has a single coordinator).  Each content item for the key (where a content item is the combination of value and metadata) has a "dot", a reference to its coordinator and the sequence number for this object on that coordinator.  The object overall has a version vector - a list of coordinators which have updated the object, and the highest sequence number for this object from each coordinator.
-
-This information is used internally within Riak to track which content is most up-to-date - to differentiate between content that is superseded (i.e. where an update had seen the content) or genuinely concurrent (the writes were made in parallel).  Parallel writes will lead to unresolvable conflict, and how this is handled is defined within the bucket properties - but in general the choice is between returning all content items with unresolved conflict (also known as siblings), or choosing a single item based on the recency of the modification date.
+The version vector is referred to in the API as a `vector clock` (or `vclock`).  This vector is used internally within Riak to track which content is most up-to-date - to differentiate between content that is superseded (i.e. where an update had seen the content) or genuinely concurrent (the writes were made in parallel).  Parallel writes will lead to unresolvable conflict, and how this is handled is defined within the [bucket properties](/docs/InstallAndStartGuide.md#property---allow_mult).
 
 ### User Metadata
 
@@ -81,6 +83,8 @@ User Metadata is arbitrary pairs of binary Keys and Values that form part of the
 Riak carries metadata about an object, primarily:
 
 - the last modified date;
+  - internally within Riak this is a timestamp to microsecond accuracy,
+  - when presented via the HTTP API the accuracy is truncated to a second.
 - the deleted status (does the object represent a current value or a record of deletion).
 - the ["dot" for each content item](#version-vector) - this is not returned via the API;
 - the content type
@@ -96,13 +100,13 @@ If an object results in an unresolved conflict, the index entries for the object
 
 ## GET and PUT Options
 
-The GET and PUT API allow for options to be passed in the HTTP AIP via [HTTP query parameters appended to the URI](https://www.rfc-editor.org/rfc/rfc3986#section-3.4).
+The GET and PUT API allow for options to be passed in the HTTP API via [HTTP query parameters appended to the URI](https://www.rfc-editor.org/rfc/rfc3986#section-3.4).
 
-It is recommended that the options supported in the Object API should be set via bucket properties wherever possible (except where the option is a per-request option rather than a property e.g. `vtag`).  It is best practice to define the expectations for managing a request within the properties of the type, and only use options to override those definitions.
+It is recommended that the options supported in the Object API should be set via [bucket properties](/docs/InstallAndStartGuide.md#configuration-of-riak---bucket-properties) wherever possible (except where the option is a per-request option rather than a property e.g. `vtag`).  It is best practice to define the expectations for managing a request within the properties of the type, and only use options to override those definitions.
 
 The most common options used are:
 
-- `vtag`; to be added to a read request from an object in a sibling state, where the value is the vtag of one of the sibling objects.
+- `vtag`; to be added to a read request from an object in a sibling state, where the value is the `vtag` of one of the sibling objects.
 - `notfound_ok`; should be set to `false` if the application is expecting an object.  Only valid for read requests.
 - `node_confirms`; can be set to a number 1..N where N is the `n_val` for that object, and used to indicate how many unique nodes must contribute to the quorum when handling the request.  Can be set on either store or read requests.
 - `sync_on_write`; can be set to `one`, `all` or `backend` and is used to indicate whether it is necessary to flush the write to disk before confirming a request.  Generally all backends should be set not to flush pre-request (for performance), and where required the setting of `one` or `all` may be used where data-loss protection in catastrophic failure scenarios is of elevated importance.  Only valid for store requests.
@@ -115,7 +119,9 @@ There are a number of other options, but changing of these defaults is not recom
 
 ## Conditional Requests
 
-Conditional updates are very useful when looking to prevent siblings.  By default, any concurrent updates will lead to sibling generation, and handling siblings within application code may be expensive (and in some cases may require user intervention).  Conditional updates allow for improved consistency (but not formal consistency), by checking a condition before applying the PUT.
+Conditional updates are very useful when looking to prevent siblings.  By default, any concurrent updates will lead to sibling generation, and handling siblings within application code may be expensive (and in some cases may require user intervention).  This can be controlled by making PUT requests conditional, with configurable degrees of strictness on how the condition will be checked to prevent concurrent changes.
+
+> Conditional updates allow for improved consistency, but not formal consistency.
 
 There are four levels of strictness to the application of conditions:
 
@@ -139,7 +145,12 @@ There are four levels of strictness to the application of conditions:
   - the chance of duplicate grants in this scenario is very small, but non-zero;
   - there will be no failure to grant as long as there are no more than two nodes down or unreachable within the cluster.
 
-The level of strictness is set for the entire cluster, using the `conditional_put_mode` and `token_request_mode` configuration items [within the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
+The level of strictness is set for the entire cluster, using the `conditional_put_mode` and `token_request_mode` configuration items in `riak.conf`:
+
+```console
+riak admin describe conditional_put_mode
+riak admin describe token_request_mode
+```
 
 A failure of a conditional request will result in a `412: Precondition Failed` response.  Note, that data is not secure at this point, and is vulnerable to the failure of the application, if it was not stored already in a Riak cluster prior to making the conditional change (e.g. when using Riak in an Event Source / CQRS model).
 
@@ -148,7 +159,7 @@ Tests have verified that in non-exceptional scenarios, simple failure events and
 There are three scenarios where the conditional check will be weakened:
 
 - The token granting system uses an internal queue method, and requests made whilst the token has been currently granted will be notified to re-request for a grant when it is their turn for the grant.  So sending multiple requests in parallel will generally result in one update succeeding, and then all other parallel requests failing due to the precondition check in rapid succession as they gain ownership of the token when the previous request releases.  There is though a timeout, beyond which a process will not wait, and on timeout a process will revert to an `api_only` check.
-- The token granting system is enforced as an honesty system, it is the role of the application to ensure that all objects that require token protection have conditions added to update requests.  Updates without condition checks will be accepted in parallel to updates with condition checks, and there may be unresolved conflicts as a consequence.
+- The token granting system is enforced as **an honesty system**, it is the role of the application to ensure that all objects that require token protection have conditions added to update requests.  Updates without condition checks will be accepted in parallel to updates with condition checks, and there may be unresolved conflicts as a consequence.
 - When using multi-data centre replication, there is no cross-checking between clusters before granting tokens.  If running multiple clusters in active/active mode, then token consensus offers no protection against parallel writes, unless there is natural isolation within the application (should objects have a natural association with a region that would make inter-cluster concurrent writes unexpected).
 
 Stronger conditional updates can be made via either API through the use of "if_none_match" and the Riak-bespoke "if_not_modified" headers (or options in the case of the PB API).  Use of the HTTP-standard "if_not_modified" header or of the "if_match" header will result only in weak `api_only` checks, and is not fully supported.
@@ -180,21 +191,21 @@ Supported HTTP request headers for PUT:
 - `x-riak-vclock`; should be provided when mutating existing objects, should be the contents of the object read prior to update.
 - `x-riak-if_not_modified`; optional, for conditional requests.
 - `if_none-match: *`; optional, for conditional requests.
-- `authorization`; optional, for tls-protected requests only when riak security is enabled.
+- `authorization`; optional, for tls-protected requests only when [Riak security is enabled](/docs/OperationsAndTroubleshootingGuide.md#enabling-riak-security).
 - `x-riak-meta-<key>: <value>`; optional, multiple keys may be provided, and will be mapped to user metadata.
 - `x-riak-index-<field> : <value1>, <value2>`; optional add multiple index fields, with multiple values in each field where those values are comma (and whitespace) separated.  Index fields should have the suffix `_bin` or `_int`.
 - `content-type: <content_type>`; optional, specify the content-type of the value to be stored, to be provided in response to future GET requests.
 
 ### Example PUT request
 
-```curl
+```console
 curl -v -XPUT
  -d '{"bar":"baz"}'
  -H "Content-Type: application/json"
  -H "x-riak-index-twitter_bin: jsmith123"
  -H "x-riak-index-email_bin: jsmith@riak.com, jsmith_personal@btinternet.com"
  -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
- http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey?returnbody=true
+ http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
 ```
 
 ## HTTP API Definition - Fetch
@@ -205,8 +216,8 @@ When using the HEAD method the request will still result in the object value bei
 
 Supported HTTP request headers for GET:
 
-- `authorization`; optional, for tls-protected requests only when riak security is enabled.
-- `accept: multipart/mixed`; optional, will cause results in a conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each vtag may be fetched using the `vtag=<vtag>` query parameter in the URL.
+- `authorization`; optional, for tls-protected requests only when [Riak security is enabled](/docs/OperationsAndTroubleshootingGuide.md#enabling-riak-security).
+- `accept: multipart/mixed`; optional, will cause results in a conflicted state to return all siblings as one multipart-mime object body.  Without this option a list of sibling vtags will be returned, and each `vtag` may be fetched using the `vtag=<vtag>` query parameter in the URL.
 
 Expected HTTP response headers for GET:
 
@@ -217,8 +228,10 @@ Expected HTTP response headers for GET:
 
 ### Example GET request
 
-```curl
-curl -v http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "Accept: multipart/mixed"
+```console
+curl -v
+  http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
+  -H "Accept: multipart/mixed"
 ```
 
 ## HTTP API Definition - Delete
@@ -236,10 +249,50 @@ Supported HTTP request headers for DELETE:
 
 ### Example DELETE request
 
-```curl
-curl -v -X DELETE http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
+```console
+curl -v -X DELETE
+  http://127.0.0.1:8098/types/BType/buckets/BTest/keys/TestKey
+  -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA=="
 ```
 
 ## Accessing Legacy Objects
 
 As well as typed buckets, Riak offers support for untyped buckets for backwards compatibility.  Using the HTTP API for such buckets is the same as using typed buckets, except that the URI for keys in untyped buckets is `buckets/Bucket/keys/Key` (i.e. as before but without the prefix of `types\TypedBucket`).
+
+## Performance and Efficiency
+
+### Notes on Implementation
+
+When a request is made to PUT an object in Riak, the PUT is sent to an available primary to coordinate the change.  A Primary vnode is considered available when the node on which it resides is reachable and reported as active by intra-cluster health-checks.  The coordination of a change is the updating of the version history of the object (the version vector), storing the object and prompting replication to other clusters where required. The PUT is then sent to the remaining available primaries (or fallbacks should there be a failure), to be stored at those vnodes if the version history indicates this change is more recent that the currently stored object.
+
+Handling a forwarded PUT is marginally less expensive than coordinating a PUT.
+
+When a request is made to GET an object in Riak, the metadata (containing the vector of the version history) for that object is fetched from each vnode in the preflist.  The first vnode to respond is tasked with fetching the value, and the remaining responses are used to determine whether the fetched value represents the most recent version (and if it is it may be returned to the client as the response).  If a replacement (later) version is available, then that is fetched as the value instead.  If analysis of the version vector and the version of the values, cannot determine which value is up-to-date the full history of unreconciled values is returned as "siblings".
+
+> As of Riak 3.4, the bitcask backend does not support the handling of HEAD requests.  Each vnode will respond to the original request with the whole object, and no race is invoked.  Support for HEAD requests is available only in the leveled backend.
+
+Handling the value fetch on vnode is an order of magnitude more expensive than simply handling the request for metadata.
+
+Each vnode has a single queue through which all requests are received.  There is no priority on this queue, a request cannot be processed until all previous requests have been handled.  Latency on a very busy Riak cluster is generally governed by the vnode queue sizes.  The GET and PUT process are designed to ensure that request performance is never governed by the pace of the longest queue.  Activity can proceed with a quorum of answers, and work is dynamically reduced so that vnodes with longer queues do less work until those queues realign with other vnodes.
+
+### Performance Expectations
+
+Within the object API load distribution is first based on consistent hashing (to find the preflist of vnodes), but the race to support the value fetch in `GET` operations, and also the selection of the coordinator of a `PUT` operation is designed to try and rebalance load discrepancies within a preflist of vnodes.
+
+The Object API is designed to be the most efficient of all the Riak APIs; it is assumed that requests to the Object API will occur with at least an order of magnitude of frequency greater than requests to other APIs.
+
+> The primary target of Riak is not to minimise response times in normal conditions, but to provide predictable response times in extreme conditions with resource contention, device failure and device recovery.
+
+In summary, the performance targets for the Object API are:
+
+- With high-speed infrastructure, a 1ms mean response times should be achievable assuming small object sizes and a limited number of index entries per object.
+- Without contention and under healthy conditions, for objects of o(100KB) in size with o(10) index entries per object (via the HTTP API) into a store with > 100M records, as measured from the application;
+  - 3ms per GET (mean).
+  - 7ms per PUT (mean).
+- Under contention, and within failure scenarios, for o(10ms) 99th percentile response times to Object API requests.
+  - It should be possible to maintain controlled response times as the failure is recovered (including repair of lost data), as well as when the failure occurs.
+  - In general the 99th percentile should be less than twice the mean.
+- As object sizes grow, the growth is response times should be logarithmic not linear - and stability of tail latency should not be impacted
+  - As the differential between the cost of a HEAD request and a GET request expands with the size of objects, the stability of tail latency may actually improve with larger objects.
+
+In Riak, an object of o(1KB) in size is considered to be small, and an object of o(1MB) in size is considered to be large.  For very large objects overall performance will be improved by the sharding of objects within the application.
