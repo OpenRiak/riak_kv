@@ -21,16 +21,16 @@ The mappings for current and planned releases are:
 
 Any updates to this mappings will be announced on the [Riak discussion forum](https://github.com/orgs/OpenRiak/discussions).
 
-Riak can be potentially built on most Unix-flavour systems (including OSX for development machines), but is primarily run in production on up-to-date versions of CentOS or Ubuntu.
+Riak can be potentially built on most Unix-flavour systems, including OSX for development machines; but is primarily run in production on up-to-date versions of CentOS or Ubuntu.
 
 ### Install Erlang/OTP
 
 Installation guides for different OTP versions are available via erlang.org:
 
-- https://www.erlang.org/docs/24/installation_guide/install;
-- https://www.erlang.org/docs/26/installation_guide/install.
+- [OTP 24 Installation Guide](https://www.erlang.org/docs/24/installation_guide/install);
+- [OTP 26 Installation Guide](https://www.erlang.org/docs/26/installation_guide/install).
 
-For convenience kerl may be used to simplify the installation of Erlang/OTP - https://github.com/kerl/kerl.
+For convenience [`kerl` may be used to simplify the installation of Erlang/OTP](https://github.com/kerl/kerl).
 
 Some points to note when installing Erlang:
 
@@ -44,13 +44,14 @@ Some points to note when installing Erlang:
 
 ### Download Riak
 
-Riak is [available to clone on github](https://github.com/OpenRiak/riak).
+Riak is [available to clone on GitHub](https://github.com/OpenRiak/riak).
 
 Each major release has an associated branch which represents current development activity.  For Riak 3.2 this is `openriak-3.2`, For Riak 3.4 this is `openriak-3.4`.  Building from these branches may contain unreleased changes.
 
-Each release version is tagged - https://github.com/OpenRiak/riak/releases, and described in the [release notes](https://github.com/OpenRiak/riak/blob/openriak-3.4/RELEASE-NOTES.md).  For older releases, these may be found at https://github.com/OpenRiak/riak-forked/releases, and for the pre-OpenRiak era https://github.com/basho/riak/releases.
+Each [release version is tagged](https://github.com/OpenRiak/riak/releases), and described in the [release notes](https://github.com/OpenRiak/riak/blob/openriak-3.4/RELEASE-NOTES.md).  For older releases, [some are available on OpenRia](https://github.com/OpenRiak/riak-forked/releases), and for the pre-OpenRiak era [releases on the basho github](https://github.com/basho/riak/releases).
 
-Tagged releases contain a `rebar.lock` file which ensures all major dependencies are fetched from the precise commit made at the point of release.
+{: .note }
+> Tagged releases contain a `rebar.lock` file which ensures all major dependencies are fetched from the precise commit made at the point of release.
 
 ### Make Riak
 
