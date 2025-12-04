@@ -7,13 +7,10 @@
 name: Deploy Jekyll site to Pages
 
 on:
-  push:
-    branches:
-      - openriak-3.4
-      - nhse-o34-orkv.i86-jtdpages
   pull_request:
     branches:
       - openriak-3.4
+
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
