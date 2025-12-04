@@ -48,7 +48,7 @@ Riak is [available to clone on GitHub](https://github.com/OpenRiak/riak).
 
 Each major release has an associated branch which represents current development activity.  For Riak 3.2 this is `openriak-3.2`, For Riak 3.4 this is `openriak-3.4`.  Building from these branches may contain unreleased changes.
 
-Each [release version is tagged](https://github.com/OpenRiak/riak/releases), and described in the [release notes](https://github.com/OpenRiak/riak/blob/openriak-3.4/RELEASE-NOTES.md).  For older releases, [some are available on OpenRia](https://github.com/OpenRiak/riak-forked/releases), and for the pre-OpenRiak era [releases on the basho github](https://github.com/basho/riak/releases).
+[Tagged versions for recent releases are available](https://github.com/OpenRiak/riak/releases), and described in the [release notes](https://github.com/OpenRiak/riak/blob/openriak-3.4/RELEASE-NOTES.md).  [Earlier releases are also available](https://github.com/OpenRiak/riak-forked/releases); and for the pre-OpenRiak era, [releases can be found on the basho github site](https://github.com/basho/riak/releases).
 
 {: .note }
 > Tagged releases contain a `rebar.lock` file which ensures all major dependencies are fetched from the precise commit made at the point of release.
