@@ -34,6 +34,8 @@ Overview documentation on is available in this repository.  The documentation is
 - [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md);
 - [Riak Theory Guide](/docs/RiakTheoryGuide.md).
 
+An [online HTML version of this overview is available](https://openriak.github.io/riak_kv/).
+
 ## Discussions
 
 For discussions on Riak development see https://github.com/orgs/OpenRiak/discussions.  For direct contact with the OpenRiak development community please use the `open-riak` channel on the [Slack channel for the Erlang Ecosystem Foundation](https://erlef.org/slack-invite/erlef). 
