@@ -1,3 +1,9 @@
+---
+title: Build and Scale a Cluster
+nav_order: 3
+layout : default
+---
+
 # Riak KV - Building and Scaling a Cluster
 
 This guide is split into two parts:
@@ -9,6 +15,7 @@ This guide is split into two parts:
 
 Choosing the infrastructure for a distributed database requires a different approach to choosing the infrastructure for a traditional, vertically-scaled solution.
 
+{: .highlight }
 > Riak is designed as a scale-out system across __inexpensive__ computers, where Riak smoothly handles the failure of individual nodes.  Riak will run for extended periods with nodes down, so operator action can be deferred - the aim is to be highly available with minimal operator intervention required at inconvenient hours.
 
 The infrastructure selection decision is split into three parts:
@@ -21,6 +28,7 @@ The infrastructure selection decision is split into three parts:
 
 A Riak cluster is built up of multiple individual compute nodes.  Those nodes are expected to be distinct servers, or cloud instances; but Riak does include in-built support for handling nodes that have shared failure modes through location awareness.
 
+{: .highlight }
 > It is common for mission-critical production systems using Riak to NOT use component resilience that might be considered essential in a traditional scale-up database (e.g. RAID arrays); choose simplicity and speed of components, and expect the reliability to come from the Riak cluster not the individual nodes.
 
 When choosing server hardware or instance types, the following guidance should be considered with regards to component selection:
@@ -34,10 +42,12 @@ When choosing server hardware or instance types, the following guidance should b
   - The Erlang VM which has JIT optimisations for both architectures.
   - Extremely high core counts per node (e.g. > 40) may require specific Erlang VM tuning to fully realise the benefits of additional capacity.
 
+{: .highlight }
 > Riak clusters tested to perform predictably at certain throughput constraints - e.g. max CPU utilisation, bandwidth or disk contention.  Running Riak close to these limits for extended periods should **not** lead to volatile outcomes.
 
 Riak nodes may fail suddenly if space constraints are breached - i.e. available disk space, memory and at open file limits (very large clusters may require ulimit settings of 1M or more).  There is no management of activity to prevent breaches when close to these limits.
 
+{: .warning }
 > It is critical to monitor against space limits and have additional nodes available, and scale out the cluster by adding nodes should breaching space limits become a threat.  As load is distributed evenly across nodes, space constraints may be hit concurrently on multiple nodes.
 
 Riak spreads load evenly through the cluster, data is sharded across individual vnodes by consistent hashing, and vnodes are allocated to nodes so that each node will have either X or X + 1 vnodes.  All nodes should therefore have, wherever possible, equal capacity:
@@ -67,10 +77,12 @@ File-system performance is important to Riak performance;
   - normally a `noop`/`none` scheduler is preferred, but this advice may be superseded by OS or hardware-specific guidance.
 - Within cloud environments the use of local disks will normally provide better return on investment than scaling-up throughput on shared storage services.
 
+{: .note }
 > Some cloud providers offer special instance types designed for scale-out databases (e.g. AWS im4gn family), and generally such instances should be preferred over general purpose instances.
 
 ### Network
 
+{: .note }
 > As a distributed database, Riak may place significant demands on the underlying network infrastructure.
 
 For the high-level design of networks supporting Riak clusters, consideration is required of the following factors:
@@ -84,11 +96,12 @@ For the high-level design of networks supporting Riak clusters, consideration is
 
 Riak is partition tolerant, in that during partition events data can still be stored securely across multiple nodes, and values can be merged (potentially forming siblings where conflicts cannot be resolved) when partitions heal.  Read events (both Object and Query API calls) may still not succeed correctly during partitions, particularly on minority partitions.
 
+{: .warning }
 > Regardless of the partition tolerance in the Riak architecture, it is still important to design networks running Riak clusters so that partition events are rare.
 
 If there are weaknesses in resilience in the network architecture, then that resilience should be reflected in the configuration of locations.  For example, if nodes are only connected to a single network switch, then all nodes on the same switch should be configured to be in the same location.
 
-In assessing the bandwidth needs of Riak deployments, the flow of requests using [the Object API](/docs/ObjectAPI.md) should be considered:
+In assessing the bandwidth needs of Riak deployments, the flow of requests using [the Object API](./ObjectAPI.md) should be considered:
 
 - For every GET from Riak, the value will normally be fetched once within the cluster (the majority of the time from within the same location) generating an intra-cluster network bandwidth requirement.
 - For every PUT the value will normally be sent three times within the cluster.  Between replicating clusters GETs do not create network bandwidth needs, but each PUT requires a single transfer of the value.
@@ -106,12 +119,14 @@ Riak has the potential to use two different transport protocols - HTTP and PB.  
   - Access controls with TLS enablement can be made via certificate or username/password identification with the PB API, but it is only tested with username/password authentication via the HTTPS API.
 - It is common for Riak users to enforce network protection within the infrastructure, rather than within the database itself, for example through use of the AWS nitro system.
 
+{: .note }
 > A proxy for a Riak cluster will generally require a significant amount of bandwidth, especially where the cluster is supporting relatively large objects.  Scaling proxy bandwidth may require a step-change in underlying network technology compared to that of the individual nodes.
 
 ### Load-balancing
 
 Non-functional tests of Riak are performed with requests distributed across the Riak cluster using the NGINX proxy.  Other proxy servers with equivalent functionality should also work.
 
+{: .note }
 > For full use of proxy functionality, use of the HTTP API is preferred.
 
 Some load-balancers will support load-balancing of general TCP connections, which can in-turn allow for load-balancing of PB connections, such solutions will likely constrain proxy functionality:
@@ -156,6 +171,7 @@ Riak may be deployed in the style of a traditional database, with a single node 
 
 With modern hardware, a simple configuration such as this can achieve a very high throughput, whilst holding a large volume of data - a higher throughput than most small enterprises would ever require in their infrastructure.  As a consequence Riak is primarily targeted at technology companies, cloud providers, large enterprises or large public-sector organisations with nation-scale requirements.
 
+{: .note }
 > The largest Riak users have o(1000) nodes, but these are generally split into different clusters serving different purposes or geographies.  It is rare to have individual clusters that scale beyond 50 nodes.
 
 A cluster is formed by joining nodes into a cluster.  When a Riak node is started, it is a cluster of one, and so the act of joining one node to another is actually the act of merging two clusters.  If the ring size is 256, a Riak node that is not part of a cluster will start 256 vnodes as it considers itself to be the whole cluster.
@@ -199,7 +215,7 @@ As well as the pending changes, there are four inputs to that planning process:
 - The `target_n_val`; which should be greater than or equal to the `n_val`.
   - If this is set to the `n_val` this will simply guarantee that all primary locations for an object will be on separate nodes.
   - If this is set to `n_val + N`, then even after `N` failures each the object will still be stored on separate nodes.
-  - The `target_n_val` is the number of [primaries and fallbacks](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) which must be on distinct nodes.
+  - The `target_n_val` is the number of [primaries and fallbacks](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) which must be on distinct nodes.
 - The `target_location_n_val`; which defaults to `target_n_val` minus one, but the supportable value will depend greatly on the number of locations and how evenly the nodes are spread across those locations.
   - The higher the `target_location_n_val`, and the `target_n_val` the more certain the availability of data in the cluster is.
   - For experimenting with checking the validity of larger settings, there is an offline [ring calculator](https://github.com/OpenRiak/ring_calculator) which may be used before planning a cluster expansion.
@@ -219,6 +235,10 @@ The v3 claim algorithm which tries to find an optimal solution through a series 
 The v3 algorithm does not support locations, and is considered an experimental feature, but is still in use in large scale production systems.
 
 #### Join process - `choose_claim_v4` (recommended)
+{: .d-inline-block }
+
+Available from Riak 3.0.16
+{: .label .label-green }
 
 The v4 algorithm is a brute-force algorithm which will attempt to solve a sufficient answer, potentially by exhausting all possibilities.  The v4 algorithm is the only effective algorithm for handling locations.  Because it seeks a sufficient answer, rather than an optimal one, the offline `ring_calculator` can be used to determine how far the target inputs can be pushed and still have a viable solution, before running the plan.
 
@@ -230,9 +250,8 @@ The response to the plan request will be an outline of the plan.  If the plan do
 
 The plan may contain a warning e.g. if the `target_n_val` has not been achieved: `WARNING: Not all replicas will be on distinct nodes`
 
-> IMPORTANT
->
-> Detecting and responding to the warning is an operator responsibility.  The only warning returned during the cluster change process of a bad configuration, is this warning at the planning stage.
+{: .warning }
+> Detecting and responding to the warning in a plan is an operator responsibility.  The only warning returned during the cluster change process of a bad configuration, is this warning at the planning stage.
 
 To avoid an unsafe cluster, if a warning is returned, the plan **must** be cleared and another attempt made with different inputs:
 

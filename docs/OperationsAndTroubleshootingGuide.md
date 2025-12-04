@@ -1,3 +1,9 @@
+---
+title: Operations and Troubleshooting
+nav_order: 8
+layout : default
+---
+
 # Riak KV - Operations and Troubleshooting
 
 The following sections provide guidance when operating or troubleshooting a Riak cluster:
@@ -30,6 +36,7 @@ There are several potential repair and recovery processes for handling different
 
 The most common repair requirements are for proactive replace, and reactive replace: testing these processes under load prior to production deployment of Riak is recommended.
 
+{: .highlight }
 > All repair and replace operations are designed to be conducted under load.  In non-functional testing of Riak 3.4, an 8-node cluster is saturated with load (both Object API and Query API requests) to 100% CPU utilisation; and then a node is killed, cleared, re-joined and repaired under that load - with the target of never losing more 1/8th of the throughput.
 
 ### Proactive Replacement
@@ -41,7 +48,7 @@ It is possible to proactively replace a node in a Riak cluster, for example if:
 - to change the storage_backend of a cluster node-by-node;
 - or to fully vacuum a node's storage backends of garbage.
 
-A proactive replace is a cluster administration change, and [follows the standard five stage process described in the general guidance on amending the cluster make-up](/docs/BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).  In the case of a proactive replace, the first stage, staging, requires the staging of two changes:
+A proactive replace is a cluster administration change, and [follows the standard five stage process described in the general guidance on amending the cluster make-up](./BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).  In the case of a proactive replace, the first stage, staging, requires the staging of two changes:
 
 - the `join` of a new node, and
 - a `replace` to indicate the old node which should be replaced.
@@ -99,7 +106,7 @@ riak eval "riak_client:remove_node_from_coverage()."
 
 The data can then be recovered from the other nodes in the cluster issuing the `riak_client:repair_node()` command from the `remote_console` of the replacement node.  This will prompt all vnodes which partially overlap the data held in the vnodes on the replacement node to race to play a role in repairing the node.  Each vnode will only repair the data which overlaps, filtering out any data that another vnode has already repaired (or is in the process of repairing).
 
-To improve the performance of repair, the `repair_span` configuration in the [riak_core schema section of riak.conf](https://github.com/OpenRiak/riak_core/blob/openriak-3.4/priv/riak_core.schema) can be changed to `double_pair`, and this has been proven to be more effective when used with the leveled backend together with the enablement of the `repair_deferred` option in the [riak_kv schema section of riak.conf](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
+<span>Available from Riak 3.4.0</span>{: .label .label-purple }To improve the performance of repair, the `repair_span` configuration in the [riak_core schema section of riak.conf](https://github.com/OpenRiak/riak_core/blob/openriak-3.4/priv/riak_core.schema) can be changed to `double_pair`, and this has been proven to be more effective when used with the leveled backend together with the enablement of the `repair_deferred` option in the [riak_kv schema section of riak.conf](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
 The combination of `repair_span = double_pair, repair_deferred = enabled` is significantly more effective when repairing under load.  With these configuration options, it should be noted that repairs will happen in key order, not in reverse order of receipt (the default).  With these changes, using the leveled backend, non-functional testing demonstrates that repairs can complete efficiently even when nodes are persistently at 100% CPU utilisation due to the handling of application requests.
 
@@ -119,6 +126,7 @@ A rolling restart may be required for some configuration changes, or as part of 
 
 The configuration of locations may speed rolling restarts, as all nodes in a location can be safely stopped and started concurrently.
 
+{: .warning }
 > Caution is required when performing a rolling restart when using the memory backend, as the pre-existing data is not transferred during the restart and is lost by the restart.
 
 ### Repair an individual leveled store
@@ -141,7 +149,7 @@ Storage backends make use of CRC checks to detect and respond to corruption (by 
 
 Where such corruption is limited to a leveled ledger, then [a repair via leveled rebuild](#repair-an-individual-leveled-store) can be used to recover.  However, in other backends, or with a corruption in the leveled journal - it may be preferable to repair a whole vnode rather than wait for other anti-entropy processes to eventually resolve the impact of the corruption (by repairing each impacted object).
 
-The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](/docs/RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  The vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
+The process to [complete a full node repair](#completing-a-repair) can be targeted at an individual vnode to repair just that vnode.  To prompt the repair of an individual vnode, the partition number - the [integer identifier of a vnode](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes) - must be passed to the vnode repair function.  The vnode repair function (`riak_kv_vnode_repair/1`) can be called by using the [`remote_console`](#remote-console) or directly from the command line through the `riak eval` CLI call:
 
 ```console
 riak eval "riak_kv_vnode:repair(<partition_number>)."
@@ -153,7 +161,7 @@ The repair node will replace any object which the store does not presently hold.
 
 Outside of the circumstances covered in the previous sections, it is not expected that there should be a need for operator intervention in the recovery from failure.  There is though an additional process for handling any unexpected scenarios, to allow for cluster wide repair of key ranges.  The `repair_key_range` operation is targeted at a specific bucket, potentially combined with a key range or last modified date range: and triggers via an AAE fold the read repair process within the cluster for that range.
 
-Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
+Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for information on triggering a `repair_key_range` AAE fold.
 
 The aae_fold will send repair events to the `riak_kv_reader` queue, and progress can be tracked by tracking the queue's log outputs.  There is an automated background process on each node that will consume repair events from the queue, and trigger read repair (if required) by a clientless GET of the object.  Each node's reader queue is limited to 1M requests, and requests over this limit will be discarded.  This limit is not configurable in Riak 3.4.  The `riak_kv_reader` process will dequeue items from the `riak_kv_reader` queue and prompt an internal GET request; which, should there be a discrepancy, prompt a repair via `read_repair`.
 
@@ -169,6 +177,7 @@ The following upgrade path has been specifically tested:
 
 More direct upgrade paths skipping steps may be possible.  New features are added using either a negotiation of capability within the cluster, or with the feature disabled by default in configuration.  Once a capability is mature, after at least two steps in the path, the negotiation may be retired and replaced with a static assumption of capability.
 
+{: .warning }
 > When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
 
 It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from `3.0.n` to `3.4.n` are not supported unless `3.0.n` is built with OTP 22, and `3.4.n` is built with OTP 24.
@@ -177,6 +186,7 @@ It is recommended to test all upgrades in pre-production environments.  If no pr
 
 If local changes have been made to `riak.conf`, the package manager should leave the `riak.conf` file unchanged during an upgrade.  A release change may alter a default value in configuration, and if that default value was originally added to the `riak.conf` uncommented - the new default will not take effect following the upgrade, as the `riak.conf` is not altered.
 
+{: .note }
 > In configuration management of `riak.conf` files, the potential issue of changing defaults needs to be accounted for i.e. ensure the managed version of `riak.conf` is seeded with a new default `riak.conf` file produced for each release, before context-specific changes are applied.
 
 As with other rolling operations, the operations can be accelerated through the use of locations, by changing a location per-cycle not just a node per-cycle.  Awaiting both the triggering and completion of handoffs between cycles is required for a smooth transition.
@@ -201,7 +211,7 @@ For the full functionality of [riak_client, see the module code](https://github.
 
 ### Running AAE Folds
 
-Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering an AAE fold from `riak remote_console`.
+Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for information on triggering an AAE fold from `riak remote_console`.
 
 ### riak_client remote_console commands
 
@@ -294,7 +304,8 @@ The stats represent the statistics on the node from which they were requested.  
 
 Read repairs will be invoked directly when a user GET request reveals an out-of-date or missing object within the preflist
 
-> Although GETs will by default respond to the client on quorum responses, all GET processes continue to all responses have returned or timed out.  The read repair is then triggered if required, based on all responses ot just the quorum.
+{: .note }
+> Although GETs will by default respond to the client on quorum responses, all GET processes continue to all responses have returned or timed out.  The read repair is then triggered if required, based on all responses not just the quorum.
 
 Each read repair, will update the `read_repairs` and `read_repairs_total` statistic available [via riak stats](#riak-stats).  Other stats updates are also made:
 
@@ -305,7 +316,7 @@ Each read repair, will update the `read_repairs` and `read_repairs_total` statis
 
 These stats indicate whether the vnode in need of repair was a primary or fallback, and whether it has been repaired as it had an out of date object, or the object was not found in that vnode.
 
-During a node failure, `n_val` fallback vnodes will be started for every unavailable primary vnode.  As the fallback vnodes start empty, a large number of read repairs may be immediately triggered, assuming the cluster is subject to application read requests.  This will in the short term impact performance, and in the long term impact handoff times when the node recovers - but in the medium term it will mean that the vnode has frequently accessed data to contribute to quorum.  The [`read_repair_primaryonly` configuration option](/docs/InstallAndStartGuide.md#configuration-of-riak---key-riakconf-changes) can be enabled to stop repairing fallback vnodes through read repair.
+During a node failure, `n_val` fallback vnodes will be started for every unavailable primary vnode.  As the fallback vnodes start empty, a large number of read repairs may be immediately triggered, assuming the cluster is subject to application read requests.  This will in the short term impact performance, and in the long term impact handoff times when the node recovers - but in the medium term it will mean that the vnode has frequently accessed data to contribute to quorum.  The [`read_repair_primaryonly` configuration option](./InstallAndStartGuide.md#configuration-of-riak---key-riakconf-changes) can be enabled to stop repairing fallback vnodes through read repair.
 
 Read repairs are also invoked by active anti-entropy.  When an intra-cluster AAE process detects a delta, it does not prompt it directly, it instead will prompt a GET request so that read repair will happen indirectly.
 
@@ -317,16 +328,15 @@ riak eval "application:set_env(riak_kv, log_readrepair, true)"
 
 ### Monitoring inter-cluster reconciliation
 
-For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](/docs/NextGenReplGuide.md#monitoring-and-run-time-changes).
+For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](./NextGenReplGuide.md#monitoring-and-run-time-changes).
 
 ### Monitoring node worker pools
 
 Each worker pool will regularly log its current queue length and last checkout time (when it last picked up a new piece of work).  There are also riak stats for each pool, giving the average queue time (how long work is waiting in the queue), and work time (how long each piece of work takes).
 
-> TODO - Will change after PR
-
 ## Enabling Riak Security
 
+{: .warning }
 > Riak is expected to be deployed into secure environments, it is not a database designed for direct exposure on public networks.
 
 Riak does have the optional capability to enable additional security controls, which are disabled by default.  However:
@@ -361,6 +371,7 @@ The configuration will start a HTTPS listener, and any HTTP client will be able 
 
 For the PB interface, it is not possible to enable TLS in isolation without [adding further security measures](#enabling-security-and-restricting-source).  The configuration of file paths to certificate and key files is required as a prerequisite for applying those measures.  No independent listener is used for PB when security is enabled, the standard listener will expect TLS negotiation if and only if security is enabled.
 
+{: .warning }
 > Riak does not support any automated certificate management, or notification on pending certificate expiry.
 
 ### Enabling Security and Restricting Source
@@ -373,6 +384,7 @@ riak admin security enable
 
 This is a cluster-wide setting, and will change the behaviour across the cluster with almost immediate effect.  Once security is enabled, any request to Riak sent without TLS enablement and a valid username will be blocked.
 
+{: .warning }
 > Security enablement is not per API, both the HTTP and PB transports are impacted by enabling security, cluster-wide.
 
 If enablement causes unexpected problems, it may be disabled again:
@@ -385,6 +397,7 @@ Prior to Riak 3.4, some HTTP API requests could still be sent to the plain text 
 
 To preserve the old behaviour, and allow insecure use via HTTP of operational calls when security is enabled, the configuration option in `riak.conf` of `permit_insecure_http_ops = enabled` can be used.
 
+{: .note }
 > Although the CLI uses the terms `user` and `password`; these would normally translate to an `application_instance` and `shared_secret` in an actual implementation.  There is no expectation that Riak security should manage the real-world usernames and passwords of operators, developers or application end-users.
 
 Once security is enabled, all requests will need to have a valid `user` and a valid `source`.  There are three types of `source`:
@@ -410,6 +423,7 @@ riak-admin security add-source all 192.168.6.7/32 trust
 
 This would permit access to the APIs only from the IP address `192.168.6.7` (this may be the address of a web application firewall, for example), and trust all access from that source as long as the username of `proxy_waf` is provided within the Authorization header.
 
+{: .note }
 > In this simple case, this is functionally equivalent to applying an IP filter on the node through a standard filter utility, but it is not the security equal of that measure.  An IP filter would prevent connections being made from an unauthorised host, whereas the Riak security control allows connections and requests to be sent, but blocks requests during the processing of those requests; which presents a broader attack surface.
 
 On the PB API, a stronger level of security could be applied with:
@@ -422,10 +436,12 @@ riak-admin security add-source all 192.168.8.0/24 certificate
 
 This would permit access from the whole of the network `192.168.8.0/24` (this may be a network hosting application instances allowed to send Riak requests) for any application instance with a valid certificate as long as the certificate name matches `app.acme.org`.
 
+{: .note }
 > In this case, this is functionally equivalent to requiring TLS mutual authentication on the PB API, but it is not the security equal of that measure.  A connection would still be accepted from any IP address, and an unauthenticated TLS negotiation allowed; at this stage the PB API will only accept an authentication request, and this will now only work if the IP address is valid and the certificate matches.
 
 There are a number of options around the configuration of security sources in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
 
+{: .warning }
 > The use of PAM-based authentication is deprecated and may be removed in a future release.
 
 When enabling the use of certificates, the CRL within the configured CA certificate will be checked for every connection attempt.  If there are issues with either the performance of the CRL check, or the reachability of the CRL endpoint; the crl check can be disabled via a hidden `riak.conf` setting - `check_crl = disabled`.
@@ -436,17 +452,18 @@ There are specific actions within the API, to which specific permissions can be 
 
 The actions supported by permission grants are:
 
-- [`riak_kv.get`](/docs/ObjectAPI.md#http-api-definition---fetch)
-- [`riak_kv.put`](/docs/ObjectAPI.md#http-api-definition---store)
-- [`riak_kv.delete`](/docs/ObjectAPI.md#http-api-definition---delete)
-- [`riak_kv.list_keys`](/docs/OtherAPI.md#the-list-api)
-- [`riak_kv.list_buckets`](/docs/OtherAPI.md#the-list-api)
-- [`riak_kv.mapreduce`](/docs/OtherAPI.md#the-mapreduce-api)
+- [`riak_kv.get`](./ObjectAPI.md#http-api-definition---fetch)
+- [`riak_kv.put`](./ObjectAPI.md#http-api-definition---store)
+- [`riak_kv.delete`](./ObjectAPI.md#http-api-definition---delete)
+- [`riak_kv.list_keys`](./OtherAPI.md#the-list-api)
+- [`riak_kv.list_buckets`](./OtherAPI.md#the-list-api)
+- [`riak_kv.mapreduce`](./OtherAPI.md#the-mapreduce-api)
 - `riak_kv.index`;
-  - used to control both the [legacy query api](/docs/OtherAPI.md#legacy-query-api) and the [Query API](/docs/QueryAPI.md).
+  - used to control both the [legacy query api](./OtherAPI.md#legacy-query-api) and the [Query API](./QueryAPI.md).
 
 For all other API endpoints, only `source` protection is applied.
 
+{: .note }
 > With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
 
 There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
@@ -454,10 +471,14 @@ There are a number of options for the granting of permissions in Riak, and furth
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
 ### Riak KV Eraser and Riak KV Reaper
+{: .d-inline-block }
 
-The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold to feed the eraser queue.
+Available from Riak 3.0.10
+{: .label .label-green }
 
-Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold to feed the reaper queue.
+The `riak_kv_eraser` is a process that receives requests to delete keys, queues those requests, and continuously erases keys from that queue.  Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for information on triggering a `erase_keys` AAE fold to feed the eraser queue.
+
+Likewise the `riak_kv_reaper` process receives requests to delete tombstones, queues those requests, and continuously reaps keys referenced in the queue.  Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for information on triggering a `reap_tombs` AAE fold to feed the reaper queue.
 
 Filters within the AAE folds can be used to select specific key_ranges, or last modified date ranges for the erase or reap process.
 
@@ -519,7 +540,7 @@ The journal may also orphan files, but in Riak 3.4 there is no automated process
 
 ## Data inspection
 
-To understand more about the data being held in the cluster, information can be found using AAE folds. Refer to the [API guide for AAE Fold](/docs/OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
+To understand more about the data being held in the cluster, information can be found using AAE folds. Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for information on triggering data inspection folds - `find_keys`, `find_tombs`, `list_buckets` and `object_stats`.
 
 ## Volume and performance testing
 
@@ -620,7 +641,7 @@ As well as the storage backend data folder, a Riak node also stores data in a ri
 
 ## Operation Checklist
 
-In the guide to building and scaling a cluster, the section on [choosing infrastructure](/docs/BuildAndScaleClusterGuide.md#choosing-infrastructure) provides a checklist of things to consider at the design stage, and it is worth considering the issues highlighted in that guide when troubleshooting operational issues:
+In the guide to building and scaling a cluster, the section on [choosing infrastructure](./BuildAndScaleClusterGuide.md#choosing-infrastructure) provides a checklist of things to consider at the design stage, and it is worth considering the issues highlighted in that guide when troubleshooting operational issues:
 
 - The need to avoid the accidental concurrent scheduling of expensive operational processes;
   - Disk trim jobs,
@@ -649,7 +670,8 @@ Monitoring of activity related to these issues is important.  Further, it is vit
   - Disk I/O operations (especially when I/O is limited by cloud providers).
   - Disk `await` times.
 
-> The thresholds for monitoring may vary depending on operational speed with which new nodes can be procured, initialised and deployed to.
+{: .note }
+> The thresholds for monitoring may vary depending on the speed with which new nodes can be procured, initialised and deployed to.
 
 Riak should be deployed into consistent environments using automation where possible:
 

@@ -1,3 +1,9 @@
+---
+title: Riak Theory
+nav_order: 9
+layout : default
+---
+
 # Riak KV - Theory Guide
 
 This guide is a work in progress, and provides insight into the underlying theories and processes which underpin the function of a Riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
@@ -41,12 +47,13 @@ Riak is designed to be eventually consistent, in that it is:
   - but also because it is continuously reconciled, with background process that efficiently analyse the overall system for discrepancies and proactively heal those deltas without operator intervention,
   - where that continuous reconciliation occurs both within and between clusters.
 
-It should be noted that Riak offers the same guarantees of zero-intervention eventual-consistency for both multi-cluster environments as well as single cluster environments.  However, within a cluster it is possible to enforce conditions on writes to make Riak less permissive, but less likely to result in conflict e.g. through the use of [conditional PUTs with token-based consensus](/docs/ObjectAPI.md#conditional-requests).
+It should be noted that Riak offers the same guarantees of zero-intervention eventual-consistency for both multi-cluster environments as well as single cluster environments.  However, within a cluster it is possible to enforce conditions on writes to make Riak less permissive, but less likely to result in conflict e.g. through the use of [conditional PUTs with token-based consensus](./ObjectAPI.md#conditional-requests).
 
 Care may be taken by the Riak user to avoid conflict; but inevitably there will be some object values that eventually end-up in conflict.  When in a conflicted state, an object may have two values where the database cannot determine which is the most current, often as updates were made concurrently by two different application instances.
 
 Not being eventually consistent in a database, is likely to increase the operational processes required during failure scenarios: e.g. static failovers between primary and standby clusters, intervention to recover from replication failures between regions.  With eventual consistency: the gain in operational simplicity and reduced operational intervention, is a trade-off against the developer overhead of considering conflict.
 
+{: .note }
 > Handling an object where the value is in doubt, adds cognitive load to the application developer - it is the key trade-off between the operator and the developer to accept when adopting Riak.  At small-scale, and when downtime is acceptable; it is almost always preferable to favour the application developer in the trade-off.  Riak is an answer to exceptional use cases with demanding non-functional requirements, not a general purpose data-storage solution.
 
 It is possible to craft objects whereby the situation can always be resolved, known as conflict-free replicated data-types.  However, designing a system based only on those data types is another type of cognitive load for the application developer.
@@ -61,9 +68,10 @@ In general, most applications that depend on Riak evolve strategies to restrict 
 
 ### Quorum on Read, Write and Query
 
-The default GET and PUT options are based on validating quorum within the cluster before returning a response to the client.  Quorum meaning that a majority of vnodes within a preflist must have provided acknowledged input to the transaction.  So although Riak offers a guarantee that data will be eventually consistent; within a single, stable cluster an application will still [read its own writes](https://jepsen.io/consistency/models/read-your-writes).  There are tunable consistency [properties in Riak](/docs/InstallAndStartGuide.md#configuration-of-riak---bucket-properties), that can be used to extend this guarantee to clusters during individual node failures.
+The default GET and PUT options are based on validating quorum within the cluster before returning a response to the client.  Quorum meaning that a majority of vnodes within a preflist must have provided acknowledged input to the transaction.  So although Riak offers a guarantee that data will be eventually consistent; within a single, stable cluster an application will still [read its own writes](https://jepsen.io/consistency/models/read-your-writes).  There are tunable consistency [properties in Riak](./InstallAndStartGuide.md#configuration-of-riak---bucket-properties), that can be used to extend this guarantee to clusters during individual node failures.
 
-> Quorum is the default for [the Object API](/docs/ObjectAPI.md), but not the default for [the Query API](/docs/QueryAPI.md).
+{: .note }
+> Quorum is the default for [the Object API](./ObjectAPI.md), but not the default for [the Query API](./QueryAPI.md).
 
 All index updates within a vnode are transactional to the object change; so that in a single, stable cluster, queries will immediately reflect the latest update.  There is no post-update delay for indices to be updated. However queries have to be distributed across a covering set of primary vnodes, and this covering set will include a single replica of each object.  If a primary vnode is active but not up-to-date (i.e. due to a recent recovery from failure or corruption), query results are not validated by checking results between replicas.
 
@@ -75,6 +83,7 @@ It is possible to use inverted indexes for queries within Riak, so that queries 
 
 The default mechanism for tracking causal consistency on Riak objects is Dotted Version Vectors.
 
+{: .note }
 > Within Riak documentation and within the APIs, the name vector clock is used to refer to both the current recommended approach (dotted version vectors), and the previous legacy approach (loosely based on logical clocks).
 
 A dotted version vector has two parts:
@@ -91,6 +100,7 @@ If there are two versions of an object, and neither version vector is dominant, 
 
 These two characteristics are important to avoid sibling explosion, which might otherwise result when multiple application processes are concurrently trying to update the same object (and correct the sibling state).  It is also important to the pruning of version vectors.
 
+{: .note }
 > The actors within the version vectors are the unique vnode IDs that have coordinated change on an object.  The number of actors will grow over time as as an object is updated by different vnodes in a preflist, via different cluster preflists and as the membership of a preflist is changed by the promotion of fallbacks during failure or the reshuffling of vnodes on cluster change.
 
 As the list of actors in the version vector will grow over time, the version vector needs to support pruning.  Pruning is not coordinated, and happens independently on each vnode (and on each cluster) for that object key, when the vector exceeds a configured size limit.  Pruning of old information from version vectors will lead to false conflicts between version vectors: but this is highly unlikely to cause siblings, as the "dot" of the content can be used to confirm that the current object was not related to the portion of the version vector in conflict (i.e. it was not coordinated by a pruned actor).
@@ -111,6 +121,7 @@ Riak tracks the current state of the Version Vectors across the whole key-space 
 
 Anti-entropy is in addition to other mechanisms that repair in reaction to the detection of failure (read repair), or in update vnodes following cluster changes (handoff for both repair, cluster change and recovery of fallbacks).
 
+{: .highlight }
 > The active anti-entropy process is designed to be highly efficient, and very quick, when confirming no deltas exist; o(10s) to confirm alignment between o(10bn) objects.
 
 The work to compare between stores has a low resource cost.  The work to discover and repair deltas is relatively expensive, but is throttled in default configuration to avoid overloading the database.  As there are other anti-entropy mechanisms (e.g. quorum reads with read repair); slow repair is preferred to high repair-related resource utilisation.
@@ -201,6 +212,7 @@ In Riak 3.4, the bitcask backend does not support three important operations:
 
 The leveled store is written in Erlang, where each entity (e.g. file or manifest) in the datastore has a dedicated owning process; and a consistent view is maintained through that ownership model rather than by the management of locks to marshall access to resources between processes.  It is designed to be scaled out by running many stores, not by parallelism within the store itself.
 
+{: .highlight }
 > The design of leveled is based on the log-structure merge-tree (LSM) data structure, but unlike most other implementations of LSM trees the values are set-aside on receipt, and only keys and metadata are kept within the LSM tree.
 
 The setting-aside of values reduces the write amplification associated with the compaction of the LSM tree, especially when the object metadata is much smaller in bytes than the object value.  It also provides a differential cost of read; whereby a HEAD request (to return metadata) is much lower cost than a GET request (return the whole object).  This differential cost makes the store suited to environments where HEAD requests are more common than GETs; which is the case within Riak as each cluster GET is formed normally from the result of 3 backend HEAD requests and just a single backend GET.
@@ -239,6 +251,7 @@ Each process within Leveled has an in-memory state, that contains:
 
 These caches are designed to ensure that every CRUD request can be fulfilled on average by 1 disk action or fewer.  All compaction activity is based on bulk writes of fresh files, not on mutation of existing files.  The leveled store, when compared to alternatives, requires a relatively low volume of internal I/O actions per external request.
 
+{: .note }
 > The leveled backend is focused on supporting characteristics that enable the file system page cache to be more effective, rather than managing its own caches to optimise performance.
 
 Acceleration in leveled is provided through the use of hashes of keys, and the support throughout the system of hash-based lookups and lookup avoidance via bloom filters.  There is alignment between the hashes used by the ledger's filters for lookup avoidance and the hashes used in the anti-entropy merkle trees.  This alignment accelerates queries over key ranges when the results need to be filtered on leaves of the anti-entropy tree.
@@ -268,12 +281,14 @@ Compaction is managed in the ledger by the penciller's clerk (the `leveled_pcler
 
 Compaction of the ledger is enforced by fresh write activity.  New writes to the store are appended to the active Journal file and then the related key and metadata changes added to an in-memory cache of recent ledger updates within the Bookie.  When the in-memory cache reaches an approximate threshold then the cache will be flushed to the in-memory cache of the Penciller.  When the number of the Penciller's in-memory cache lines reach an approximate threshold, it must write a new "level-zero" file to disk.
 
+{: .note }
 > All thresholds and timeouts in leveled are approximate, as any configured values must be jittered to avoid accidental coordination of activity between vnodes, either within a node or within a preflist.
 
 The writing of a level zero file triggers a cascading process managed by the Penciller's Clerk.  When the clerk is next available it must merge that file from Level 0 into Level 1.  It then must look at the count of files at each level, and determine if any level is bigger than the fixed size for that level; and if it is, merge a file down to the lower level.  The maximum size of each level is based on file count alone.
 
 When there are multiple outstanding lower level files to be merged, then the Penciller is in a backlog state.  In that backlog state the Penciller's Clerk will continue to prioritise freeing space in Level 0, but the Penciller will refuse to accept new cache lines from the in-memory cache of the Bookie.  The Bookie in turn should enter `slow-offer` mode, where it requests a pause from the vnode following a successful PUT to temporarily block more activity - this is logged and configured as a `backend_pause`.
 
+{: .highlight }
 > The pace of writes to a vnode cannot outrun the workload of the Penciller's Clerk, and the aim is to handle a backlog by gradually degrading responses in the system rather than suddenly stalling activity.  
 
 For individual leveled stores the Penciller's Clerk may be a bottleneck.  The clerk is single-threaded, as parallelism exists across the node by running multiple vnodes - there should normally be multiple vnodes (and hence clerks) per CPU core on each server.
@@ -284,6 +299,7 @@ Journal compaction requires each file to be scored, the score being an assessmen
 
 Once scoring is complete in a compaction run, any runs of files that exceed the configured compaction threshold are considered to be candidates for compaction, and the candidate run with the best score (the largest estimated volume of space to be freed) is chosen.  For that compaction run all keys are read in SQN order across the candidate files, checking in the ledger the current SQN of each Key and then either writing or discarding the object as appropriate.  Once a new set of files has been written and made read-only, the Inker's clerk will send the proposed change to the Inker to prompt a manifest update.
 
+{: .note }
 > Any crashes during compaction will lead to uncleared garbage rather than corruption; as the manifest change is made at the end, the store will always be restarted from the state at the commencement of the compaction job unless a compaction job is fully completed.
 
 #### Head-only Mode
