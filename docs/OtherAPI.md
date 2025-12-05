@@ -204,6 +204,10 @@ Where a fold is returning a list of keys, or keys and clocks, it is necessary fo
 > It is important to consider the memory impact of running an AAE fold on the node that handles the request, especially when using a `find_keys` fold.
 
 ### AAE Folds via the Command Line
+{: .d-inline-block }
+
+Available from Riak 3.4.0
+{: .label .label-purple }
 
 AAE folds can be triggered via the command line using `riak admin tictacaae fold`:
 
