@@ -213,7 +213,7 @@ AAE folds can be triggered via the command line using `riak admin tictacaae fold
 
 ```console
 riak admin tictacaae fold list-buckets NVAL
-riak admn tictacaae fold find-keys BUCKET KEY_RANGE MODIFIED_RANGE sibling_count=COUNT|object_size=BYTES
+riak admin tictacaae fold find-keys BUCKET KEY_RANGE MODIFIED_RANGE sibling_count=COUNT|object_size=BYTES
 riak admin tictacaae fold find-keys BUCKET KEY_RANGE MODIFIED_RANGE sibling_count=COUNT|object_size=BYTES
 riak admin tictacaae fold find|count-tombstones KEY_RANGE SEGMENTS MODIFIED_RANGE
 riak admin tictacaae fold reap-tombstones KEY_RANGE SEGMENTS MODIFIED_RANGE CHANGE_METHOD
@@ -227,7 +227,7 @@ Each of these fold commands will call the corresponding aae_fold operation and w
 {: .warning }
 > The outcome is written to the file only when the fold is completed; so if using `find_keys` the node must be able to hold all keys found in memory at least twice (as the result set needs to be copied between processes).
 
-{. note }
+{: .note }
 > It is recommended that the output file be specified, including the full file path, using the `-o` option; rather than being left to the default.  The file path should be writable by the `riak` user.
 
 ### AAE Folds via the Remote Console

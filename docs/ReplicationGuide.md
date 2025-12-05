@@ -568,7 +568,7 @@ application:set_env(riak_kv, ttaaefs_rangeboost, 16).
 Individual repair queries will do more work as these numbers are increased, but will repair more keys per cycle.  This can be used along with prompted checks (especially range checks) to rapidly resolve a delta.
 
 {: .note }
-> If the number of segment IDs being checked goes significantly over 1000, then the number of blocks that can be skipped will tend towards zero.  So the combined value of `maxresults * rangeboost` should be kept to a value less than or equal to 1024.
+> If the number of segment IDs being checked goes significantly over one thousand, then the number of blocks that can be skipped will tend towards zero.  So the combined value of `maxresults * rangeboost` should be kept to a value less than or equal to 1024.
 
 ### Overriding the range
 

@@ -355,7 +355,7 @@ Configuration control commands `rebuildtick`, `exchangetick`, `maxresults`, and 
 > Do not set the value of the `exchangetick` or `rebuildtick` to a value lower than double the riak_core `vnode_inactivity_timeout`.  The default `vnode_inactivity_timeout` is 60s, so setting this to a value lower than `120000` milliseconds would be unsafe.
 
 {: .note }
-> If the number of segment IDs being checked within an AAE exchange are significantly over 1000, then the acceleration associated with the restriction will tend towards zero.  So the combined value of `maxresults * rangeboost` should be kept to a value less than or equal to 1024.
+> If the number of segment IDs being checked within an AAE exchange are significantly over one thousand, then the acceleration associated with the restriction will tend towards zero.  So the combined value of `maxresults * rangeboost` should be kept to a value less than or equal to 1024.
 
 Configuration control commands `storeheads`, `tokenbucket`, `rebuild_schedule` will extract or inject the actual relevant values from or to the state of the running AAE controller processes.
 
