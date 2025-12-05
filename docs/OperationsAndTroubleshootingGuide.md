@@ -366,7 +366,7 @@ Configuration control commands `storeheads`, `tokenbucket`, `rebuild_schedule` w
 {: .note }
 > It is recommended to control configuration through management of `riak.conf` not via the CLI.  The `riak admin tictacaae` commands should only be used when there is an urgent need to change the configuration on a running node, without requiring a restart.
 
-The action command `rebuild_soon` will set the next rebuild time on all the nodes and vnodes specified to the `delay` in seconds:
+The action command `rebuild_soon` will set the next rebuild time on all the nodes and vnodes specified, to the `delay` in seconds:
 
 - A rebuild on a parallel-mode AAE vnode will rebuild the parallel keystore from the vnode store, and then rebuild the cached trees from that parallel store.
 - A rebuild of a native vnode (i.e. with a single `leveled` backend), will rebuild the cached tree from the [leveled ledger](./RiakTheoryGuide.md#the-leveled-backend) keystore (but also checking for presence of the object in the journal).
@@ -393,16 +393,18 @@ The result of each individual exchange is not logged by `riak_kv `unless it show
 Statistics on Tictac AAE exchanges are also available via [`riak stats`](#riak-stats):
 
 - `tictacaae_queue_microsec__max`, `tictacaae_queue_microsec_mean`.
-  - The time spent by the vnode waiting for the controller to respond to a key update.
-  - Maybe an indication that the vnode is being delayed due to the maintenance of a parallel-mode AAE store.
+  - The time spent by the vnode waiting for the controller to respond to an update (prompted by a PUT on the vnode).
+  - May give an indication that the vnode is being delayed due to the overhead of maintaining a parallel-mode AAE store.
 - `tictacaae_root_compare`, `tictacaae_branch_compare`, `tictacaae_clock_compare`, `tictacaae_error`, `tictacaae_timeout`, `tictacaae_notsupported`.
-  - Counts of the status of exchanges.
+  - Counts of the exchanges by the status of the echange.
+    - Intra-cluster exchanges follow [the same process as inter-cluster reconciliation exchanges](./ReplicationGuide.md#enabling-checks).
+    - `root_compare` and `branch_compare` indicate no deltas were discovered.
   - Because of the infrequency of exchanges, tracking the `*_total` statistics is normally required to gain understanding of trends in AAE activity.
 
 {: .note }
 > Additional logging will be generated if significant deltas are discovered, and the AAE process enters into a repair loop: a process through which repairs are accelerated by using information about the deltas being discovered (i.e. any pattern of buckets and modified date ranges discovered in deltas).
 
-AAE will prompt the repair of delta using read repairs - so the [monitoring of read repairs](#logging-and-monitoring-of-read-repairs) provides further information.
+AAE will prompt the repair of delta using read repairs, so the [monitoring of read repairs](#logging-and-monitoring-of-read-repairs) provides further information.
 
 #### Monitoring legacy AAE
 
