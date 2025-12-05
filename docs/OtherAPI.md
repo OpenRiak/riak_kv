@@ -223,6 +223,9 @@ Each of these fold commands will call the corresponding aae_fold operation and w
 {: .warning }
 > The outcome is written to the file only when the fold is completed; so if using `find_keys` the node must be able to hold all keys found in memory at least twice (as the result set needs to be copied between processes).
 
+{. note }
+> it is recommended that users specify the output file using the `-o` option, including the full file path.  The file path should be writable by the `riak` user.
+
 ### AAE Folds via the Remote Console
 
 The AAE Fold API is accessible via `remote_console`.  Using the remote_console is an operator action, but it can be helpful when writing [Erlang functions](https://www.erlang.org/doc/readme.html) that take action based on AAE Folds.
