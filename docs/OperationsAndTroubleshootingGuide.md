@@ -390,15 +390,15 @@ When Tictac AAE is enabled, each vnode has a queue of exchanges related to that 
 
 The result of each individual exchange is not logged by `riak_kv `unless it shows a discrepancy, although the details of each exchange can be found in the AAE logs with the tag `log_ref=ex*`.  A summary log is produced every loop from the `riak_kv_vnode` ("Tictac AAE loop completed"), giving the statistics for that loop.
 
-Statistics on Tictac AAE exchanges are also available via [`riak stats`](#riak-stats):
+Statistics on Tictac AAE exchanges are also available via [riak stats](#riak-stats):
 
 - `tictacaae_queue_microsec__max`, `tictacaae_queue_microsec_mean`.
   - The time spent by the vnode waiting for the controller to respond to an update (prompted by a PUT on the vnode).
   - May give an indication that the vnode is being delayed due to the overhead of maintaining a parallel-mode AAE store.
 - `tictacaae_root_compare`, `tictacaae_branch_compare`, `tictacaae_clock_compare`, `tictacaae_error`, `tictacaae_timeout`, `tictacaae_notsupported`.
-  - Counts of the exchanges by the status of the echange.
+  - Counts of the exchanges by the closing status of the exchange.
     - Intra-cluster exchanges follow [the same process as inter-cluster reconciliation exchanges](./ReplicationGuide.md#enabling-checks).
-    - `root_compare` and `branch_compare` indicate no deltas were discovered.
+    - `root_compare` or `branch_compare` indicate no deltas were discovered.
   - Because of the infrequency of exchanges, tracking the `*_total` statistics is normally required to gain understanding of trends in AAE activity.
 
 {: .note }
