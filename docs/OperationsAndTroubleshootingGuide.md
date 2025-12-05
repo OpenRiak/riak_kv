@@ -321,14 +321,99 @@ The stats represent the statistics on the node from which they were requested.  
 
 ### Monitoring Anti-Entropy
 
-> TODO - Pending PR which will add improved monitoring CLI
+The Tictac anti-entropy system can be monitored either through the command line, or via logs and statistics.  It is recommended to manage the configuration via `riak.conf` file, but some configuration can be dynamically updated at runtime using the command line.
+
+#### Monitoring and Controlling AAE - Command Line
+{: .d-inline-block }
+
+Available from Riak 3.4.0
+{: .label .label-purple }
+
+A number of monitoring and control functions are available through the command line interface - `riak admin tictacaae --help`.
+
+```console
+riak admin tictacaae rebuildtick|exchangetick|maxresults|rangeboost [-n NODE] [VAL]
+riak admin tictacaae rebuild-soon [-n NODE] [-p PARTITION] DELAY
+riak admin tictacaae rebuild-now [-n NODE] [-p PARTITION]
+riak admin tictacaae storeheads [-n NODE] [-p PARTITION] [VALUE]
+riak admin tictacaae tokenbucket [-n NODE] [-p PARTITION] [VALUE]
+riak admin tictacaae rebuild_schedule [-n NODE] [-p PARTITION] [RW RD]
+riak admin tictacaae treestatus [--format table|json] [--show STATES]
+```
+
+Configuration control commands `rebuildtick`, `exchangetick`, `maxresults`, and `rangeboost` are simple set/show commands, reading and setting the corresponding environment variables. The changes are applied to the local node by default, or on another node if specified with option `-n`.
+
+- The `exchangetick` alters the frequency of AAE activity, each vnode runs a tick, and each tick prompts an exchange.
+- The `rebuildtick` alters the frequency with which a vnode will check to see if a rebuild is due;
+  - The tick does not alter the actual frequency of rebuilds.
+- Changes to `rebuiltick` and `exchangetick` will take effect on the next tick, impacting the size of the next-but-one tick.
+  - Both the `rebuildtick` and `exchangetick` are set in milliseconds.
+- The `maxresults` limit controls the scope of repairs per exchange (a limit on [the segment IDs covered by an exchange](./RiakTheoryGuide.md#anti-entropy)).
+  - This is multiplied by the `rangeboost` if the exchange has been seeded with range information auto-discovered in previous exchanges.  For example if all deltas are in a certain modified date range.
+
+{: .warning }
+> Do not set the value of the `exchangetick` or `rebuildtick` to a value lower than double the riak_core `vnode_inactivity_timeout`.  The default `vnode_inactivity_timeout` is 60s, so setting this to a value lower than `120000` milliseconds would be unsafe.
+
+{: .note }
+> If the number of segment IDs being checked within an AAE exchange are significantly over 1000, then the acceleration associated with the restriction will tend towards zero.  So the combined value of `maxresults * rangeboost` should be kept to a value less than or equal to 1024.
+
+Configuration control commands `storeheads`, `tokenbucket`, `rebuild_schedule` will extract or inject the actual relevant values from or to the state of the running AAE controller processes.
+
+- Changing `storeheads` at runtime will also require a parallel store rebuild to take full effect.
+- Care is required when setting the `rebuild_schedule` to use the correct units (hours for `wait` and seconds for `delay`).
+- Disabling the `tokenbucket` protection is not recommended.
+
+{: .note }
+> It is recommended to control configuration through management of `riak.conf` not via the CLI.  The `riak admin tictacaae` commands should only be used when there is an urgent need to change the configuration on a running node, without requiring a restart.
+
+The action command `rebuild_soon` will set the next rebuild time on all the nodes and vnodes specified to the `delay` in seconds:
+
+- A rebuild on a parallel-mode AAE vnode will rebuild the parallel keystore from the vnode store, and then rebuild the cached trees from that parallel store.
+- A rebuild of a native vnode (i.e. with a single `leveled` backend), will rebuild the cached tree from the [leveled ledger](./RiakTheoryGuide.md#the-leveled-backend) keystore (but also checking for presence of the object in the journal).
+- Rebuilds are expensive processes: concurrent store rebuilds will be queued on the Best Endeavours [node worker pool](./OtherAPI.md#node-worker-pools), and tree rebuilds on the AF1 pool.
+- After the delay has been set, the rebuild will not be triggered until the next `rebuildtick` on each vnode after the delay.
+  - To immediately trigger a `rebuildtick` then use of the `rebuild_now` command is required after the `delay` has been changed.  `rebuild_now` only triggers a rebuild that is due, it will have no impact if a rebuild is not due (e.g. when `rebuild_soon` has not first been used).
+
+The `treestatus` command will collect information from running AAE controllers and produce a report:
+
+```console
+                                        Partition ID      Status      Last Rebuild Date     Next Rebuild Date   Controller PID  Key Store Status
+----------------------------------------------------  ----------  ---------------------  --------------------  ---------------  ----------------
+   1004782375664995756265033322492444576013453623296     unbuilt                  never   2025-03-21T19:14:21       <0.2780.0>            native
+                                                   0     unbuilt                  never   2025-03-23T04:59:09       <0.2296.0>            native
+   1073290264914881830555831049026020342559825461248     unbuilt                  never   2025-03-16T14:05:43       <0.2763.0>            native
+```
+
+#### Monitoring AAE - Logs and Statistics
+
+When Tictac AAE is enabled, each vnode has a queue of exchanges related to that vnode's supported partitions, and the vnode will loop through that queue, prompting a new exchange every `exchangetick`.  If the `n_val` is 3 this will require 5 exchanges, and exchanges are required for every `n_val` configured in the cluster.
+
+The result of each individual exchange is not logged by `riak_kv `unless it shows a discrepancy, although the details of each exchange can be found in the AAE logs with the tag `log_ref=ex*`.  A summary log is produced every loop from the `riak_kv_vnode` ("Tictac AAE loop completed"), giving the statistics for that loop.
+
+Statistics on Tictac AAE exchanges are also available via [`riak stats`](#riak-stats):
+
+- `tictacaae_queue_microsec__max`, `tictacaae_queue_microsec_mean`.
+  - The time spent by the vnode waiting for the controller to respond to a key update.
+  - Maybe an indication that the vnode is being delayed due to the maintenance of a parallel-mode AAE store.
+- `tictacaae_root_compare`, `tictacaae_branch_compare`, `tictacaae_clock_compare`, `tictacaae_error`, `tictacaae_timeout`, `tictacaae_notsupported`.
+  - Counts of the status of exchanges.
+  - Because of the infrequency of exchanges, tracking the `*_total` statistics is normally required to gain understanding of trends in AAE activity.
+
+{: .note }
+> Additional logging will be generated if significant deltas are discovered, and the AAE process enters into a repair loop: a process through which repairs are accelerated by using information about the deltas being discovered (i.e. any pattern of buckets and modified date ranges discovered in deltas).
+
+AAE will prompt the repair of delta using read repairs - so the [monitoring of read repairs](#logging-and-monitoring-of-read-repairs) provides further information.
+
+#### Monitoring legacy AAE
+
+If using the non-tictac AAE process, [information on the management and monitoring of AAE can be found in the legacy documentation](https://docs.riak.com/riak/kv/latest/using/cluster-operations/active-anti-entropy/index.html).
 
 ### Logging and monitoring of read repairs
 
 Read repairs will be invoked directly when a user GET request reveals an out-of-date or missing object within the preflist
 
 {: .note }
-> Although GETs will by default respond to the client on quorum responses, all GET processes continue to all responses have returned or timed out.  The read repair is then triggered if required, based on all responses not just the quorum.
+> Although GETs will by default respond to the client on quorum responses, all GET processes continue until all responses have returned or timed out.  The read repair is then triggered if required, based on all responses not just the quorum.
 
 Each read repair, will update the `read_repairs` and `read_repairs_total` statistic available [via riak stats](#riak-stats).  Other stats updates are also made:
 

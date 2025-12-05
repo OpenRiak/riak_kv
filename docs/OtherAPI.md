@@ -205,7 +205,23 @@ Where a fold is returning a list of keys, or keys and clocks, it is necessary fo
 
 ### AAE Folds via the Command Line
 
-> TODO - Awaiting PR
+AAE folds can be triggered via the command line using `riak admin tictacaae fold`:
+
+```console
+riak admin tictacaae fold list-buckets NVAL
+riak admn tictacaae fold find-keys BUCKET KEY_RANGE MODIFIED_RANGE sibling_count=COUNT|object_size=BYTES
+riak admin tictacaae fold find-keys BUCKET KEY_RANGE MODIFIED_RANGE sibling_count=COUNT|object_size=BYTES
+riak admin tictacaae fold find|count-tombstones KEY_RANGE SEGMENTS MODIFIED_RANGE
+riak admin tictacaae fold reap-tombstones KEY_RANGE SEGMENTS MODIFIED_RANGE CHANGE_METHOD
+riak admin tictacaae fold object-stats BUCKET KEY_RANGE MODIFIED_RANGE
+riak admin tictacaae fold erase-keys BUCKET KEY_RANGE SEGMENTS MODIFIED_RANGE CHANGE_METHOD
+riak admin tictacaae fold repair-keys BUCKET KEY_RANGE MODIFIED_RANGE
+```
+
+Each of these fold commands will call the corresponding aae_fold operation and write the results in JSON format in a file named `aaefold-%o-results-%t.json`, where `%o` will be substituted with the operation being performed, and `%t`, with the current datetime string, or to a file explicitly specified with option `-o`.
+
+{: .warning }
+> The outcome is written to the file only when the fold is completed; so if using `find_keys` the node must be able to hold all keys found in memory at least twice (as the result set needs to be copied between processes).
 
 ### AAE Folds via the Remote Console
 
