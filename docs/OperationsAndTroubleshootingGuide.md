@@ -366,13 +366,13 @@ Configuration control commands `storeheads`, `tokenbucket`, `rebuild_schedule` w
 {: .note }
 > It is recommended to control configuration through management of `riak.conf` not via the CLI.  The `riak admin tictacaae` commands should only be used when there is an urgent need to change the configuration on a running node, without requiring a restart.
 
-The action command `rebuild_soon` will set the next rebuild time on all the nodes and vnodes specified, to the `delay` in seconds:
+The action command `rebuild-soon` will set the next rebuild time on all the nodes and vnodes specified, to the `delay` in seconds:
 
 - A rebuild on a parallel-mode AAE vnode will rebuild the parallel keystore from the vnode store, and then rebuild the cached trees from that parallel store.
 - A rebuild of a native vnode (i.e. with a single `leveled` backend), will rebuild the cached tree from the [leveled ledger](./RiakTheoryGuide.md#the-leveled-backend) keystore (but also checking for presence of the object in the journal).
 - Rebuilds are expensive processes: concurrent store rebuilds will be queued on the Best Endeavours [node worker pool](./OtherAPI.md#node-worker-pools), and tree rebuilds on the AF1 pool.
 - After the delay has been set, the rebuild will not be triggered until the next `rebuildtick` on each vnode after the delay.
-  - To immediately trigger a `rebuildtick` then use of the `rebuild_now` command is required after the `delay` has been changed.  `rebuild_now` only triggers a rebuild that is due, it will have no impact if a rebuild is not due (e.g. when `rebuild_soon` has not first been used).
+  - To immediately trigger a `rebuildtick` then use of the `rebuild-now` command is required after the `delay` has been changed.  `rebuild-now` only triggers a rebuild that is due, it will have no impact if a rebuild is not due (e.g. when `rebuild-soon` has not first been used).
 
 The `treestatus` command will collect information from running AAE controllers and produce a report:
 
