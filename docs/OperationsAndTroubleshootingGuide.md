@@ -296,7 +296,7 @@ All components of Riak use the kernel logger for logging.  The logger can be con
 
 For example, an alternative configuration in `riak.conf` could be used such as:
 
-```
+```console
 logger.format = [time," [",level,"] pid=",pid," mfa=",mfa," ",msg,"\n"].
 logger.background_file = $(platform_log_dir)/async.log
 logger.default_filters = crash, error, progress, report, sasl, background, backend
