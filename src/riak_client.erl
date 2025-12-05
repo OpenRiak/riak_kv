@@ -1053,7 +1053,7 @@ query(Query, {?MODULE, [Node, _ClientId]}) ->
     TimeoutSecs = riak_kv_query:get_timeout_secs(Query),
     UpdQuery = riak_kv_query:finalise_request(Query),
     {ok, Pid, ReqId} = riak_kv_query_sup:start_query_worker(Node, [UpdQuery]),
-    ?LOG_INFO("Query started with worker ~w request ~0p", [Pid, ReqId]),
+    ?LOG_DEBUG("Query started with worker ~w request ~0p", [Pid, ReqId]),
     wait_for_reqid(ReqId, TimeoutSecs * 1000).
 
 

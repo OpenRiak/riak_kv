@@ -29,6 +29,7 @@
         obj_not_deleted/1,
         try_cast/3,
         fallback/4,
+        set_metric_domain/0,
         expand_value/3,
         expand_rw_value/4,
         expand_sync_on_write/2,
@@ -155,6 +156,9 @@ make_request(Request, Index) ->
     riak_core_vnode_master:make_request(Request,
                                         {fsm, undefined, self()},
                                         Index).
+
+set_metric_domain() ->
+    #{domain => [background, metric]}.
 
 get_bucket_option(Type, BucketProps) ->
     case lists:keyfind(Type, 1, BucketProps) of

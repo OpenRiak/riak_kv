@@ -282,7 +282,30 @@ Note that the result of `describe` request is the current schema documentation o
 
 ### Logging
 
-> TODO - Write after logger update.
+All components of Riak use the kernel logger for logging.  The logger can be configured via `riak.conf`, and there are five parts of the configuration:
+
+- Set the log level (`logger.level`);
+- Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required depends on the configuration of `additional_handlers`.
+- Set the log format (`logger.format`).
+  - See the [erlang logger guide](https://www.erlang.org/doc/apps/kernel/logger.html) for metadata available to add to logs e.g. `mfa`, `pid`, `file`, `line`, `domain`, `msg`. 
+- Set the logs to be filtered from the default (console) log file (`logger.default_filters`).
+  - This can be used to divert recurring or verbose logs to specific log files (if additional handlers are defined for these logs), or simply have them be ignored.
+- Set the additional handlers to defined for logs (`logger.additional_handlers`);
+  - Where logs are filtered from defaults, they can be diverted to alternative files using `additional_handlers`;
+  - Adding json to `additional_handlers` will write all logs to separate json file in a json format.
+
+For example, an alternative configuration in `riak.conf` could be used such as:
+
+```
+logger.format = [time," [",level,"] pid=",pid," mfa=",mfa," ",msg,"\n"].
+logger.background_file = $(platform_log_dir)/async.log
+logger.default_filters = crash, error, progress, report, sasl, background, backend
+logger.additional_handlers = crash, error, background, backend
+```
+
+It is possible to change logging at run time via [`remote_console`](#remote-console) by following the [standard Erlang logger guide](https://www.erlang.org/doc/apps/kernel/logger_chapter#example-add-a-handler-to-log-info-events-to-file).
+
+The `background` filter and handler is targeted at `tictacaae` logs, and recurring metric logs which are triggered by frequent ticks.  The `backend` filter and handler will presently only handle leveled logs.  The leveled log level can be set independently to the general log level in `riak.conf` using `leveled.log_level`: though it will not be possible to alter this log level at run-time as with the general log (e.g. the module log level cannot be reduced to a lower log level than the `leveled.log_loglevel` for leveled logs, the leveled filter is applied before the kernel logger filter).
 
 ### Riak Stats
 

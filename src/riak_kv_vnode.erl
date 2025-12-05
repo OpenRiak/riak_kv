@@ -293,8 +293,10 @@ maybe_create_hashtrees(true, State=#state{idx=Index, upgrade_hashtree=Upgrade,
                     monitor(process, Trees),
                     State#state{hashtrees=Trees, upgrade_hashtree=false};
                 Error ->
-                    ?LOG_INFO("riak_kv/~p: unable to start index_hashtree: ~p",
-                               [Index, Error]),
+                    ?LOG_INFO(
+                        "riak_kv/~p: unable to start index_hashtree: ~p",
+                        [Index, Error]
+                    ),
                     erlang:send_after(1000, self(), retry_create_hashtree),
                     State#state{hashtrees=undefined}
             end;
@@ -1163,11 +1165,15 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
     %% If store rebuild complete - then need to rebuild trees
     AAECntrl = State#state.aae_controller,
     Partition = State#state.idx,
-    ?LOG_INFO("AAE pid=~w partition=~w rebuild store complete " ++
-                "in duration=~w seconds",
-                [AAECntrl,
-                    Partition,
-                    timer:now_diff(os:timestamp(), ST) div (1000 * 1000)]),
+    ?LOG_INFO(
+        "AAE pid=~w partition=~w rebuild store complete "
+        "in duration=~w seconds",
+        [
+            AAECntrl,
+            Partition,
+            timer:now_diff(os:timestamp(), ST) div (1000 * 1000)
+        ]
+    ),
     queue_tictactreerebuild(AAECntrl, Partition, false, State),
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
     {noreply, State};
@@ -1183,8 +1189,11 @@ handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
             {noreply, State};
         TS ->
             ProcessTime = timer:now_diff(os:timestamp(), TS) div (1000 * 1000),
-            ?LOG_INFO("Rebuild process for partition=~w complete in " ++
-                        "duration=~w seconds", [Partition, ProcessTime]),
+            ?LOG_INFO(
+                "Rebuild process for partition=~w complete in "
+                "duration=~w seconds",
+                [Partition, ProcessTime]
+            ),
             {noreply, State#state{tictac_rebuilding = false}}
     end;
 
@@ -1281,7 +1290,8 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
                     State#state.tictac_deltacount,
                     State#state.tictac_exchangetime div (1000 * 1000),
                     LoopDuration div (1000 * 1000)
-                ]
+                ],
+                riak_kv_util:set_metric_domain()
             ),
             {
                 noreply,
@@ -1383,8 +1393,10 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
     
     case {TimeToRebuild < 0, RebuildPending} of 
         {false, _} ->
-            ?LOG_INFO("No rebuild as next_rebuild=~w seconds in the future",
-                        [TimeToRebuild / (1000 * 1000)]),
+            ?LOG_INFO(
+                "No rebuild as next_rebuild=~w seconds in the future",
+                [TimeToRebuild / (1000 * 1000)]
+            ),
             {noreply, State};
         {true, true} ->
             HowLong = 
@@ -1392,20 +1404,25 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
                     / (1000 * 1000),
             case HowLong > ?MAX_REBUILD_TIME of
                 true ->
-                    ?LOG_WARNING("Pending rebuild time is now " ++ 
-                                    "~w seconds for partition ~w " ++ 
-                                    "... something isn't right", 
-                                [HowLong, State#state.idx]);
+                    ?LOG_WARNING(
+                        "Pending rebuild time is now ~w seconds for "
+                        "partition ~w ... something isn't right", 
+                        [HowLong, State#state.idx]
+                    );
                 false ->
-                    ?LOG_INFO("Skip poke with rebuild pending duration=~w" ++
-                                " for partition ~w",
-                            [HowLong, State#state.idx])
+                    ?LOG_INFO(
+                        "Skip poke with rebuild pending duration=~w"
+                        " for partition ~w",
+                        [HowLong, State#state.idx]
+                    )
             end,
             {noreply, State};
         {true, false} ->
             % Next Rebuild Time is in the past - prompt a rebuild
-            ?LOG_INFO("Prompting tictac_aae rebuild for controller=~w", 
-                        [State#state.aae_controller]),
+            ?LOG_INFO(
+                "Prompting tictac_aae rebuild for controller=~w", 
+                [State#state.aae_controller]
+            ),
             ReturnFun = tictac_returnfun(State#state.idx, store),
             State0 = State#state{tictac_rebuilding = os:timestamp()},
             case aae_controller:aae_rebuildstore(
@@ -2747,8 +2764,10 @@ handle_info(retry_create_hashtree, State=#state{hashtrees=undefined}) ->
         undefined ->
             ok;
         _ ->
-            ?LOG_INFO("riak_kv/~p: successfully started index_hashtree on retry",
-                       [State#state.idx])
+            ?LOG_INFO(
+                "riak_kv/~p: successfully started index_hashtree on retry",
+                [State#state.idx]
+            )
     end,
     {ok, State2};
 handle_info(retry_create_hashtree, State) ->
@@ -2779,8 +2798,10 @@ handle_info({aae_pong, QueueTime}, State) ->
     QueueTimeMS = QueueTime div 1000,
     case QueueTimeMS >= State#state.max_aae_queue_time of
         true ->
-            ?LOG_INFO("AAE queue queue_time=~w ms prompting sync ping",
-                        [QueueTimeMS]),
+            ?LOG_INFO(
+                "AAE queue queue_time=~w ms prompting sync ping",
+                [QueueTimeMS]
+            ),
             StartDrain = os:timestamp(),
             R = aae_controller:aae_ping(State#state.aae_controller,
                                         StartDrain,

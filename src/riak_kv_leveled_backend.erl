@@ -809,7 +809,8 @@ log_fragmentation(Allocator) ->
             "Memory for allocator=~p "
             "mbcs_block_size=~w mbcs_carrier_size=~w "
             "sbcs_block_size=~w sbcs_carrier_size=~w",
-            [Allocator, MB_BS, MB_CS, SB_BS, SB_CS]
+            [Allocator, MB_BS, MB_CS, SB_BS, SB_CS],
+            riak_kv_util:set_metric_domain()
         ),
     ok.
 

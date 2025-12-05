@@ -347,7 +347,8 @@ init([FilePath]) ->
         app_helper:get_env(
             riak_kv,
             replrtq_logfrequency,
-            ?LOG_TIMER_SECONDS * 1000),
+            ?LOG_TIMER_SECONDS * 1000
+        ),
     erlang:send_after(LogFreq, self(), log_queue),
 
     {ok, #state{queue_filtermap = QFM,
@@ -528,8 +529,10 @@ handle_call({register_rtq, QueueName, QueueFilter}, _From, State) ->
     QFilter = State#state.queue_filtermap,
     case lists:keyfind(QueueName, 1, QFilter) of
         {QueueName, _, _} ->
-            ?LOG_WARNING("Attempt to register queue already present ~w",
-                            [QueueName]),
+            ?LOG_WARNING(
+                "Attempt to register queue already present ~w",
+                [QueueName]
+            ),
             {reply, false, State};
         false ->
             LQs = State#state.queue_local,
@@ -640,8 +643,11 @@ handle_info(log_queue, State) ->
                 lists:map(
                     MapFun,
                     [?FLD_PRIORITY, ?AAE_PRIORITY, ?RTQ_PRIORITY]),
-            ?LOG_INFO("QueueName=~w has queue sizes p1=~w p2=~w p3=~w",
-                [QueueName, P1L, P2L, P3L])
+            ?LOG_INFO(
+                "QueueName=~w has queue sizes p1=~w p2=~w p3=~w",
+                [QueueName, P1L, P2L, P3L],
+                riak_kv_util:set_metric_domain()
+            )
         end,
     lists:foreach(LogFun, State#state.queue_filtermap),
     erlang:send_after(State#state.log_frequency_in_ms, self(), log_queue),

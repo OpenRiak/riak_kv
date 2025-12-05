@@ -410,9 +410,10 @@ handle_cast({reply_complete, ReqID, Result}, State) ->
                 % this to be equivalent to a crash, and so requiring a full
                 % pause to backoff
                 ?LOG_INFO(
-                    "exchange=~w failed to complete in duration=~w s" ++
+                    "exchange=~w failed to complete in duration=~w s"
                     " sync_state=unknown",
-                    [ReqID, Duration div 1000000]),
+                    [ReqID, Duration div 1000000]
+                ),
                 riak_kv_stat:update({ttaaefs, sync_fail, Duration}),
                 {?CRASH_TIMEOUT, State#state{previous_success = false}};
             {SyncState, 0} when SyncState == root_compare;
@@ -422,14 +423,17 @@ handle_cast({reply_complete, ReqID, Result}, State) ->
                 ?LOG_INFO(
                     "exchange=~w complete result=~w in duration=~w s" ++
                     " sync_state=true",
-                    [ReqID, Result, Duration div 1000000]),
+                    [ReqID, Result, Duration div 1000000]
+                ),
                 disable_tree_repairs(),
                 {?LOOP_TIMEOUT,
                     State#state{previous_success = LastExchangeStart}};
             _ ->
-                ?LOG_INFO("exchange=~w complete result=~w in duration=~w s" ++
-                                    " sync_state=false",
-                                [ReqID, Result, Duration div 1000000]),
+                ?LOG_INFO(
+                    "exchange=~w complete result=~w in duration=~w s"
+                    " sync_state=false",
+                    [ReqID, Result, Duration div 1000000]
+                ),
                 riak_kv_stat:update({ttaaefs, sync_nosync, Duration}),
                 % If exchanges start slowing, then start increasing the pauses
                 % Gradually degrade in response to an increased workload
