@@ -32,3 +32,6 @@ callouts:
 
 back_to_top: true
 back_to_top_text: "Back to top"
+
+mermaid:
+  version: "11.12.2"

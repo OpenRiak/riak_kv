@@ -128,11 +128,35 @@ The work to compare between stores has a low resource cost.  The work to discove
 
 The anti-entropy trees have 1,024 branches, and each branch has 1,024 leaves.  Each key in the store is mapped by a hash algorithm into a given leaf.  The hash value of that leaf is calculated by taking a hash of the Key and version vector combined, and then performing an `xor` operation on all the hashes within that leaf.  The hash value for each branch is the hash of each leaf in the branch combined using `xor`.
 
-Each vnode has a cached tree for each preflist the vnode supports (with a single `n_val` in the cluster there will be `n_val` preflists in each vnode, and hence `n_val` cached trees per vnode). The cached tree represents the state for the whole preflist on the vnode.  When an object is modified, then the object key and the both the previous and current version vector is sent to the `aae_controller` for the vnode; which will update the correct preflist's tree cache, using a double xor operation.  In effect one xor to remove the previous hash, and one xor to add the new hash).
+Each vnode has a cached tree for each preflist the vnode supports (with a single `n_val` in the cluster there will be `n_val` preflists in each vnode, and hence `n_val` cached trees per vnode). The cached tree represents the state for the whole preflist on the vnode.  When an object is modified, then the object key and the both the previous and current version vector is sent to the `aae_controller` for the vnode; which will update the correct preflist's tree cache, using a double xor operation.  In effect one xor to remove the previous hash, and one xor to add the new hash.
 
-The intra-cluster anti-entropy can then compare the preflist tree for one vnode, with the preflist tree of another vnode within the same preflist, to confirm if the vnode's are in-sync for that preflist.  To make that comparison, only the 1,024 hashes (4KB) of the branches are compared.  If there is a delta, then the same branch comparison will be run in a slow loop - checking for deltas which are constant across the loops.  If the loop stabilises on a non-zero number of deltas, then the 1,024 leaves in those branches are compared in a loop to find a constant delta.  If there is no constant delta, the trees are considered in sync (i.e. any discovered delta was a matter of timing).
+The intra-cluster anti-entropy can then compare the preflist tree for one vnode, with the preflist tree of another vnode within the same preflist, to confirm if the vnode's are in-sync for that preflist.  To make that comparison, only the 1,024 hashes (4KB) of the branches are compared, this is known as the root of the tree.  If there is a delta, then the same comparison will be run in a slow loop - checking for deltas which are constant across the loops.
 
-If a set of leaves is discovered to be out-of-sync, then there must be a comparison between the objects in those leaves to discover which objects need repair.  To compare the objects between vnodes, only the Version Vectors need to be compared.  To find the Keys and Version Vectors for a set of leaves, a fold over the whole keystore (either native or parallel) is required - however that fold is passed the segment IDs (an integer identifier for the leaves), and the store has in-built hints to filter out blocks of keys that do not contain segment IDs of interest.  This means the cost of finding Keys and Version Vectors is significant, but mitigated by the segment ID acceleration.
+```mermaid
+---
+title: Anti-Entropy Exchange - root_compare
+---
+flowchart TD
+    A[Start root_compare] --> B@{ shape: fork }
+    B --> C[Fetch Pink Root]
+    B --> D[Fetch Blue Root]
+    C --> E@{ shape: fork }
+    D --> E@{ shape: fork }
+    E --> F@{ shape: subproc, label: "Compare Roots" }
+    F -- Roots Match --> G[in-sync]
+    F -- Roots MisMatch --> H@{ shape: subproc, label: "Intersect With Previous Delta"}
+    H -- Intersection Empty --> G
+    H -- Sets Match --> I@{ shape: subproc, label: "Limit Subset to Forward by Max Results"}
+    H -- Intersection Reduced --> K@{ shape: subproc, label: "Pause" }
+    K --> A
+    I --> J@{ shape: subproc, label: "branch_compare" }
+```
+
+If the `root compare` loop stabilises on a non-zero number of deltas, then the 1,024 leaves in those branches are compared in a loop to find a constant delta - this is then the `branch_compare` loop.  If there is no constant delta, the trees are considered in sync (i.e. any discovered delta was a matter of timing).
+
+The `branch_compare` loop is an identical process to the `root_compare` loop, and if that confirms a consistent delta the `clock_compare` process is triggered.
+
+If a set of leaves is discovered to be out-of-sync following `branch_compare`, the `clock_compare` process is initiated.  A `clock_compare` is a comparison between the objects in a subset of leaves to discover which objects need repair.  To compare the objects between vnodes, only the Version Vectors need to be compared.  To find the Keys and Version Vectors for a set of leaves, a fold over the whole keystore (either native or parallel) is required - however that fold is passed the segment IDs (an integer identifier for the leaves), and the store has in-built hints to filter out blocks of keys that do not contain segment IDs of interest.  This means the cost of finding Keys and Version Vectors is significant, but mitigated by the segment ID acceleration.
 
 To limit the volume of data to be compared, and improve the performance of searches for Keys and Version Vectors, the number of segment results to be compared as a result of any exchange is limited.  All anti-entropy processes will also try and gather information from previous delta discoveries to intelligently reduce the scope of future discoveries.  For example, by looking at the modified date range in which differences fall, or if they are limited to specific buckets.  With information from previous deltas, the cost of finding more deltas can be reduced.
 
@@ -241,6 +265,26 @@ The leveled datastore is designed using an actor model, the primary actors being
   - Both the Inker and Penciller can spawn clones, new processes with a replica of the manifest, registering the existence of those clones (or snapshots) in the primary Inker or Penciller.
 - Monitor;
   - A central process for receiving stats from the other processes and reporting via scheduled logs the latest statistics for the store.
+
+```mermaid
+---
+title: Leveled Process Relationships
+---
+stateDiagram-v2
+    [*] --> Bookie: All Requests
+    Bookie --> Penciller: Keys/Indexes/Metadata Requests
+    Penciller --> PManifest: Controls
+    PManifest --> Ledger: Describes
+    PClerk --> Penciller: Request Compaction Work
+    PClerk --> Penciller: Send Manifest Updates
+    PClerk --> Ledger: Compacts
+    Bookie --> Inker: Object Requests
+    Inker --> IClerk : Prompt Compaction Work
+    IClerk --> Inker: Send Manifest Updates
+    IClerk --> Journal: Compacts
+    Inker --> IManifest: Controls
+    IManifest --> Journal: Describes
+```
 
 #### Caching and Acceleration
 
