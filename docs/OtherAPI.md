@@ -90,7 +90,7 @@ Used to replicate a range of keys to another cluster (or indeed any consumer of 
 {: .d-inline-block }
 
 Available from Riak 3.0.8
-{: .label .label-purple }
+{: .label .label-green }
 
 Used to prompt read repair in a bucket, to fix an entropy problem within the cluster, potentially limited by key range or modified date range.
 

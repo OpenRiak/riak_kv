@@ -145,7 +145,7 @@ There are a number of configurable options within the leveled backend, that can 
 
 Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
-- `leveled.compression_method`; should be set to `zstd`, unless objects are sent to Riak compressed, in which case the compression method should be configured as `none`.
+- <span>Available from Riak 3.2.3</span>{: .label .label-green }`leveled.compression_method`; should be set to `zstd`, unless objects are sent to Riak compressed, in which case the compression method should be configured as `none`.
   - in testing `zstd` has been demonstrated to be the most efficient available option (when compared to `native` which uses zlib compression, or `lz4`).
 - `leveled.ledger_compression`; if `compression_method` is set to `none`, then compression should still be enabled here e.g. set to `zstd`.
   - the ledger does not store object values, but stores the object keys and metadata in blocks by key order.

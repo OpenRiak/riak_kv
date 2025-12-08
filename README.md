@@ -30,7 +30,7 @@ Overview documentation on is available in this repository.  The documentation is
 - [Replication Guide](/docs/ReplicationGuide.md);
 - [Object API](/docs/ObjectAPI.md);
 - [Query API](/docs/QueryAPI.md);
-- [OtherAPI](/docs/OtherAPI.md);
+- [Other API](/docs/OtherAPI.md);
 - [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md);
 - [Riak Theory Guide](/docs/RiakTheoryGuide.md).
 

@@ -189,7 +189,7 @@ There are five configuration items required to set up a sink for real-time repli
 - `replrtq_sinkworkers = <worker_count>`
   - The count of sink workers which will be used on this node to fetch replicated objects from the source.
   - May be limited to control the impact of a sink cluster on the source cluster, in particular when fetching a backlog from the queue.
-- `replrtq_peer_discovery = enabled`
+- <span>Available from Riak 3.0.10</span>{: .label .label-green }`replrtq_peer_discovery = enabled`
   - Enables a peer discovery process, which will use the configured peer to discover other peers in the cluster.
   - The cluster listeners on that protocol must be listening on reachable IP addresses and ports for peer discovery to work (i.e. binding a listener to `0.0.0.0` will not work).
   - If the application requires the standard Riak listener to be bound to an unreachable IP address, then the alternative protocol should be used for replication, with the alternative listener configured on a reachable address.
@@ -232,7 +232,7 @@ Further configuration can be added for replication using `riak.conf`:
 - `replrtq_prompt_max_seconds`;
   - The peer discovery is refreshed periodically based on this timer.
   - if a node is joined, downed or left; the change in peer availability will be detected at the next prompt.
-- `repl_reap` <span>Available from Riak 3.0.18</span>{: .label .label-green }
+- <span>Available from Riak 3.0.18</span>{: .label .label-green }`repl_reap`
   - Whether reap requests should be replicated like other changes.
   - The default is `disabled` for backwards compatibility, but this will require reap jobs to be coordinated across clusters.
   - When using a `delete_mode` of `keep`, then the default should be changed and `repl_reap` should be `enabled`.
@@ -316,7 +316,10 @@ All the keys that hash to those segment IDs need to be compared to be certain to
 
 If it can be determined from the results of previous checks, that all deltas are likely to be within a given time range (by object last_modified_date), or in a specific bucket; then this information can be used to narrow the scope of the scan in `clock_compare`.  A comparison reduced in scope this way is a `ttaaefs_rangecheck`, and can be substantially quicker than a `ttaaefs_allcheck`.
 
-From Riak 3.0.15, a `ttaaefs_autocheck` was introduced.  This is a check that uses context to select an appropriate `ttaaefs_rangecheck` when possible, and only fallback to `ttaaefs_allcheck` if necessary.  For example, if a cluster falls out of sync, it will assume first that the delta is a modified date range since the last successful check.
+<span>Available from Riak 3.0.15</span>{: .label .label-green }The preferred check approach is to use `ttaaefs_autocheck`.  This is a check that uses context to select an appropriate `ttaaefs_rangecheck` when possible, and only fallback to `ttaaefs_allcheck` if necessary.  For example, if a cluster falls out of sync, it will assume first that the delta is a modified date range since the last successful check.
+
+{: .highlight }
+> The ability to set a schedule of specific checks (e.g. `ttaaefs_allcheck`, `ttaaefs_hourcheck` etc) has been maintained, but from Riak 3.0.15 it is recommended that the schedule of checks should only be configured to use `ttaaefs_autocheck`.
 
 The schedule of reconciliation jobs is configured for each peer by setting:
 
@@ -609,7 +612,6 @@ riak_client:reset_node_for_coverage()
 ```
 
 The `remove_node_from_coverage` function will drop the local node out of any coverage plans being generated within the cluster (the equivalent of setting participate_in_coverage to false).  The `reset_node_for_coverage` will return the node to its configured setting (in the riak.conf file loaded at start up).
-
 
 #### Suspend full-sync
 

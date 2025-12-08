@@ -288,9 +288,9 @@ All components of Riak use the kernel logger for logging.  The logger can be con
 - Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required depends on the configuration of `additional_handlers`.
 - Set the log format (`logger.format`).
   - See the [erlang logger guide](https://www.erlang.org/doc/apps/kernel/logger.html) for metadata available to add to logs e.g. `mfa`, `pid`, `file`, `line`, `domain`, `msg`. 
-- Set the logs to be filtered from the default (console) log file (`logger.default_filters`).
+- <span>Available from Riak 3.4.0</span>{: .label .label-purple }Set the logs to be filtered from the default (console) log file (`logger.default_filters`).
   - This can be used to divert recurring or verbose logs to specific log files (if additional handlers are defined for these logs), or simply have them be ignored.
-- Set the additional handlers to defined for logs (`logger.additional_handlers`);
+- <span>Available from Riak 3.4.0</span>{: .label .label-purple }Set the additional handlers to defined for logs (`logger.additional_handlers`);
   - Where logs are filtered from defaults, they can be diverted to alternative files using `additional_handlers`;
   - Adding json to `additional_handlers` will write all logs to separate json file in a json format.
 
