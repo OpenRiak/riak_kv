@@ -190,7 +190,10 @@ To discover what combinations may be supported given a cluster (given a count of
 
 #### Proactive reconciliation
 
-Riak has support for reactive management of data: as part of every GET request a read repair process may be triggered if all vnodes are not up-to-date; as part of failure management a handoff process will merge data captured on temporary fallback vnodes back into primary vnodes.  It can also support proactive reconciliation - known as [active anti-entropy (AAE)](./RiakTheoryGuide.md#anti-entropy).  Configuring AAE will trigger a background process that will continually verify that the most recent version of each object is correctly stored in all required locations, and prompt repairs should the verification process highlight discrepancies.
+Riak has support for proactive reconciliation within a cluster; known as [active anti-entropy (AAE)](./RiakTheoryGuide.md#anti-entropy).  Configuring AAE will trigger a background process that will continually verify that the most recent version of each object is correctly stored in all required locations, and prompt repairs should the verification process highlight discrepancies.  This is in addition to reactive management which is always enabled within Riak: as part of every GET request a read repair process may be triggered if all vnodes are not up-to-date; as part of failure management a handoff process will merge data captured on temporary fallback vnodes back into primary vnodes.
+
+{: .highlight }
+Proactive reconciliation provides continuous assurance that data is correctly secured across multiple devices within a cluster: it is verification as well as correction.  It is of particular use where data may be stored for long periods without being read, so that the read-repair reactive management is never triggered.
 
 There are two forms of proactive intra-cluster reconciliation in Riak:
 
@@ -206,7 +209,8 @@ There are two forms of proactive intra-cluster reconciliation in Riak:
   - Requires a separate keystore for all backends.
   - More aggressive than Tictac AAE at resolving discovered discrepancies.
 
-If neither reconciliation method is configured there are long-term risks of data loss, when Riak is used to store _cold_ data that is very rarely read.
+{: .warning }
+> If Tictac AAE is not enabled, as well as risk of data loss when Riak is used to store _cold_ data that is very rarely read; there is also the loss of the operator functionality associated with [AAE Folds](./OtherAPI.md#aae-fold-api).
 
 ### Intra-cluster data resilience - changing the choice
 
