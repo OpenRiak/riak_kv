@@ -384,6 +384,6 @@ The functionality of Strong Consistency is unchanged since Riak 2.2.3, so refer 
 
 ## Write Once Path API
 
-The use of the write once path is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.
+The use of the write once path is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.  The write once path was added to improve performance in very specific use cases, but broader changes have reduced the significance of any performance delta previously gained.  The write once path was not feature compatible with other write methods, and the preference of the OpenRiak community in the future is to reduce the number of caveats required to be understood when working with Riak.
 
 The functionality of the Write Once Path is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/developing/app-guide/write-once/index.html) for further information.
