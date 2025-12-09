@@ -125,7 +125,7 @@ The most common options used are:
 - `deleted_vclock`; if an object is not_found, but is in fact a tombstone, should the version vector of the tombstone be returned, to be used if it is required to update the deleted object with a new object.  Only valid for read requests.
 - `timeout`; the maximum time (in milliseconds) to wait for a response from Riak before returning a timeout error.
 
-There are four other potential PUT and GET options related to the balance between consistency and availability: `w`, `r`, `sloppy_quorum` and `dw`; but changing of these defaults is not recommended without an understanding of the underlying Riak code.
+There are four other potential PUT and GET options related to the balance between consistency, performance and availability: `w`, `r`, `sloppy_quorum` and `dw`; but changing of these defaults on a per-request basis is not recommended.
 
 ## Conditional Requests
 {: .d-inline-block }

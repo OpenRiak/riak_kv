@@ -196,9 +196,9 @@ As with other rolling operations, the operations can be accelerated through the 
 Advanced information and debugging tools are available from the command line via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for: [accessing objects](#accessing-objects), [running AAE folds](#running-aae-folds), [access to specific administration commands](#riak_client-remote_console-commands) as well as [advanced debugging and troubleshooting](#advanced---troubleshoot-via-the-erlang-vm).
 
 {: .warning }
-If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core, so it is wise to monitor for the presence of such long-lived hanging sessions.
+If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core.
 
-Remote console sessions are distinguished with `ps -ef` by the `-progname` switch.  Riak applications will have ``--progname <PATH>/bin/riak``; whereas `remote_console` sessions will have ``progname <path>/bin/erl``.
+It is good practice to monitor for the presence of long-lived hanging sessions, if `remote_console` is used.  Remote console sessions are distinguished with `ps -ef` by the `-progname` switch: Riak applications will have ``--progname <PATH>/bin/riak``; whereas `remote_console` sessions will have ``progname <path>/bin/erl``.
 
 All single commands run from riak remote_console can be scripted from the command line using `riak eval`.  For example, to run the riak_client:repair_node() function from a script:
 

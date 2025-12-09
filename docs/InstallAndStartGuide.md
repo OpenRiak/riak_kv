@@ -334,6 +334,6 @@ If using the mutli-backend, the bucket property `backend` can be used to map buc
 
 #### Property - General read/write parameters
 
-There are read and write parameters that can further control the balance between consistency and availability - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  Read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+There are read and write parameters that can be used to control the balance between consistency, performance and availability - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  Read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
 
 There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the preferred solution to overload scenarios is to address the root cause of these deltas between vnode busyness.
