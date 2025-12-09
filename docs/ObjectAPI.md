@@ -302,7 +302,7 @@ The Object API is designed to be the most efficient of all the Riak APIs; it is 
 
 In summary, the performance targets for the Object API are:
 
-- With high-speed infrastructure, a 1ms mean response times should be achievable assuming small object sizes and a limited number of index entries per object.
+- With high-speed infrastructure, a 1ms mean response time should be achievable assuming small object sizes and a limited number of index entries per object.
 - Without contention and under healthy conditions, for objects of o(100KB) in size with o(10) index entries per object (via the HTTP API) into a store with > 100M records, as measured from the application;
   - 3ms per GET (mean).
   - 7ms per PUT (mean).

@@ -343,7 +343,8 @@ Before using data-types, there are important caveats within the current implemen
 - Both sets and maps have specific constraints in Riak 3.4 where the growth of components within an object is not handled efficiently.
 - There is no in-built support for querying data within data-types, the Data Type API is incompatible with the [Query API](./QueryAPI.md).
 
-> The approach to supporting data types is expected to be evolved significantly in future Riak releases; which may result in significant changes to both sets and maps, and change the use of those data types in future releases.
+{: .note }
+> The approach to supporting data types is expected to be evolved significantly in future Riak releases; which may result in significant changes to both sets and maps, and change the use of those data types in those releases.
 
 ## The Map/Reduce API
 

@@ -316,7 +316,7 @@ If all deltas are shown to be transient; then `in_sync = true` is the result of 
 
 In the final `clock_compare` stage, the keys and version vectors (clocks) are compared between the clusters.  The comparison behaviour will differ depending on the type of check that was requested.
 
-All the keys that hash to those segment IDs need to be compared to be certain to find the delta, and this requires a full-scan of the keystore - and such a scan is a `ttaaefs_allcheck`.  This scan is accelerated by skipping over blocks of keys on disk, that do not have any keys with a matching segment ID (using a hash-based filter cached with the block inside the leveled keystore).  Even with acceleration, the scan has a non-trivial cost in large stores.
+All the keys that hash to those segment IDs need to be compared to be certain to find the delta, and this requires a full-scan of the keystore - and such a scan is a `ttaaefs_allcheck`.  This scan is accelerated by skipping over blocks of keys on disk that do not have any keys with a matching segment ID (using a hash-based filter cached with the block inside the leveled keystore).  Even with acceleration, the scan has a non-trivial cost in large stores.
 
 If it can be determined from the results of previous checks, that all deltas are likely to be within a given time range (by object last_modified_date), or in a specific bucket; then this information can be used to narrow the scope of the scan in `clock_compare`.  A comparison reduced in scope this way is a `ttaaefs_rangecheck`, and can be substantially quicker than a `ttaaefs_allcheck`.
 
@@ -504,7 +504,7 @@ The mismatched_segments is an estimate of the scope of damage to the tree.  Even
 
 ### Statistics available via Riak stats
 
-The [Riak status statisitcs](./OperationsAndTroubleshootingGuide.md#riak-stats) set includes stats relevant to monitoring replication:
+The [Riak status statistics](./OperationsAndTroubleshootingGuide.md#riak-stats) set includes stats relevant to monitoring replication:
 
 The following counters track activity on real-time replication sources:
 
@@ -678,7 +678,7 @@ Some notes on `riak_repl` and the comparison to NextGen replication in Riak:
 - `riak_repl` has an anti-entropy based method of full-sync reconciliation, using the legacy active anti-entropy service.
   - The AAE-based full-sync in `riak_repl` is faster at resolving deltas, but will fail to complete during tree rebuilds;
   - Users of full-sync have needed to use manually prompted rebuild windows to address this problem (i.e. a period where full-sync is suspended, and rebuilds are completed in parallel).
-  - As clusters scale, rebuild windows may become unreliable and unmanageable.
+  - As clusters scale, AAE rebuild windows may become unreliable and unmanageable.
 - `riak_repl` has a keylisting form of full-sync which will do a full key and clock comparison on a vnode-by-vnode basis.
   - A keylisting full-sync can be resource intensive and will take a significant amount of time to complete on clusters of non-trivial scale.
 
