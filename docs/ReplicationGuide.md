@@ -6,12 +6,16 @@ layout : default
 
 # Riak KV - Replication and Reconciliation
 
-There are a number of replication versions in Riak:
+In the evolution of Riak, there have been two generations of solutions developed to support replication and reconciliation between clusters:
 
-- Three different versions of the, now legacy, `riak_repl` replication which was the recommended replication approach prior to Riak 3.0.10;
-- The "NextGen" replication solution which is the recommended approach in Riak 3.4.
+- The now legacy, [`riak_repl` replication](#legacy-replication---riak_repl) which was the recommended replication approach prior to Riak 3.0.10.
+  - The `riak_repl` application has evolved through multiple versions of a real-time replication, that supported a push-based model to reliably deliver changes from a source cluster to a sink cluster;
+  - The replication approach is backed-up by a reconciliation approach focused on time-consuming key-by-key comparisons, running in the background between clusters on a vnode-by-vnode basis.
+- The NextGen replication solution which is the recommended approach in Riak 3.4.
+  - The real-time replication approach is by comparison a pull-based model, to allow a sink cluster to fetch results from the source;
+  - The replication approach is backed-up with reconciliation through rapid low-cost comparisons between the state of clusters using anti-entropy information, where the comparisons run reliably between clusters with different configurations (e.g. ring-size, node count or n_val).
 
-This guide covers the "NextGen" replication solution, and further information on alternatives are linked from the [legacy replication section](#legacy-replication---riak_repl).
+This guide covers the NextGen replication solution, and further information on alternatives are linked from the [legacy replication section](#legacy-replication---riak_repl).
 
 Replication is considered to have three stages:
 
@@ -172,7 +176,7 @@ For replication, the real-time replication source must be enabled on every node 
 
 ### Enable a Real-Time Sink
 
-There are five configuration items required to set up a sink for real-time replication.  They are all set via `riak.conf`:
+There are five configuration items required to set up a sink for real-time replication: enablement, queue definition, peers, workers and peer discovery.  All elements are set via `riak.conf`:
 
 - `replrtq_enablesink = enabled`.
 - `replrtq_sinkqueue = <sink_cluster_name>`;

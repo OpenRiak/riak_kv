@@ -24,7 +24,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 
 ## Replace, Repair and Recover
 
-There are several potential repair and recovery processes for handling different scenarios:
+There are seven potential repair and recovery processes for handling different scenarios:
 
 - [Proactive replacement](#proactive-replacement)
 - [Reactive replacement](#reactive-replacement)

@@ -311,7 +311,7 @@ The [PB Object API is described in the riak_pb repository](https://github.com/Op
 
 ## The Fetch API
 
-The fetch API supports three requests:
+The fetch API supports three requests: the GET of a membership request, the GET from a queue and the POST to a queue.
 
 | URL | Request parameters | Method | Description |
 |:--------------|:--------------|:--------------|:--------------|
