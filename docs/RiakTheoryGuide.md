@@ -109,10 +109,11 @@ Detailed information on the implementation of dotted version vectors in Riak can
 
 ## Background processes
 
-Riak has a number of background processes:
+Riak has three main categories of background processes:
 
 - The primary background process in Riak, when configured, is [Tictacaae active anti-entropy](#anti-entropy), the continuous reconciliation process used to ensure all vnodes are eventually consistent.
-- There are a [number of queue based](#disk-backed-queues) background processes, through which non-urgent activity can be deferred, to manage the impact of this activity on the performance of externally prompted requests.
+  - This exists for both intra-cluster reconciliation and inter-cluster reconciliation if required.
+- [Queue based](#disk-backed-queues) background processes, through which non-urgent activity can be deferred, to manage the impact of this activity on the performance of externally prompted requests.
 - Maintenance of the distributed knowledge of the cluster state is managed by [background processes within the riak_core application](#riak-core-cluster-management).
 
 ### Anti-Entropy
@@ -173,7 +174,7 @@ The cost of resolving entropy inter-cluster is higher than with intra-cluster en
 
 ### Disk-backed Queues
 
-There are a number of internal Riak services that are built on a common queue behaviour: real-time replication, the reaper, the eraser and the reader.
+There are four internal Riak services that are built on a common queue behaviour: real-time replication, the reaper, the eraser and the reader.
 
 These queues have a small in-memory portion, but once the queues grow beyond that minimal size they are written to disk using the internal Erlang `disk_log` facility.  The use of disk for the queue is solely to control the amount of memory consumed by the queue, as Riak has no protection against the overuse of memory within a node.  When a node is restarted, the disk-based queues will be erased.  This prevents a situation where a restart due to corruption of a queue, leads to a continuous cycle of reboots as the same corruption is reprocessed.
 
@@ -181,7 +182,7 @@ Each queue has multiple priorities, and an item added to the queue is assigned a
 
 ### Riak Core cluster management
 
-The Riak KV store is built on top of a generic platform for building distributed systems called `riak_core`.  The `riak_core` system, provides a number of underlying components with which Riak is rebuilt:
+The Riak KV store is built on top of a generic platform for building distributed systems called `riak_core`.  The `riak_core` system provides the underlying components for controlling and managing a clustered application:
 
 - `riak_core_ring`
   - An implementation of [the ring](#the-ring---the-distribution-of-vnodes), the distribution function in Riak.

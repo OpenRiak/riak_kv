@@ -10,6 +10,8 @@ Riak KV provides a key/value datastore, optimised for very reliable storage of r
 
 As well as an Object API, Riak also supports a Query API: allowing for range queries on secondary indexes, with additional query capability from the application of filter expressions to projected attributes appended to the index sort keys.
 
+Riak KV is designed to be deployed in both single-cluster and multi-cluster environments.  There is support not just real-time replication between clusters, but also continuous reconciliation to verify that data is in-sync and on common versions, even between clusters that have many billions of objects.
+
 ## OTP version support
 
 Riak is built on top of the [Erlang/OTP platform](https://github.com/erlang/otp).  Supported versions for this release are:

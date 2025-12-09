@@ -123,8 +123,9 @@ The most common options used are:
 - `pw`; can be set to 1..N where N is the `n_val` for that object.  Stipulates how many primary vnodes must have acknowledged acceptance of a store request before returning a positive response to the client.  Only valid for write requests.
 - `return_body`; should the updated object be returned in response to a store request.  Only valid for write requests.
 - `deleted_vclock`; if an object is not_found, but is in fact a tombstone, should the version vector of the tombstone be returned, to be used if it is required to update the deleted object with a new object.  Only valid for read requests.
+- `timeout`; the maximum time (in milliseconds) to wait for a response from Riak before returning a timeout error.
 
-There are a number of other options, but changing of these defaults is not recommended without an understanding of the underlying Riak code:  `w`, `r`, `dw`, `asis`, `sloppy_quorum` and `timeout`.
+There are four other potential PUT and GET options related to the balance between consistency and availability: `w`, `r`, `sloppy_quorum` and `dw`; but changing of these defaults is not recommended without an understanding of the underlying Riak code.
 
 ## Conditional Requests
 {: .d-inline-block }

@@ -27,7 +27,7 @@ When using any other backend or multi-backend this will require an additional pa
 
 The AAE Fold API:
 
-- Supports [a number of different fold types](#supported-fold-types);
+- Supports [more than ten different fold types](#supported-fold-types);
 - [Are throttled to minimise the impact on other cluster operations, and have query options that may improve efficiency](#performance-and-efficiency).
 
 The AAE Fold API has four potential interfaces:

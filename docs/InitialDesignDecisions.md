@@ -6,9 +6,7 @@ layout : default
 
 # Riak KV - Initial Design Decisions
 
-When starting with Riak a number of initial design decisions need to be made at the outset of the project.  This is a summary of those decisions, and the factors relevant to making each choice.
-
-The initial design decisions are split into the following categories:
+There are six initial design decisions that need to be considered at the outset of a Riak KV  project.  The priority design choices are:
 
 - [Database backend](#database-backend)
 - [Ring size](#ring-size)
@@ -17,10 +15,10 @@ The initial design decisions are split into the following categories:
 - [Deleting data](#deleting-data)
 - [Mapping data to objects](#mapping-data-to-objects)
 
-It is not always possible to get all decisions correct first-time in the design phase.  Each choice has supporting guidance and how to transition to an alternative configuration.
+It is not always possible to get all decisions correct first-time in the design phase.  Within this page, as well as supporting information for making the choice, there is also guidance and how to transition to an alternative configuration.
 
 {: .highlight }
-> Riak clusters commonly run for decades, dealing with significant functional and non-functional changes in applications during their lifespan.
+> Riak clusters commonly run for decades, dealing with significant functional and non-functional changes in applications during their lifespan.  Making good decisions up-front is helpful, but not critical.
 
 ## Database backend
 
@@ -123,7 +121,7 @@ Testing of Riak is focused on single-backend solutions, but multi-backend (bitca
 The database backend configuration is local to a node.  Migrating the database backend will require a [rolling replacement](./OperationsAndTroubleshootingGuide.md#rolling-replacement) of one or more nodes at a time.  For example, a multi-backend configuration with bitcask and in-memory backends and parallel-mode Tictac AAE, can be upgraded to a single leveled backend with native Tictac AAE (assuming the TTL capability requirement is not being utilised).
 
 {: .note }
-> A rolling replacement is a safe and reliable process even when a cluster is under application load; although it would be normal to schedule the process over a number of days in a large-scale production Riak cluster
+> A rolling replacement is a safe and reliable process even when a cluster is under application load; although it would be normal in a large-scale production Riak cluster for a complete rolling replacement to take days and not hours.
 
 Where different backends support different cluster-wide features (e.g. support of the [Riak Query API](./QueryAPI.md)), then the feature will only be usable when all nodes have updated.
 
@@ -131,7 +129,7 @@ Where different backends support different cluster-wide features (e.g. support o
 
 ### Ring size - making a choice
 
-A Riak cluster distributes data across a number of individual databases (known as vnodes), and those databases are then distributed across the physical nodes and locations of the cluster.  The distribution of data within Riak is referred to as [the ring](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes). The number of vnodes in the databases is required to be a factor of 2, and bigger than the total number of nodes in the database cluster.  This number is known as the ring size.
+A Riak cluster distributes data across individual databases (known as vnodes), and those databases are then distributed across the physical nodes and locations of the cluster.  The distribution of data within Riak is referred to as [the ring](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes). The number of vnodes in the databases is required to be a factor of 2, and bigger than the total number of nodes in the database cluster.  This number is known as the ring size.
 
 Starting with a large ring size is helpful as:
 

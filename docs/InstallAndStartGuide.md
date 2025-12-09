@@ -141,8 +141,6 @@ In a `riak.conf` file, the last setting of any configuration item is the actual 
 
 ### Configuration of Riak - leveled backend
 
-There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
-
 Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
 - <span>Available from Riak 3.2.3</span>{: .label .label-green }`leveled.compression_method`; should be set to `zstd`, unless objects are sent to Riak compressed, in which case the compression method should be configured as `none`.
@@ -152,18 +150,20 @@ Compression, decompression and compaction have a potentially significant impact 
   - it is recommended to use some form of compression on the ledger, even when all values are pre-compressed.  The ledger blocks are generally highly compressible, even when the values are not. 
 - `leveled.compaction_runs_perday`; refer to the [operations guide](./OperationsAndTroubleshootingGuide.md#leveled-compaction-highlow-hour) for more on leveled compaction.
 
+There are further configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
+
 The leveled logs are relatively verbose, when compared to log activity across Riak as a whole.  These logs can be tuned using:
 
 - `leveled.log_level`; the info-level logs are useful for monitoring as well as troubleshooting, so careful consideration is required before moving to an alternate log level.
 
 ### Configuration of Riak - bitcask backend
 
-There are a number of configurable options within the bitcask backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
-
-Configuration items of notable importance are:
+For the bitcask backend, the configuration items of notable importance are:
 
 - `bitcask.merge_policy`; refer to the [operations guide](./OperationsAndTroubleshootingGuide.md#bitcask-merge-window) for more on bitcask compaction.
 - `bitcask.io_mode`; should be set to `erlang`, careful consideration is required before moving to `nif`.
+
+There are further configurable options within the bitcask backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
 
 ### Configuration of Riak - Delete Mode
 
@@ -181,7 +181,7 @@ For help in enabling properties on typed buckets see:
 rel/riak/bin/riak admin bucket-type --help
 ```
 
-A number of "defaults" for bucket properties are configurable via `riak.conf` e.g.
+The majority of defaults for bucket properties are configurable via `riak.conf`, for example:
 
 - `buckets.default.n_val = 3`
 - `buckets.default.merge_strategy = 2`
@@ -334,6 +334,6 @@ If using the mutli-backend, the bucket property `backend` can be used to map buc
 
 #### Property - General read/write parameters
 
-There are a number of configurable read/write parameters - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  In general, read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+There are read and write parameters that can further control the balance between consistency and availability - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  Read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
 
-There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the root cause of these deltas between vnode busyness should be addressed.
+There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the preferred solution to overload scenarios is to address the root cause of these deltas between vnode busyness.
