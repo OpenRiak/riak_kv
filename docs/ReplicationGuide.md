@@ -678,7 +678,7 @@ Some notes on `riak_repl` and the comparison to NextGen replication in Riak:
 - `riak_repl` has an anti-entropy based method of full-sync reconciliation, using the legacy active anti-entropy service.
   - The AAE-based full-sync in `riak_repl` is faster at resolving deltas, but will fail to complete during tree rebuilds;
   - Users of full-sync have needed to use manually prompted rebuild windows to address this problem (i.e. a period where full-sync is suspended, and rebuilds are completed in parallel).
-  - As clusters scale, AAE rebuild windows may become unreliable and unmanageable.
+  - As clusters scale, the AAE rebuild windows will be an ongoing management overhead, and clusters may scale to the point that rebuilds cannot complete in the available window.
 - `riak_repl` has a keylisting form of full-sync which will do a full key and clock comparison on a vnode-by-vnode basis.
   - A keylisting full-sync can be resource intensive and will take a significant amount of time to complete on clusters of non-trivial scale.
 
