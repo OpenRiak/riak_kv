@@ -1731,7 +1731,7 @@
 %% timout is limited to 5 minutes.
 {mapping, "delete_mode", "riak_kv.delete_mode", [
   {default, 3000},
-  {datatype, [{atom, keep}, {atom, immediate}, integer]},
+  {datatype, [integer, {atom, keep}, {atom, immediate}]},
   {validators, ["delete_mode_validator"]}
 ]}.
 
