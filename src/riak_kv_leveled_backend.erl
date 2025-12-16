@@ -609,7 +609,7 @@ fold_heads(FoldHeadsFun, Acc, Opts, #state{bookie=Bookie}) ->
     riak_kv_backend:fold_keys_fun(),
     riak_kv_backend:fold_acc(),
     riak_object:bucket(),
-    riak_kv_query:evaluated_query(),
+    riak_kv_query:query_definition(),
     binary() | boolean(),
     riak_kv_backend:fold_opts(),
     state()
@@ -619,11 +619,18 @@ complex_query(
     {async, FoldFun} =
         case Query of
             {QueryComboFun, SubQueries} ->
+                SubQueries0 =
+                    lists:map(
+                        fun({AT, {IF, ST, ET, Expr}}) ->
+                            {AT, {IF, ST, ET, maybe_use_compiled_regex(Expr)}}
+                        end,
+                        SubQueries
+                    ),
                 leveled_bookie:book_multiindexfold(
                     State#state.bookie,
                     Bucket,
                     {FoldTermsFun, InitAcc},
-                    SubQueries,
+                    SubQueries0,
                     QueryComboFun
                 );
             {IdxField, {StartTerm, ExclusiveSK}, EndTerm, TermExpression} ->
@@ -632,7 +639,7 @@ complex_query(
                     {Bucket, leveled_codec:next_key(ExclusiveSK)},
                     {FoldTermsFun, InitAcc},
                     {IdxField, StartTerm, EndTerm},
-                    {ReturnTerms, TermExpression}
+                    {ReturnTerms, maybe_use_compiled_regex(TermExpression)}
                 );
             {IdxField, StartTerm, EndTerm, TermExpression} ->
                 leveled_bookie:book_indexfold(
@@ -640,7 +647,7 @@ complex_query(
                     {Bucket, <<>>},
                     {FoldTermsFun, InitAcc},
                     {IdxField, StartTerm, EndTerm},
-                    {ReturnTerms, TermExpression}
+                    {ReturnTerms, maybe_use_compiled_regex(TermExpression)}
                 )
         end,
     SnapPreFold = lists:member(snap_prefold, FoldOpts),
@@ -652,6 +659,18 @@ complex_query(
         _ ->
             {ok, FoldFun}
     end.
+
+-spec maybe_use_compiled_regex(
+    riak_kv_query:term_expression()) ->
+        riak_kv_query:query_expression()|riak_kv_query:plain_regex()|undefined.
+maybe_use_compiled_regex({regex, _PR, {N, CompiledRegex}}) when N == node() ->
+    CompiledRegex;
+maybe_use_compiled_regex({regex, PlainRegex, {exported, _ER}}) ->
+    PlainRegex;
+maybe_use_compiled_regex({regex, PlainRegex, {_N, _CR}}) ->
+    PlainRegex;
+maybe_use_compiled_regex(OtherExpression) ->
+    OtherExpression.
 
 %% @doc Delete all objects from this leveled backend
 -spec drop(state()) -> {ok, state()} | {error, term(), state()}.

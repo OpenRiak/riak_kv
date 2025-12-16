@@ -74,8 +74,15 @@
     fun((binary(), binary()) -> #{binary() => capture_value()}).
 -type query_expression() :: 
     {query, query_eval_fun(), query_filter_fun()}.
--type actual_regex() ::
-    {re_pattern, term(), term(), term(), term()}.
+-type plain_regex() :: iodata().
+-type exported_regex() :: {exported, term()}.
+    %% Not supported prior to OTP 28.1.  Then the type should be changed to
+    %% {exported, re:exported()}.
+-type compiled_regex() ::
+    {node(), {re_pattern, term(), term(), term(), term()}} |
+    exported_regex().
+-type actual_regex() :: 
+    {regex, plain_regex(), compiled_regex()|none}.
 -type term_expression() ::
     actual_regex()|undefined|query_expression().
 
@@ -168,6 +175,8 @@
         accumulation_option/0,
         query_expression/0,
         term_expression/0,
+        compiled_regex/0,
+        plain_regex/0,
         evaluated_query/0,
         validation_error/0,
         query_definition/0,
@@ -554,7 +563,15 @@ evaluate_query(single, {_AT, IN, ST, ET, RE, EE, FE}, Subs) ->
                         {REOnly, undefined, undefined} ->
                             case re:compile(REOnly) of
                                 {ok, MP} ->
-                                    {ok, {IN, ST, ET, MP}};
+                                    {
+                                        ok,
+                                        {
+                                            IN,
+                                            ST,
+                                            ET,
+                                            {regex, REOnly, {node(), MP}}
+                                        }
+                                    };
                                 {error, ErrSpec} ->
                                     ?LOG_WARNING(
                                         "Invalid regular expression "

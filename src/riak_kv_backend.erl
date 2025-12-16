@@ -28,14 +28,10 @@
     :: fun((binary(), any()) -> any() | no_return()).
 -type fold_keys_fun()
     :: 
-        fun(
-            (riak_object:bucket(), riak_object:key(), fold_acc())
-                -> fold_acc() | no_return()
-            ) |
-        fun(
-            (riak_object:bucket(), {binary(), riak_object:key()}, fold_acc()
-                ) -> fold_acc() | no_return()
-            ).
+        fun((riak_object:bucket(), riak_object:key(), fold_acc())
+            -> fold_acc() | no_return()) |
+        fun((riak_object:bucket(), {binary(), riak_object:key()}, fold_acc())
+            -> fold_acc() | no_return()).
 -type fold_objects_fun()
     :: fun((binary(), binary(), term(), any()) -> any() | no_return()).
 
@@ -167,7 +163,7 @@
         fold_keys_fun(),
         fold_acc(),
         riak_object:bucket(),
-        riak_kv_query:evaluated_query(),
+        riak_kv_query:query_definition(),
         boolean()|binary(),
         fold_opts(),
         state()
