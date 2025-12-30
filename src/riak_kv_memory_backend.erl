@@ -110,12 +110,13 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()) -> {ok, [atom()]}.
+-spec capabilities(state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_) ->
     {ok, ?CAPABILITIES}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
@@ -309,28 +310,33 @@ fold_buckets(FoldBucketsFun, Acc, Opts, #state{data_ref=DataRef}) ->
     end.
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, term()} | {async, fun()}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, term()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
 fold_keys(FoldKeysFun, Acc, Opts, State) ->
    fold(fun fold_keys_fun/2, FoldKeysFun, Acc, Opts, State).
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
 fold_objects(FoldObjectsFun, Acc, Opts, State) ->
     fold(fun fold_objects_fun/2, FoldObjectsFun, Acc, Opts, State).
 
 %% @private
 %% @doc generalised fold
--spec fold(function(), riak_kv_backend:fold_objects_fun() |
-           riak_kv_backend:fold_keys_fun(), any(),
-           [{atom(), term()}],
-           state()) ->
-                   {ok, any()} | {async, function()}.
+-spec fold(
+    function(), riak_kv_backend:fold_objects_fun() |
+    riak_kv_backend:fold_keys_fun(), any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
 fold(FoldTypeFun, FoldFun0, Acc, Opts, #state{data_ref=DataRef, index_ref=IndexRef}) ->
     %% Figure out how we should limit the fold: by bucket, by
     %% secondary index, or neither (fold across everything.)
@@ -424,14 +430,16 @@ status(#state{data_ref=DataRef,
 
 %% @doc Get the size of the memory backend. Returns a dynamic size
 %%      since new writes may appear in an ets fold
--spec data_size(state()) -> undefined | {function(), dynamic}.
+-spec data_size(
+    state()) -> {fun(() -> {non_neg_integer(), objects}|undefined), dynamic}.
 data_size(#state{data_ref=DataRef}) ->
-    F = fun() ->
-                DataStatus = ets:info(DataRef),
-                case proplists:get_value(size, DataStatus) of
-                    undefined -> undefined;
-                    ObjCount -> {ObjCount, objects}
-                end
+    F = 
+        fun() ->
+            DataStatus = ets:info(DataRef),
+            case proplists:get_value(size, DataStatus) of
+                undefined -> undefined;
+                ObjCount -> {ObjCount, objects}
+            end
         end,
     {F, dynamic}.
 

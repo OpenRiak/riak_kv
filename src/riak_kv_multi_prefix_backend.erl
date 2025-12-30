@@ -126,7 +126,7 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()) -> {ok, [atom()]}.
+-spec capabilities(state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(State) ->
     %% Expose ?CAPABILITIES plus the intersection of all child
     %% backends. (This backend creates a shim for any backends that
@@ -143,7 +143,8 @@ capabilities(State) ->
     {ok, Capabilities}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(Bucket, State) when is_binary(Bucket) ->
     {_Name, Mod, ModState} = get_backend(Bucket, State),
     Mod:capabilities(ModState);
@@ -325,18 +326,26 @@ delete(Bucket, Key, IndexSpecs, State) ->
     end.
 
 %% @doc Fold over all the buckets
--spec fold_buckets(riak_kv_backend:fold_buckets_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()} | {error, term()}.
+-spec fold_buckets(
+    riak_kv_backend:fold_buckets_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_buckets(FoldBucketsFun, Acc, Opts, State) ->
     fold_all(fold_buckets, FoldBucketsFun, Acc, Opts, State).
 
 %% @doc Fold over all the keys for one or all buckets.
--spec fold_keys(riak_kv_backend:fold_keys_fun(),
-                any(),
-                [{atom(), term()}],
-                state()) -> {ok, any()} | {async, fun()} | {error, term()}.
+-spec fold_keys(
+    riak_kv_backend:fold_keys_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_keys(FoldKeysFun, Acc, Opts, State) ->
     case proplists:get_value(bucket, Opts) of
         undefined ->
@@ -346,10 +355,14 @@ fold_keys(FoldKeysFun, Acc, Opts, State) ->
     end.
 
 %% @doc Fold over all the objects for one or all buckets.
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()} | {error, term()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} |
+        {async, fun(() -> riak_kv_backend:fold_acc())} |
+        {error, term()}.
 fold_objects(FoldObjectsFun, Acc, Opts, State) ->
     case proplists:get_value(bucket, Opts) of
         undefined ->

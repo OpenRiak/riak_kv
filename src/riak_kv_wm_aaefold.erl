@@ -99,6 +99,7 @@
 -export([
          init/1,
          service_available/2,
+         is_authorized/2,
          malformed_request/2,
          content_types_provided/2,
          encodings_provided/2,
@@ -126,6 +127,8 @@
               riak,         %% local | {node(), atom()} - params for riak client
               bucket_type,  %% Bucket type (from uri)
               bucket,       %% The bucket to query (if relevant)
+              security,     %% AAE Fold not currently subject to grant check
+                            %% so security context will be ignored.
               query   %% The query..
              }).
 
@@ -175,6 +178,32 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
                io_lib:format("Unable to connect to Riak: ~p~n", [Error]),
                wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
              Ctx}
+    end.
+
+is_authorized(ReqData, Ctx) ->
+    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
+        true ->
+            {true, ReqData, Ctx};
+        false ->
+            case riak_api_web_security:is_authorized(ReqData) of
+                false ->
+                    {"Basic realm=\"Riak\"", ReqData, Ctx};
+                {true, SecContext} ->
+                    {true, ReqData, Ctx#ctx{security=SecContext}};
+                insecure ->
+                    {
+                        {halt, 426},
+                        wrq:append_to_resp_body(
+                            <<
+                                "Security is enabled and "
+                                "Riak does not accept credentials over HTTP. Try HTTPS "
+                                "instead.   Or configure `permit_insecure_http_ops`"
+                            >>,
+                            ReqData
+                        ),
+                        Ctx
+                    }
+            end
     end.
 
 %% @doc Determine whether query parameters are badly-formed.

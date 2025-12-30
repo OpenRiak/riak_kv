@@ -18,7 +18,23 @@ For later OTP versions, an alternative `openriak-<release>` branch will be requi
 
 ## Quick Start
 
-You should have [Erlang/OTP 26](http://erlang.org/download.html) to compile and run this version Riak KV. The easiest way to utilise Riak KV is by installing the full Riak application available on [Github](https://github.com/OpenRiak/riak).
+You should have [Erlang/OTP 26](http://erlang.org/download.html) to compile and run this version Riak KV. The [Riak application](https://github.com/OpenRiak/riak) is the parent application for Riak KV, providing a set of scripts to build, package, deploy and run a Riak KV store.
+
+## Quick Docs
+
+Overview documentation on is available in this repository.  The documentation is split into the following pages:
+
+- [Initial Design Decisions](/docs/InitialDesignDecisions.md);
+- [Install and Start Guide](/docs/InstallAndStartGuide.md);
+- [Building and then Scaling a Cluster](/docs/BuildAndScaleClusterGuide.md);
+- [Replication Guide](/docs/ReplicationGuide.md);
+- [Object API](/docs/ObjectAPI.md);
+- [Query API](/docs/QueryAPI.md);
+- [Other API](/docs/OtherAPI.md);
+- [Operations and Troubleshooting Guide](/docs/OperationsAndTroubleshootingGuide.md);
+- [Riak Theory Guide](/docs/RiakTheoryGuide.md).
+
+An [online HTML version of this overview is available](https://openriak.github.io/riak_kv/).
 
 ## Discussions
 
@@ -26,7 +42,7 @@ For discussions on Riak development see https://github.com/orgs/OpenRiak/discuss
 
 ## Testing
 
-```bash
+```console
 ./rebar3 do xref, dialyzer, eunit
 ./rebar3 as test eqc --testing_budget 600
 ```

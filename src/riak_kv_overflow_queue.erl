@@ -133,7 +133,9 @@ log(Type, JobID, Attempts, Aborts, Queue) ->
                 QueueLengths,
                 OverflowLengths,
                 DiscardCounts]),
-        [Type, JobID, Attempts, Aborts]),
+        [Type, JobID, Attempts, Aborts],
+        riak_kv_util:set_metric_domain()
+    ),
     
     ResetDiscards =
         lists:map(fun({P, _L}) -> {P, 0} end,

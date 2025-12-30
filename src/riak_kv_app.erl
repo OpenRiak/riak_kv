@@ -235,7 +235,7 @@ start(_Type, _StartArgs) ->
             riak_core_capability:register({riak_kv, put_soft_limit},
                                           [true, false],
                                           false),
-            
+
             riak_core_capability:register({riak_kv, tictacaae_prompted_repairs},
                                             [true, false],
                                             false),
@@ -252,10 +252,12 @@ start(_Type, _StartArgs) ->
                                mapreduce, index, get_preflist]}
             ]
             ++ [{health_check, {?MODULE, check_kv_health, []}} || HealthCheckOn]
-        
+
             ++ WorkerPools),
 
             ok = riak_api_pb_service:register(?SERVICES),
+
+            ok = riak_kv_cli_registry:register_cli(),
 
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)

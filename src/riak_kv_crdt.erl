@@ -53,14 +53,8 @@
 -define(V1_VERS, 1).
 -define(V2_VERS, 2).
 
--ifdef(namespaced_types).
--type riak_kv_crdt_dict() :: dict:dict().
--else.
--type riak_kv_crdt_dict() :: dict().
--endif.
-
 -type crdts() :: [{DT_MOD::module(), crdt()}].
--type ro_content() :: {Meta::riak_kv_crdt_dict(), Value::binary()}.
+-type ro_content() :: {Meta::riak_object:riak_object_meta(), Value::binary()}.
 -type ro_contents() :: [ro_content()].
 -type precondition_error() :: {error, {precondition, {not_present, term()}}}.
 
@@ -223,8 +217,10 @@ contains_crdt_tag(_ObjVal) ->
 
 %% @TODO in riak_dt change value to query allow query to take an
 %% argument, (so as to query subfields of map, or set membership etc)
--spec crdt_value(module(), error | {ok, {riak_kv_crdt_dict(), crdt()}}) ->
-                        {binary(), riak_dt:value()}.
+-spec crdt_value(
+    module(),
+    error | {ok, {riak_object:riak_object_meta(), crdt()}}) ->
+        {binary(), riak_dt:value()}.
 crdt_value(Type, error) ->
     {<<>>, Type:value(Type:new())};
 crdt_value(Type, {ok, {_Meta, ?CRDT{mod=Type, value=Value}}}) ->
@@ -403,10 +399,10 @@ update_object(RObj, CRDTs, SiblingValues) ->
 
 meta(undefined, ?CRDT{ctype=CType}) ->
     Now = os:timestamp(),
-    M = dict:new(),
-    M2 = dict:store(?MD_LASTMOD, Now, M),
-    M3 = dict:store(?MD_VTAG, riak_kv_util:make_vtag(Now), M2),
-    dict:store(?MD_CTYPE, CType, M3);
+    M = riak_object:metadata_new(),
+    M2 = riak_object:metadata_store(?MD_LASTMOD, Now, M),
+    M3 = riak_object:metadata_store(?MD_VTAG, riak_kv_util:make_vtag(Now), M2),
+    riak_object:metadata_store(?MD_CTYPE, CType, M3);
 meta(Meta, _CRDT) ->
     drop_the_dot(Meta).
 
@@ -420,15 +416,15 @@ merge_meta(CType, Meta1, Meta2) ->
            end,
     %% Make sure the content type is
     %% up-to-date
-    drop_the_dot(dict:store(?MD_CTYPE, CType, Meta)).
+    drop_the_dot(riak_object:metadata_store(?MD_CTYPE, CType, Meta)).
 
 %% @private Never keep a dot for CRDTs, we want all values to survive
 %% a riak_obect:merge/2
 drop_the_dot(Dict) ->
-    dict:erase(?DOT, Dict).
+    riak_object:metadata_erase(?DOT, Dict).
 
 lastmod(Meta) ->
-    dict:fetch(?MD_LASTMOD, Meta).
+    riak_object:metadata_fetch(?MD_LASTMOD, Meta).
 
 later(TS1, TS2) ->
     case timer:now_diff(TS1, TS2) of
