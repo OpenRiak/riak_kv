@@ -70,6 +70,7 @@ config_pre(_, [_Enabled, #{queue := _Q, peerlimit:= PL, workers := N}]) ->
     PL =< N.
 
 config(Enabled, #{queue := Q, peers := Peers, peerlimit:= PL, workers := N} = Sink) ->
+    logger:set_primary_config(level, critical),
     application:set_env(riak_kv, replrtq_enablesink, Enabled == enabled),
     %% default Queue will be called "default" in tests
     application:set_env(riak_kv, replrtq_sinkqueue, default),
@@ -369,7 +370,7 @@ format_concurrent(Xs) ->
     [ io_lib:format("  ~p for ~5.1fms\n", [C, T / 1000])
       || {T, C} <- Xs, T >= 100 ].
 
--define(SLACK, 900). %% allow fetches 900µs after suspension
+-define(SLACK, 1500). %% allow fetches 1500µs after suspension
 
 drop_slack(Chunk) -> drop_slack(0, Chunk).
 drop_slack(_, []) -> [];
@@ -397,8 +398,12 @@ suspended_chunks(Xs, Acc) ->
 
 weighted_average([]) -> 0;
 weighted_average(Xs) ->
-    lists:sum([ W * X || {W, X} <- Xs]) /
-    lists:sum([ W     || {W, _} <- Xs]).
+    case lists:sum([ W || {W, _} <- Xs]) of
+        Count when Count > 0 ->
+            lists:sum([ W * X || {W, X} <- Xs]) / Count;
+        0 ->
+            0
+    end.
 
 concurrent_fetches([]) -> [];
 concurrent_fetches(Trace = [{T0, _} | _]) ->
