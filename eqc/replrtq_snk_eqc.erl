@@ -341,7 +341,7 @@ get_workers(Workers, Trace) ->
 check_trace(QueueName, Peerlimit, Peers, {Workers, Trace}) ->
     Concurrent = concurrent_fetches(Trace),
     {Suspended, Active} = split_suspended(Concurrent),
-    Max        = lists:max([0 | [N || {_, N} <- Active ++ Suspended]]),
+    Max        = lists:max([0 | [N || {_, N} <- Active ++ lists:flatten(Suspended)]]),
     Avg        = weighted_average(Active),
     ActiveTime = lists:sum([ T || {T, _} <- Active ]),
     ActivePeers = length([ x || {_, {active, _}} <- Peers ]),
