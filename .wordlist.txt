@@ -14,6 +14,7 @@ vtags
 dvv
 vclock
 nextgen
+nextgenrepl
 repl
 replrtq
 mapreduce
@@ -49,6 +50,7 @@ tictac
 crdt
 crdts
 nval
+nvals
 bucketname
 bucketprefix
 buckettype
@@ -130,6 +132,11 @@ reip
 exchangetick
 rebuildtick
 hotbackup
+primaryonly
+treestatus
+startdate
+enddate
+primaryonly
 
 # Riak monitoring terms
 nosync
@@ -142,10 +149,12 @@ ngrrepl
 nofetch
 fetchtime
 pushtime
-sinkvc
+repltime
+snkvc
 srcvc
 lmdin
 nodecount
+snkqueue
 
 # General compute abbreviations
 http
@@ -172,6 +181,11 @@ bak
 madv
 nav
 openapi
+devops
+microsec
+af
+be
+config
 
 # Erlang/OTP
 erlang
@@ -191,6 +205,10 @@ bif
 nodename
 sudo
 ets
+erl
+erlef
+eval
+priv
 
 # Computing terminology
 incast
@@ -227,6 +245,8 @@ rsync
 localhost
 cqrs
 vm
+yymmdd
+yyyymmdd
 
 # Product names
 debian
@@ -288,3 +308,47 @@ uptime
 datetime
 outofdate
 notsupported
+perday
+
+# Specific documentation terms
+FYNNY
+familyname
+gh
+givenname
+KOWSKI
+SMKOWSKI
+TW
+agc
+familyname
+fn
+givenname
+gn
+gqn
+healthreport
+intra
+kvs
+math
+mult
+peoplefinder
+pgn
+pos
+postalcode
+pre
+qbd
+qfn
+qgn
+sgn
+snd
+surnamedob
+yoc
+domaindocument
+addr
+riakc
+statediagram
+authorization
+dev
+devclean
+devrel
+util
+limitnofile
+dontneed
