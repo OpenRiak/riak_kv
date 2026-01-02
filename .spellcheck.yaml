@@ -9,7 +9,6 @@ matrix:
   - pyspelling.filters.markdown:
     ignores:
       - code
-      - pre
   dictionary:
     wordlists:
     - wordlist.txt
