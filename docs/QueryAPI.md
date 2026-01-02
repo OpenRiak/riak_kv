@@ -42,7 +42,7 @@ Indexes are added using [the Object API](./ObjectAPI.md#index-entries).
 
 There is no direct support for schema management within Riak, as Riak is designed to act independently of the format and the content of the application-provided object body.  It is expected that for an application to make use of secondary indexes within Riak, the object-handling logic within the application will require an extension; where that extension will examine the object body, and calculate the required index entries before completing a PUT.  As the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
 
-The design of secondary indexes in Riak make them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by a number of factors](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries to be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
+The design of secondary indexes in Riak make them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by the factors highlighted in the performance section](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries to be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
 
 Index entries can be made up of simple sort keys:
 
@@ -266,7 +266,7 @@ Alternative approaches would be possible:
 
 ### Example (1) - Inexact Match of Given Name
 
-The evaluation expression language supports a number of different comparisons on exact terms, but when a term has been broken into a sub-list (as with the Given Names in the above example), it is only possible to look for an exact match within the sub-list.
+The evaluation expression language supports flexible comparisons on exact terms; but when a term has been broken into a sub-list (as with the Given Names in the above example), it is only possible to look for an exact match within the sub-list.
 
 There are three possible alternatives should a more complex match be required on such a sub-list:
 
@@ -783,7 +783,10 @@ Riak supports the `allow_mult = true` state, whereby the history of changes to a
 
 ### Unicode support
 
-Testing is currently only undertaken on ascii-based index terms, although filter and evaluation expressions have been designed to support unicode.  There are a number of potential issues with unicode support, not least with support for unicode in HTTP headers, so end-to-end tested Unicode support is currently deferred to a future release.
+Testing is only undertaken on ascii-based index terms in Riak 3.4, although filter and evaluation expressions have been designed to support unicode.
+
+{: .note }
+There are potential issues with unicode support, not least with support for unicode in HTTP headers, so significant additional work may be required to provide a comprehensive and well-tested solution with Unicode support in a future Riak release.
 
 ### Consistency
 
@@ -793,4 +796,4 @@ In failure and recovery scenarios, false negatives are possible (i.e. results ma
 
 ### Further Improvements
 
-Improving the functionality of the Query API is an active goal of the OpenRiak devleopment team.  Notifications on planned improvements will be added to the [OpenRiak dsicsssions board](https://github.com/orgs/OpenRiak/discussions).
+Improving the functionality of the Query API is an active goal of the OpenRiak community.  Notifications on planned improvements will be added to the [OpenRiak discusssions board](https://github.com/orgs/OpenRiak/discussions).

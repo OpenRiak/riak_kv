@@ -4,7 +4,13 @@
 
 ## Overview
 
-Riak KV is an open source Erlang application that is distributed using the [riak_core](https://github.com/OpenRiak/riak_core) Erlang library. Riak KV provides a key/value datastore and features MapReduce, lightweight data relations, and several different client APIs.
+Riak KV is an open source Erlang application that is distributed using the [`riak_core`](https://github.com/OpenRiak/riak_core) Erlang library.
+
+Riak KV provides a key/value datastore, optimised for very reliable storage of relatively large objects, with low variance in response times under both high load and failure conditions.  Riak is designed to be highly available, even when clusters are built with low-cost components that lack internal resilience.
+
+As well as an Object API, Riak also supports a Query API: allowing for range queries on secondary indexes, with additional query capability from the application of filter expressions to projected attributes appended to the index sort keys.
+
+Riak KV is designed to be deployed in both single-cluster and multi-cluster environments.  There is support not just for real-time replication between clusters, but also for continuous and efficient reconciliation to verify that data is in-sync and on common versions; even between clusters that have many billions of objects.
 
 ## OTP version support
 

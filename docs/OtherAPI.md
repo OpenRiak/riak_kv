@@ -27,7 +27,7 @@ When using any other backend or multi-backend this will require an additional pa
 
 The AAE Fold API:
 
-- Supports [a number of different fold types](#supported-fold-types);
+- Supports [more than ten different fold types](#supported-fold-types);
 - [Are throttled to minimise the impact on other cluster operations, and have query options that may improve efficiency](#performance-and-efficiency).
 
 The AAE Fold API has four potential interfaces:
@@ -311,7 +311,7 @@ The [PB Object API is described in the riak_pb repository](https://github.com/Op
 
 ## The Fetch API
 
-The fetch API supports three requests:
+The fetch API supports three requests: the GET of a membership request, the GET from a queue and the POST to a queue.
 
 | URL | Request parameters | Method | Description |
 |:--------------|:--------------|:--------------|:--------------|
@@ -343,7 +343,8 @@ Before using data-types, there are important caveats within the current implemen
 - Both sets and maps have specific constraints in Riak 3.4 where the growth of components within an object is not handled efficiently.
 - There is no in-built support for querying data within data-types, the Data Type API is incompatible with the [Query API](./QueryAPI.md).
 
-> The approach to supporting data types is expected to be evolved significantly in future Riak releases; which may result in significant changes to both sets and maps, and change the use of those data types in future releases.
+{: .note }
+> The approach to supporting data types is expected to be evolved significantly in future Riak releases; which may result in significant changes to both sets and maps, and change the use of those data types in those releases.
 
 ## The Map/Reduce API
 
@@ -384,6 +385,6 @@ The functionality of Strong Consistency is unchanged since Riak 2.2.3, so refer 
 
 ## Write Once Path API
 
-The use of the write once path is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.
+The use of the write once path is deprecated in Riak 3.4, and the API will be retired in Riak 4.0.  The write once path was added to improve performance in very specific use cases, but broader changes have reduced the significance of any performance delta previously gained.  The write once path was not feature compatible with other write methods, and the preference of the OpenRiak community in the future is to reduce the number of caveats required to be understood when working with Riak.
 
 The functionality of the Write Once Path is unchanged since Riak 2.2.3, so refer to the [legacy documentation](https://docs.riak.com/riak/kv/2.2.3/developing/app-guide/write-once/index.html) for further information.

@@ -24,7 +24,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 
 ## Replace, Repair and Recover
 
-There are several potential repair and recovery processes for handling different scenarios:
+There are seven potential repair and recovery processes for handling different scenarios:
 
 - [Proactive replacement](#proactive-replacement)
 - [Reactive replacement](#reactive-replacement)
@@ -178,7 +178,7 @@ The following upgrade path has been specifically tested:
 More direct upgrade paths skipping steps may be possible.  New features are added using either a negotiation of capability within the cluster, or with the feature disabled by default in configuration.  Once a capability is mature, after at least two steps in the path, the negotiation may be retired and replaced with a static assumption of capability.
 
 {: .warning }
-> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
+> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  The release notes should be checked for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
 
 It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from `3.0.n` to `3.4.n` are not supported unless `3.0.n` is built with OTP 22, and `3.4.n` is built with OTP 24.
 
@@ -193,7 +193,18 @@ As with other rolling operations, the operations can be accelerated through the 
 
 ## Remote Console
 
-Advanced information and debugging tools are available via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for a number of purposes.
+Advanced information and debugging tools are available from the command line via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for: [accessing objects](#accessing-objects), [running AAE folds](#running-aae-folds), [access to specific administration commands](#riak_client-remote_console-commands) as well as [advanced debugging and troubleshooting](#advanced---troubleshoot-via-the-erlang-vm).
+
+{: .warning }
+If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core.
+
+It is good practice to monitor for the presence of long-lived hanging sessions, if `remote_console` is used.  Remote console sessions are distinguished with `ps -ef` by the `-progname` switch: Riak applications will have ``--progname <PATH>/bin/riak``; whereas `remote_console` sessions will have ``progname <path>/bin/erl``.
+
+All single commands run from riak remote_console can be scripted from the command line using `riak eval`.  For example, to run the riak_client:repair_node() function from a script:
+
+```console
+riak eval "riak_client:repair_node()."
+```
 
 ### Accessing objects
 
@@ -215,25 +226,11 @@ Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for informatio
 
 ### riak_client remote_console commands
 
-There are a number of administration commands that are available [via the riak_client module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_client.erl).  These include:
+The `riak_client` is an Erlang module within Riak that provides the internal API functions used by the external user-facing API.  The `riak_client` module also includes administration functions:
 
 - `participate_in_coverage/1`, `remove_node_from_coverage/0`, `reset_node_for_coverage/0` - used to change the `participate_in_coverage` status of the node.  When a node is known to have a potential data issue (i.e. it is being recovered from a failure), it can be removed from coverage, and reset back into coverage once the data has been proven to be fully populated.
 - `replrtq_reset_all_peers/1` - used to force all active and available nodes in the cluster to reset their peer discovery (used in real-time repl), to be used after adding a new node to a remote cluster.
 - `replrtq_reset_all_workercounts/2` - used to force all active and available nodes to change their worker counts and per-peer limits, which may be required when a sink cluster cannot keep up fetching the remote replication traffic and so requires more sink workers (or sink workers per peer).
-
-### Hanging console sessions
-
-Remote console sessions are distinguished with `ps -ef` by the `-progname` switch.  Riak applications will have ``--progname <PATH>/bin/riak``; whereas remote_console sessions will have ``progname <path>/bin/erl``.
-
-If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core, so it is wise to monitor for the presence of such long-lived hanging sessions.
-
-### Using `riak eval`
-
-All single commands run from riak remote_console should be scriptable from the command line using `riak eval`:
-
-```console
-riak eval "riak_client:repair_node()."
-```
 
 ## Extending configuration
 
@@ -285,7 +282,7 @@ Note that the result of `describe` request is the current schema documentation o
 All components of Riak use the kernel logger for logging.  The logger can be configured via `riak.conf`, and there are five parts of the configuration:
 
 - Set the log level (`logger.level`);
-- Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required depends on the configuration of `additional_handlers`.
+- Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required are dependent on the configuration of `additional_handlers`.
 - Set the log format (`logger.format`).
   - See the [erlang logger guide](https://www.erlang.org/doc/apps/kernel/logger.html) for metadata available to add to logs e.g. `mfa`, `pid`, `file`, `line`, `domain`, `msg`. 
 - <span>Available from Riak 3.4.0</span>{: .label .label-purple }Set the logs to be filtered from the default (console) log file (`logger.default_filters`).
@@ -329,7 +326,7 @@ The Tictac anti-entropy system can be monitored either through the command line,
 Available from Riak 3.4.0
 {: .label .label-purple }
 
-A number of monitoring and control functions are available through the command line interface - `riak admin tictacaae --help`.
+Monitoring and control functions for Tictac AAE are available through the command line interface - `riak admin tictacaae --help`.
 
 ```console
 riak admin tictacaae rebuildtick|exchangetick|maxresults|rangeboost [-n NODE] [VAL]
@@ -549,7 +546,7 @@ This would permit access from the whole of the network `192.168.8.0/24` (this ma
 {: .note }
 > In this case, this is functionally equivalent to requiring TLS mutual authentication on the PB API, but it is not the security equal of that measure.  A connection would still be accepted from any IP address, and an unauthenticated TLS negotiation allowed; at this stage the PB API will only accept an authentication request, and this will now only work if the IP address is valid and the certificate matches.
 
-There are a number of options around the configuration of security sources in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
+Further information on the configuration of security sources can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
 
 {: .warning }
 > The use of PAM-based authentication is deprecated and may be removed in a future release.
@@ -576,7 +573,7 @@ For all other API endpoints, only `source` protection is applied.
 {: .note }
 > With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
 
-There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
+Further information on the granting of permissions can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
@@ -596,7 +593,7 @@ When queueing large volumes of changes, note that:
 
 - The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and dequeued in batches containing objects within the same preflist.
 - The pace of which items are dequeued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
-- In multi-data centre configurations reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
+- In multi-data centre configurations, reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
 - Each queue on each node has a limit to the size of reaps or erases it can hold - this is controlled through the `eraser_overflow_limit` and the `reaper_overflow_limit`.  The queue, except for a small number, is held on disk; and so increasing this limit can be achieved without hitting memory constraints.
 - As of Riak 3.4, if a reap is dequeued, but the primaries are not all available, then the reap will be acted on all available primaries and an item will be queued to act on the remaining primaries once they are available.
 - Large reap jobs should not be queued while cluster change operations are planned on the cluster, or any cluster linked by replication.
