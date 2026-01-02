@@ -343,7 +343,7 @@ Configuration control commands `rebuildtick`, `exchangetick`, `maxresults`, and 
 - The `exchangetick` alters the frequency of AAE activity, each vnode runs a tick, and each tick prompts an exchange.
 - The `rebuildtick` alters the frequency with which a vnode will check to see if a rebuild is due;
   - The tick does not alter the actual frequency of rebuilds.
-- Changes to `rebuiltick` and `exchangetick` will take effect on the next tick, impacting the size of the next-but-one tick.
+- Changes to `rebuildtick` and `exchangetick` will take effect on the next tick, impacting the size of the next-but-one tick.
   - Both the `rebuildtick` and `exchangetick` are set in milliseconds.
 - The `maxresults` limit controls the scope of repairs per exchange (a limit on [the segment IDs covered by an exchange](./RiakTheoryGuide.md#anti-entropy)).
   - This is multiplied by the `rangeboost` if the exchange has been seeded with range information auto-discovered in previous exchanges.  For example if all deltas are in a certain modified date range.
@@ -613,7 +613,7 @@ If storing mutable objects in bitcask, then it is important to configure merge w
 
 When testing the potential throughput of a bitcask-backed Riak database it is important to test with appropriate levels of mutation, and a realistic configuration of the bitcask merge window.
 
-For information on configuring bitcask merge see the `bitbask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema).
+For information on configuring bitcask merge see the `bitcask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema).
 
 ### leveled compaction high/low hour
 
@@ -712,7 +712,7 @@ There are four inputs to the function required:
 
 - A backup path; all nodes will be required to support the same path, the path cannot be to the current folder in which leveled is running, but the path must be on the same volume as the current data path (e.g. you could use `<PLATFORM_DATA_DIR>/backup` as a backup to `<PLATFORM_DATA_DIR>/leveled`).
 - The `n_val` of the cluster.
-- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is, though, easier to understand and reason about the result of the backup if the cluster uses the same `n_val` for all bucketsm, and the coverage plan `n_val` is set to that `n_val`.
+- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is, though, easier to understand and reason about the result of the backup if the cluster uses the same `n_val` for all buckets, and the coverage plan `n_val` is set to that `n_val`.
 - A client; e.g. a `C` where `{ok, C} = riak:local_client()`.
 
 The backup at each vnode backend will first:
