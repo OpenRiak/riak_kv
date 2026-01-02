@@ -214,7 +214,7 @@ Enabling Tictac AAE also adds to the cluster support for the operator-functional
 
 ### Intra-cluster data resilience - changing the choice
 
-The `n_val` is in theory configurable by bucket, which allows for multiple n_vals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
+The `n_val` is in theory configurable by bucket, which allows for multiple nvals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
 
 The `target_n_val` and `target_location_n_val` configuration is used each time a cluster change is planned (i.e. adding or removing a node).  So using a new value will take effect once the next change is made within a cluster.
 
