@@ -54,6 +54,7 @@ nvals
 bucketname
 bucketprefix
 buckettype
+typedbucket
 ringsize
 asis
 notfound
@@ -137,6 +138,13 @@ treestatus
 startdate
 enddate
 primaryonly
+treesize
+fetchclocks
+keysclocks
+querydefinition
+repairfun
+foldresult
+jobid
 
 # Riak monitoring terms
 nosync
@@ -247,6 +255,7 @@ cqrs
 vm
 yymmdd
 yyyymmdd
+xput
 
 # Product names
 debian
@@ -352,3 +361,11 @@ devrel
 util
 limitnofile
 dontneed
+vc
+cnt
+baz
+conf
+hYGBgzGDKBVIszMk
+jsmith
+mUBAA
+zKYEhnzWBlKIniO
