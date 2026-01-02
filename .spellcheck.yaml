@@ -6,12 +6,16 @@ matrix:
   sources:
   - 'docs/*.md'
   pipeline:
-  - pyspelling.filters.markdown
+  - pyspelling.filters.markdown:
+    ignores:
+      - code
+      - pre
   dictionary:
     wordlists:
     - wordlist.txt
     output: wordlist.dic
     encoding: utf-8
+  checker:
     ignore-case: true
     ignore-3:
   filter:
