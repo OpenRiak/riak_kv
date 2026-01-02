@@ -78,6 +78,7 @@ keyname
 cacert
 cacertfile
 certfile
+keyfile
 rangeboost
 maxresults
 rebuildtick
@@ -145,6 +146,7 @@ querydefinition
 repairfun
 foldresult
 jobid
+rtrq
 
 # Riak monitoring terms
 nosync
@@ -163,6 +165,7 @@ srcvc
 lmdin
 nodecount
 snkqueue
+replq
 
 # General compute abbreviations
 http
@@ -193,6 +196,7 @@ devops
 microsec
 af
 be
+ef
 config
 
 # Erlang/OTP
@@ -217,6 +221,7 @@ erl
 erlef
 eval
 priv
+env
 
 # Computing terminology
 incast
@@ -256,6 +261,7 @@ vm
 yymmdd
 yyyymmdd
 xput
+endraw
 
 # Product names
 debian
@@ -369,3 +375,14 @@ hYGBgzGDKBVIszMk
 jsmith
 mUBAA
 zKYEhnzWBlKIniO
+progname
+rcl
+aca
+ae
+bef
+bn
+ffa
+im
+dl
+ic
+subproc
