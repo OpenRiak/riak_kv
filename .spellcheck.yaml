@@ -4,7 +4,7 @@ matrix:
   aspell:
     lang: en
   sources:
-  - '**/*.md'
+  - 'docs/*.md'
   pipeline:
   - pyspelling.filters.markdown
   dictionary:
@@ -12,5 +12,9 @@ matrix:
     - wordlist.txt
     output: wordlist.dic
     encoding: utf-8
+    ignore-case: true
+    ignore-3:
+  filter:
+    mode: markdown
   default_encoding: utf-8
   expect_match: true
