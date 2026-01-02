@@ -3,6 +3,7 @@ vnode
 vnodes
 vnode's
 preflist
+preflists
 handoff
 handoffs
 fallback
@@ -17,6 +18,7 @@ replrtq
 mapreduce
 basho
 riak
+riak's
 openriak
 tictac
 aae
@@ -24,7 +26,9 @@ tictacaae
 backend
 leveled
 inker
+inker's
 penciller
+penciller's
 pclerk
 iclerk
 pmanifest
@@ -32,6 +36,7 @@ imanifest
 bookie
 lsm
 sst
+ssts
 cdb
 keystore
 eleveldb
@@ -44,6 +49,52 @@ nval
 bucketname
 bucketprefix
 buckettype
+ringsize
+asis
+notfound
+dw
+pw
+pr
+rw
+readrepair
+rtq
+lmd
+fullsync
+
+# Riak configuration terms
+cacert
+cacertfile
+certfile
+rangeboost
+maxresults
+rebuildtick
+tokenbucket
+workercounts
+storeheads
+kvsplit
+rawcount
+startkey
+endkey
+workercount
+allcheck
+autocheck
+daycheck
+hourcheck
+rangecheck
+nocheck
+peerip
+peerport
+peerprotocol
+sinkpeers
+sinkqueue
+sinkworkers
+localnval
+remotenval
+logrepairs
+enablesink
+enablesrc
+compressonwire
+vnodecheck
 
 # General compute abbreviations
 http
@@ -62,6 +113,12 @@ ascii
 unicode
 async
 pb
+jit
+cpus
+xfs
+pem
+bak
+madv
 
 # Erlang/OTP
 erlang
@@ -76,6 +133,10 @@ eprof
 dbg
 pid
 relx
+nif
+bif
+nodename
+sudo
 
 # Computing terminology
 incast
@@ -96,6 +157,7 @@ noop
 sha
 merkle
 ttl
+ttls
 lww
 hashtree
 tcp
@@ -109,12 +171,15 @@ pcre
 delim
 rsync
 localhost
+cqrs
+vm
 
 # Product names
 debian
 centos
 openssl
 opensearch
+ansible
 
 # Computing words
 rebalance
@@ -138,3 +203,23 @@ deserialisation
 scalable
 sortable
 topologies
+jittered
+mergeable
+queryable
+tunable
+recency
+backoff
+latencies
+comparator
+unreconciled
+unresolvable
+untyped
+whitespace
+codebase
+performant
+uncommented
+unbuilt
+scriptable
+clientless
+gossipped
+unevaluated
