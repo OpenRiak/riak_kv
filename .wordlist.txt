@@ -4,6 +4,7 @@ vnodes
 vnode's
 preflist
 preflists
+preflist's
 handoff
 handoffs
 fallback
@@ -24,6 +25,7 @@ tictac
 aae
 tictacaae
 backend
+backends
 leveled
 inker
 inker's
@@ -40,6 +42,7 @@ ssts
 cdb
 keystore
 eleveldb
+leveldb
 bitcask
 kv
 tictac
@@ -60,6 +63,13 @@ readrepair
 rtq
 lmd
 fullsync
+keylisting
+src
+snk
+ttaaefs
+aaefold
+quickdocs
+keyname
 
 # Riak configuration terms
 cacert
@@ -95,6 +105,47 @@ enablesink
 enablesrc
 compressonwire
 vnodecheck
+ngrfetch
+ngrrepl
+nofetch
+nosync
+prefetch
+queuename
+filepath
+legacyformat
+cachedtrees
+treesclocks
+rangerepl
+rangerepair
+rangetrees
+aaebucketlist
+keyrange
+modifiedrange
+aaehash
+objectsizes
+perpeerlimit
+substr
+loglevel
+reip
+exchangetick
+rebuildtick
+hotbackup
+
+# Riak monitoring terms
+nosync
+prefetch
+tofetch
+srcdiscard
+srcqueue
+ngrfetch
+ngrrepl
+nofetch
+fetchtime
+pushtime
+sinkvc
+srcvc
+lmdin
+nodecount
 
 # General compute abbreviations
 http
@@ -119,6 +170,8 @@ xfs
 pem
 bak
 madv
+nav
+openapi
 
 # Erlang/OTP
 erlang
@@ -137,6 +190,7 @@ nif
 bif
 nodename
 sudo
+ets
 
 # Computing terminology
 incast
@@ -152,7 +206,8 @@ ulimit
 systemd
 waf
 balancer
-nginx
+balancers
+balancer's
 noop
 sha
 merkle
@@ -164,7 +219,6 @@ tcp
 bsl
 crc
 sqn
-src
 gbps
 noop
 pcre
@@ -180,6 +234,7 @@ centos
 openssl
 opensearch
 ansible
+nginx
 
 # Computing words
 rebalance
@@ -200,6 +255,7 @@ deduplication
 deserialise
 deserialised
 deserialisation
+deserialising
 scalable
 sortable
 topologies
@@ -223,3 +279,12 @@ scriptable
 clientless
 gossipped
 unevaluated
+timeframes
+lexicographically
+lookups
+datastore
+undeleted
+uptime
+datetime
+outofdate
+notsupported
