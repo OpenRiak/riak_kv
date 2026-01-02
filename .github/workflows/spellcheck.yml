@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - openriak-3.4
-  push:
 
 jobs:
   spellcheck:
