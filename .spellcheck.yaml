@@ -3,9 +3,9 @@ matrix:
 - name: markdown
   aspell:
     lang: en
+    d: en_GB
     mode: markdown
     ignore-case: true
-    ignore-3:
   sources:
   - 'docs/*.md'
   pipeline:
