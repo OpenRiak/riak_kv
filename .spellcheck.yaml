@@ -3,6 +3,9 @@ matrix:
 - name: markdown
   aspell:
     lang: en
+    mode: markdown
+    ignore-case: true
+    ignore-3:
   sources:
   - 'docs/*.md'
   pipeline:
@@ -12,10 +15,5 @@ matrix:
     - wordlist.txt
     output: wordlist.dic
     encoding: utf-8
-  checker:
-    ignore-case: true
-    ignore-3:
-  filter:
-    mode: markdown
   default_encoding: utf-8
   expect_match: true
