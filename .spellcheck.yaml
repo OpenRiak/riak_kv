@@ -7,8 +7,7 @@ matrix:
   - 'docs/*.md'
   pipeline:
   - pyspelling.filters.markdown:
-    ignores:
-      - code
+    ignores: code
   dictionary:
     wordlists:
     - wordlist.txt
