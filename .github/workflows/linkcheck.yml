@@ -12,6 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run linkspector
-        uses: umbrelladocs/action-linkspector@v1
+        uses: umbrelladocs/action-linkspector@v1.4.0
         with:
           config_file: ./.linkspector.yml
