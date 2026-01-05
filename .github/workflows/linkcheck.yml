@@ -7,11 +7,10 @@ on:
   push:
 
 jobs:
-  markdown-link-check:
+  check-links:
+    name: runner / linkspector
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: tcort/github-action-markdown-link-check@v1
-      with:
-        use-verbose-mode: 'yes'
-        file-path: './README.md, ./docs/index.md, ./docs/InitialDesignDecisions.md'
+      - uses: actions/checkout@v4
+      - name: Run linkspector
+        uses: umbrelladocs/action-linkspector@v1
