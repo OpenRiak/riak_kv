@@ -435,7 +435,7 @@ riak eval "application:set_env(riak_kv, log_readrepair, true)"
 
 ### Monitoring inter-cluster reconciliation
 
-For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](./NextGenReplGuide.md#monitoring-and-run-time-changes).
+For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](./ReplicationGuide.md#monitoring-and-runtime-changes).
 
 ### Monitoring node worker pools
 
@@ -690,7 +690,7 @@ Before considering backups, it is worth noting that as a distributed database th
 
 Production users of Riak commonly have relatively lightweight backup and recovery strategies when compared to traditional database management systems; eventual consistency allows the global recovery of state without the need to focus on recovering state first back to a point in time.  In general, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
-If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use [the `repair` process](#reactive-replace) to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
+If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use [the `repair` process](#reactive-replacement) to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
 
 Note that in cloud environments, if an inefficient backup method is chosen (e.g. snapshots of block-service file-system volumes), then backup costs may consume a dominant proportion of overall Riak infrastructure costs.
 

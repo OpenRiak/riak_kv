@@ -63,7 +63,7 @@ The Query API is intended to provide flexible and performant functionality in th
 {: .highlight }
 > The aim of Riak development is to provide a database that performs efficient, scalable and predictable CRUD operations, and is just-queryable-enough to avoid the need of third party database integration in most use cases.
 
-Riak does support via [an external replication API](./NextGenReplGuide.md), the ability to manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.  The automation of such integration is outside of the current functional scope of Riak.
+Riak does support via [an external replication API](./ReplicationGuide.md#replication-api), the ability to manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.  The automation of such integration is outside of the current functional scope of Riak.
 
 ### Querying - Functional Summary
 

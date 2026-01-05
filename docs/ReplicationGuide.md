@@ -100,7 +100,7 @@ The number of sink workers can be configured on the node:
   - The number of workers will constrain the pace at which events can be pulled from a source cluster, and also the PUSH workload that a sink cluster can generate for itself.
 - There is an overhead of a sink making requests on the source, so each sink worker will backoff if a request results in no replication events being discovered.
 - The sink worker pool does not auto-expand.
-  - Sufficient sink workers need to be configured to keep-up with real-time replication, though [this number can be adjusted at runtime](#changing-the-number-of-sink-workers).
+  - Sufficient sink workers need to be configured to keep-up with real-time replication, though [this number can be adjusted at runtime](#making-runtime-changes-to-the-sink).
   - There is some protection from over-provisioning but not from under-provisioning.
 
 In handling replication events, sink workers must apply the replicated change into the local cluster, and this uses a specific `PUSH` command.  The sink workers are constrained in that:
@@ -306,7 +306,7 @@ Reconciliation requires the scheduling of checks.  Each check will perform a ful
 - `branch_compare`;
 - `clock_compare`.
 
-The root to be compared is the root of [the merkle tree](./RiakTheoryGuide.md#handling-requests) representing the state of the whole tree in 1,024 4-byte hashes.  The roots are merged across all partitions, to provide a representation of cluster state in a single 4KB integer.
+The root to be compared is the root of [the merkle tree](./RiakTheoryGuide.md#anti-entropy) representing the state of the whole tree in 1,024 4-byte hashes.  The roots are merged across all partitions, to provide a representation of cluster state in a single 4KB integer.
 
 If these roots match between the clusters, the clusters are considered to be reconciled - `in_sync = true` is the result of the exchange, and `{root_compare, 0}` is the final state of the exchange.  If not, the `root_compare` is repeated, and on the repeated check only deltas in the same 4-byte hash as the previous compare need to be considered a potential mismatch.  The `root_compare` will be repeated until the intersection of deltas is empty (all 1,024 hashes, have a some stage in the loop, matched between roots), or there exists a stable set of branches in the root, which differ on every comparison.  An empty set of deltas will be considered an `in_sync = true` result, otherwise the next phase is required.
 

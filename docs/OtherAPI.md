@@ -6,7 +6,7 @@ layout : default
 
 # Riak KV - Other APIs
 
-The majority of work within Riak KV can be done using the [Object API](/ObjectAPI.md), and the [Query API](/QueryAPI.md).  There are though additional APIs, with specific purposes:
+The majority of work within Riak KV can be done using the [Object API](./ObjectAPI.md), and the [Query API](./QueryAPI.md).  There are though additional APIs, with specific purposes:
 
 - [The AAE Fold API](#aae-fold-api)
 - [The Fetch API used to access replication queues](#the-fetch-api)
