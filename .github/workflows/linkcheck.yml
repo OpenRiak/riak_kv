@@ -14,5 +14,5 @@ jobs:
     - uses: tcort/github-action-markdown-link-check@v1
       with:
         use-verbose-mode: 'yes'
-        folder-path: 'docs/'
+        folder-path: 'docs'
         max-depth: 1
