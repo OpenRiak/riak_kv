@@ -24,7 +24,7 @@ For later OTP versions, an alternative `openriak-<release>` branch will be requi
 
 ## Quick Start
 
-You should have [Erlang/OTP 26](http://erlang.org/download.html) to compile and run this version Riak KV. The [Riak application](https://github.com/OpenRiak/riak) is the parent application for Riak KV, providing a set of scripts to build, package, deploy and run a Riak KV store.
+You should have [Erlang/OTP 26](https://erlang.org/downloads.html) to compile and run this version Riak KV. The [Riak application](https://github.com/OpenRiak/riak) is the parent application for Riak KV, providing a set of scripts to build, package, deploy and run a Riak KV store.
 
 ## Quick Docs
 
