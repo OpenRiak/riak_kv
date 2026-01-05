@@ -196,7 +196,7 @@ Proactive reconciliation provides continuous assurance that data is correctly se
 There are two forms of proactive intra-cluster reconciliation in Riak:
 
 - Tictac AAE (recommended).
-  - Uses the [configuration option `tictacaae_active`](./InstallAndStartGuide.md#config-of-riak---key-riakconf-changes).
+  - Uses the [configuration option `tictacaae_active`](./InstallAndStartGuide.md#configuration-of-riak---key-riakconf-changes).
   - A prerequisite for efficient inter-cluster reconciliation.
   - A prerequisite for the use of the [AAE Fold API](./OtherAPI.md#aae-fold-api).
   - Requires a secondary keystore if not using the leveled backend.
