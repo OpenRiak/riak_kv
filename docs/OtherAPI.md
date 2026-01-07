@@ -162,7 +162,7 @@ The AAE Fold implementation has similarities to [the Query API](./QueryAPI.md#pe
   - Unlike the Query API, there is no sending of partial results, and waiting for acknowledgement.
   - AAE folds will continue to run, even when the query server for the request has timed out.
   - If a queue-type accumulator is used, the results are sent to the queue in batches during the fold, and the final result returned to the query server is just a count.
-- Once all vnode folds have completed and sent results, the query server wil combine the results and return the final result-set back to the requestor.
+- Once all vnode folds have completed and sent results, the query server will combine the results and return the final result-set back to the requester.
 
 #### Node worker pools
 

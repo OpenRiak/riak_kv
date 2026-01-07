@@ -150,7 +150,7 @@ To find all the people with a given date of birth, a simple range query could be
     }
 ```
 
-This is the equivalent to finding all those born on "19650501" in "YYYMMDD" format.  As all index entries have additional information appended, the `end_term` "19650502" is lexicographically before any of the index entries for those born on "19650502" e.g. `"19650502" < "19650502|...."`.  As no `accumulation_option` has been set, this will return a list of keys for those people born on that day.
+This is the equivalent to finding all those born on "19650501" in "YYYYMMDD" format.  As all index entries have additional information appended, the `end_term` "19650502" is lexicographically before any of the index entries for those born on "19650502" e.g. `"19650502" < "19650502|...."`.  As no `accumulation_option` has been set, this will return a list of keys for those people born on that day.
 
 ### Example (1) - Finding an Exact Match
 
@@ -689,7 +689,7 @@ The scanning stage of the query is in parallel with the filtering, buffering and
 {: .highlight }
 > In general a query should be able to scan, merge and select index entries at between **500K and 1M entries per CPU-core per second**.
 
-Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfillment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
+Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfilment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
 
 Index entries are stored in blocks of around 30 entries, so there is minimal difference between scanning 1 entry per vnode, and scanning 100.  Each block must be decompressed and deserialised every time the block is scanned, there is no caching of deserialised index entries.  The only caching between queries is of a small amount of block metadata and natural promotion of blocks to the file system page cache.
 
@@ -796,4 +796,4 @@ In failure and recovery scenarios, false negatives are possible (i.e. results ma
 
 ### Further Improvements
 
-Improving the functionality of the Query API is an active goal of the OpenRiak community.  Notifications on planned improvements will be added to the [OpenRiak discusssions board](https://github.com/orgs/OpenRiak/discussions).
+Improving the functionality of the Query API is an active goal of the OpenRiak community.  Notifications on planned improvements will be added to the [OpenRiak discussions board](https://github.com/orgs/OpenRiak/discussions).

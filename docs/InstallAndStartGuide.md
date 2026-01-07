@@ -71,7 +71,7 @@ To generate a package, running `make package` will build a package for the curre
 
 - Running `make package` will require the local machine to have appropriate build tools installed;
 - The `make package` process will output WARNING level errors during the `make package` process;
-- The underlying information used as part of `make package` can be in the [`pkg` section](https://github.com/OpenRiak/riak/tree/openriak-3.4/rel/pkg) of the Riak repo.
+- The underlying information used as part of `make package` can be in the [`pkg` section](https://github.com/OpenRiak/riak/tree/openriak-3.4/rel/pkg) of the Riak repository.
 
 ### Using pre-built packages
 
@@ -120,7 +120,7 @@ A `ulimit` of 100000 will be acceptable for small-scale non-production systems, 
 
 ### Configuration of Riak - key riak.conf changes
 
-Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in [the `cuttlfish` section of the `riak/rebar.config` file](https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37).
+Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in [the `cuttlefish` section of the `riak/rebar.config` file](https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37).
 
 Each individual schema component can be found in the `priv` folder for that repository, e.g [priv/riak_kv.schema for the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
@@ -250,7 +250,7 @@ Setting distinct `n_val`s on a per-bucket basis is not recommended, it is prefer
 
 - related configuration settings `target_n_val` and `target_location_n_val` are cluster-wide and not bucket-specific;
 - the scope of the anti-entropy system grows with every unique n_val;
-- nextgenrepl full-sync configuration is specific to each n_val, having multiple n_vals requires different nodes in the cluster to reconcile for different n_vals.
+- nextgenrepl full-sync configuration is specific to each n_val, having multiple nvals requires different nodes in the cluster to reconcile for different nvals.
 
 The value of `1` is sometimes used in read-only clusters, to reduce storage costs in clusters used only for backups or offline-reporting.  The value of `5` may sometimes be used in very large clusters in terms of node count; either as the probability of concurrent failures requires higher redundancy, or because there is a need to improve the efficiency of secondary index queries.
 
@@ -303,7 +303,7 @@ The `aae_tree_exclude` bucket property may be cached by processes within a clust
 
 #### Property - small_vclock
 
-The `small_vclock` bucket property has a default value of `50`, and that sets the size of version vectors before pruning will take place. Version vectors will initially tend to be the size of the total of all n_vals in all clusters accepting writes for that value (two clusters with n_val of 3 will lead to version vectors of size 6 if objects are subject to sufficient updates).  However, when nodes are replaced, and when clusters are expanded or contracted, new potential vnodes are generated which may lead to the version vector expanding.
+The `small_vclock` bucket property has a default value of `50`, and that sets the size of version vectors before pruning will take place. Version vectors will initially tend to be the size of the total of all nvals in all clusters accepting writes for that value (two clusters with n_val of 3 will lead to version vectors of size 6 if objects are subject to sufficient updates).  However, when nodes are replaced, and when clusters are expanded or contracted, new potential vnodes are generated which may lead to the version vector expanding.
 
 It is not recommended to change the `small_vclock`, unless specific problems are seen with objects reaching the pruning limit - and in this case increasing the size may be used as a workaround to those issues.  Any change must be reflected in all connected clusters.
 
@@ -330,7 +330,7 @@ As a consequence though, in the case where there are at least three node failure
 
 #### Property - backend
 
-If using the mutli-backend, the bucket property `backend` can be used to map bucket types to different backends.
+If using the multi-backend, the bucket property `backend` can be used to map bucket types to different backends.
 
 #### Property - General read/write parameters
 

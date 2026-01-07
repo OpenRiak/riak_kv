@@ -49,7 +49,7 @@ Sometimes, even in those situations, the leveled backend may be more efficient a
 {: .note }
 > The bitcask backend is the preferred long-term solution for immutable, unsorted, data storage in Riak.
 
-Use of multi-backend should generally be avoided, unless as a mulit-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
+Use of multi-backend should generally be avoided, unless as a multi-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
 
 #### Leveled
 
@@ -214,7 +214,7 @@ Enabling Tictac AAE also adds to the cluster support for the operator-functional
 
 ### Intra-cluster data resilience - changing the choice
 
-The `n_val` is in theory configurable by bucket, which allows for multiple n_vals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
+The `n_val` is in theory configurable by bucket, which allows for multiple nvals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
 
 The `target_n_val` and `target_location_n_val` configuration is used each time a cluster change is planned (i.e. adding or removing a node).  So using a new value will take effect once the next change is made within a cluster.
 
@@ -287,7 +287,7 @@ Changing the delete mode is possible, with a restart, but needs to be a coordina
 
 The most important design decision is how to map the data requirements in an application into the format of objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions; but there is some general guidance that tends to be helpful in most cases:
 
-- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is to fetch multiple objects to fulfill a single data-demand from the application. Where possible, make the most common read requests fulfilled via a single object read request.
+- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is to fetch multiple objects to fulfil a single data-demand from the application. Where possible, make the most common read requests fulfilled via a single object read request.
 - By default when using mutable objects, always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`, unless immutability is guaranteed - i.e. all objects are create-once, update-never.
 - Eventually parallel writes will occur, and siblings will exist.  Siblings can be minimised using conditional PUTs, if sibling resolution is complex or requires manual intervention.  Use aae_folds feeding operator dashboards to track the generation of siblings.  To auto-resolve siblings CRDTs (conflict-free replicated data types) can be used, and third-party client-side libraries are generally a better long-term option than using Riak's internal CRDTs.
 - Values can be large, especially when using the leveled backend.  Individual objects significantly in excess of 1MB are not in themselves likely to cause a direct performance issue.  Values are compressed before being persisted to disk (unless compression is disabled), when using the leveled-backend, so pre-compression is not necessary unless network bandwidth is a significant factor.
