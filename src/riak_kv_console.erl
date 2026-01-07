@@ -45,7 +45,10 @@
          bucket_type_create/1,
          bucket_type_update/1,
          bucket_type_reset/1,
-         bucket_type_list/1]).
+         bucket_type_list/1
+        ]).
+
+-export([command/1]).  %% new callbacks go here, and are to be implemented using clique
 
 -export([ensemble_status/1]).
 
@@ -55,6 +58,12 @@
          aae_tree_status/1]).
 
 -include_lib("kernel/include/logger.hrl").
+
+
+-spec command([string()]) -> ok.
+command(Cmd) ->
+    clique:run(Cmd).
+
 
 join([NodeStr]) ->
     join(NodeStr, fun riak_core:join/1,
@@ -746,6 +755,7 @@ ensemble_status([Str]) ->
         _ ->
             riak_kv_ensemble_console:ensemble_detail(N)
     end.
+
 
 %%%===================================================================
 %%% Private

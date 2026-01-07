@@ -29,6 +29,7 @@
         obj_not_deleted/1,
         try_cast/3,
         fallback/4,
+        set_metric_domain/0,
         expand_value/3,
         expand_rw_value/4,
         expand_sync_on_write/2,
@@ -107,7 +108,7 @@ is_x_deleted(Obj) ->
 %%      are marked deleted, or the input Obj if any of them are not.
 obj_not_deleted(Obj) ->
     case [{M, V} || {M, V} <- riak_object:get_contents(Obj),
-                    dict:is_key(<<"X-Riak-Deleted">>, M) =:= false] of
+                    riak_object:metadata_iskey(<<"X-Riak-Deleted">>, M) =:= false] of
         [] -> undefined;
         _ -> Obj
     end.
@@ -185,6 +186,8 @@ get_default_bucket_option(Type) ->
             throw({unknown_bucket_option, Type})
     end.
 
+set_metric_domain() ->
+    #{domain => [background, metric]}.
 
 expand_value(Type, default, BucketProps) ->
     get_bucket_option(Type, BucketProps);

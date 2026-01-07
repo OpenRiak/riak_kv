@@ -180,12 +180,13 @@ api_version() ->
     {ok, ?API_VERSION}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(state()) -> {ok, [atom()]}.
+-spec capabilities(state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_) ->
     {ok, ?CAPABILITIES}.
 
 %% @doc Return the capabilities of the backend.
--spec capabilities(riak_object:bucket(), state()) -> {ok, [atom()]}.
+-spec capabilities(
+    riak_object:bucket(), state()) -> {ok, [riak_kv_backend:capability()]}.
 capabilities(_, _) ->
     {ok, ?CAPABILITIES}.
 
@@ -330,10 +331,12 @@ fold_keys(FoldKeysFun, Accum, Opts, State) ->
     end.
 
 %% @doc Fold over all the objects for one or all buckets, yes, sir!
--spec fold_objects(riak_kv_backend:fold_objects_fun(),
-                   any(),
-                   [{atom(), term()}],
-                   state()) -> {ok, any()} | {async, fun()}.
+-spec fold_objects(
+    riak_kv_backend:fold_objects_fun(),
+    any(),
+    [{atom(), term()}],
+    state()) ->
+        {ok, any()} | {async, fun(() -> riak_kv_backend:fold_acc())}.
 fold_objects(FoldObjectsFun, Accum, Opts, State) ->
     KeyCount = State#state.key_count,
     ValueSize = State#state.default_size,

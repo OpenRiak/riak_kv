@@ -50,12 +50,6 @@
 -include_lib("webmachine/include/webmachine.hrl").
 -include("riak_kv_wm_raw.hrl").
 
--ifdef(namespaced_types).
--type riak_kv_wm_utils_dict() :: dict:dict().
--else.
--type riak_kv_wm_utils_dict() :: dict().
--endif.
-
 -type jsonpropvalue() :: integer()|string()|boolean()|{struct,[jsonmodfun()]}.
 -type jsonmodfun() :: {ModBinary :: term(), binary()}|{FunBinary :: term(), binary()}.
 -type erlpropvalue() :: integer()|string()|boolean().
@@ -107,61 +101,71 @@ default_encodings() ->
     [{"identity", fun(X) -> X end},
      {"gzip", fun(X) -> zlib:gzip(X) end}].
 
--spec multipart_encode_body(string(), binary(), {riak_kv_wm_utils_dict(), binary()}, term()) ->
-    iolist().
+-spec multipart_encode_body(
+    string(),
+    binary(),
+    {riak_object:riak_object_meta(), binary()},
+    term()) -> 
+        iolist().
 %% @doc Produce one part of a multipart body, representing one sibling
 %%      of a multi-valued document.
 multipart_encode_body(Prefix, Bucket, {MD, V}, APIVersion) ->
-    Links1 = case dict:find(?MD_LINKS, MD) of
-                 {ok, Ls} -> Ls;
-                 error -> []
-             end,
+    Links1 =
+        case riak_object:metadata_find(?MD_LINKS, MD) of
+            {ok, Ls} -> Ls;
+            error -> []
+        end,
     Links2 = format_links([{Bucket, "up"}|Links1], Prefix, APIVersion),
     Links3 = mochiweb_headers:make(Links2),
     [{?HEAD_LINK, Links4}] = mochiweb_headers:to_list(Links3),
 
-    [?HEAD_CTYPE, ": ",get_ctype(MD,V),
-     case dict:find(?MD_CHARSET, MD) of
-         {ok, CS} -> ["; charset=",CS];
-         error -> []
-     end,
-     "\r\n",
-     case dict:find(?MD_ENCODING, MD) of
-         {ok, Enc} -> [?HEAD_ENCODING,": ",Enc,"\r\n"];
-         error -> []
-     end,
-     ?HEAD_LINK,": ",Links4,"\r\n",
-     "Etag: ",dict:fetch(?MD_VTAG, MD),"\r\n",
-     "Last-Modified: ",
-     case dict:fetch(?MD_LASTMOD, MD) of
-         Now={_,_,_} ->
-             httpd_util:rfc1123_date(
-               calendar:now_to_local_time(Now));
-         Rfc1123 when is_list(Rfc1123) ->
-             Rfc1123
-     end,
-     "\r\n",
-     case dict:find(?MD_DELETED, MD) of
-         {ok, "true"} ->
-             [?HEAD_DELETED, ": true\r\n"];
-         error ->
-             []
-     end,
-     case dict:find(?MD_USERMETA, MD) of
-         {ok, M} ->
-            lists:foldl(fun({Hdr,Val},Acc) ->
-                            [Acc|[Hdr,": ",Val,"\r\n"]]
-                        end,
-                        [], M);
-         error -> []
-     end,
-     case dict:find(?MD_INDEX, MD) of
-         {ok, IF} ->
-             [[?HEAD_INDEX_PREFIX,Key,": ",any_to_list(Val),"\r\n"] || {Key,Val} <- IF];
-         error -> []
-     end,
-     "\r\n",
-     encode_value(V)].
+    [
+        ?HEAD_CTYPE, ": ",get_ctype(MD,V),
+        case riak_object:metadata_find(?MD_CHARSET, MD) of
+            {ok, CS} -> ["; charset=",CS];
+            error -> []
+        end,
+        "\r\n",
+        case riak_object:metadata_find(?MD_ENCODING, MD) of
+            {ok, Enc} -> [?HEAD_ENCODING,": ",Enc,"\r\n"];
+            error -> []
+        end,
+        ?HEAD_LINK,": ",Links4,"\r\n",
+        "Etag: ", riak_object:metadata_fetch(?MD_VTAG, MD),"\r\n",
+        "Last-Modified: ",
+        case riak_object:metadata_fetch(?MD_LASTMOD, MD) of
+            Now={_,_,_} ->
+                httpd_util:rfc1123_date(
+                calendar:now_to_local_time(Now));
+            Rfc1123 when is_list(Rfc1123) ->
+                Rfc1123
+        end,
+        "\r\n",
+        case riak_object:metadata_find(?MD_DELETED, MD) of
+            {ok, "true"} ->
+                [?HEAD_DELETED, ": true\r\n"];
+            error ->
+                []
+        end,
+        case riak_object:metadata_find(?MD_USERMETA, MD) of
+            {ok, M} ->
+                lists:foldl(fun({Hdr,Val},Acc) ->
+                                [Acc|[Hdr,": ",Val,"\r\n"]]
+                            end,
+                            [], M);
+            error -> []
+        end,
+        case riak_object:metadata_find(?MD_INDEX, MD) of
+            {ok, IF} ->
+                [
+                    [?HEAD_INDEX_PREFIX,Key,": ",any_to_list(Val),"\r\n"]
+                    || {Key,Val} <- IF
+                ];
+            error -> []
+        end,
+        "\r\n",
+        encode_value(V)
+    ].
 
 format_links(Links, Prefix, APIVersion) ->
     format_links(Links, Prefix, APIVersion, []).
@@ -208,10 +212,10 @@ format_uri(_Type, Bucket, Key, Prefix, 2) ->
 format_uri(Type, Bucket, Key, _Prefix, 3) ->
     io_lib:format("/types/~s/buckets/~s/keys/~s", [Type, Bucket, Key]).
 
--spec get_ctype(riak_kv_wm_utils_dict(), term()) -> string().
+-spec get_ctype(riak_object:riak_object_meta(), term()) -> string().
 %% @doc Work out the content type for this object - use the metadata if provided
 get_ctype(MD,V) ->
-    case dict:find(?MD_CTYPE, MD) of
+    case riak_object:metadata_find(?MD_CTYPE, MD) of
         {ok, Ctype} ->
             Ctype;
         error when is_binary(V) ->

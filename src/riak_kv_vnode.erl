@@ -59,7 +59,18 @@
          reformat_object/2,
          stop_fold/1,
          get_modstate/1,
-         aae_send/1]).
+         aae_send/1,
+         aae_prompt_nextrebuild/2,
+         aae_get_rebuild_schedule/1,
+         aae_set_rebuild_schedule/2,
+         aae_get_storeheads/1,
+         aae_set_storeheads/2,
+         aae_get_tokenbucket/1,
+         aae_set_tokenbucket/2,
+         aae_rebuildpoke/1,
+         aae_exchangepoke/1,
+         aae_controller/1,
+         aae_rebuilding/1]).
 
 %% riak_core_vnode API
 -export([init/1,
@@ -298,8 +309,10 @@ maybe_create_hashtrees(true, State=#state{idx=Index, upgrade_hashtree=Upgrade,
                     monitor(process, Trees),
                     State#state{hashtrees=Trees, upgrade_hashtree=false};
                 Error ->
-                    ?LOG_INFO("riak_kv/~p: unable to start index_hashtree: ~p",
-                               [Index, Error]),
+                    ?LOG_INFO(
+                        "riak_kv/~p: unable to start index_hashtree: ~p",
+                        [Index, Error]
+                    ),
                     erlang:send_after(1000, self(), retry_create_hashtree),
                     State#state{hashtrees=undefined}
             end;
@@ -546,6 +559,16 @@ when_loading_complete(AAECntrl, Preflists, PreflistFun, OnlyIfBroken) ->
             skipped
     end.
 
+%% @doc Expose aae_controller, mainly for gathering items for `riak admin aae-progress-report`.
+-spec aae_controller(#state{}) -> pid() | undefined.
+aae_controller(#state{aae_controller = A}) ->
+    A.
+
+%% @doc Expose tictac_rebuilding field, for `riak admin aae-progress-report`.
+-spec aae_rebuilding(#state{}) -> erlang:timestamp() | false.
+aae_rebuilding(#state{tictac_rebuilding = A}) ->
+    A.
+
 
 %% @doc Reveal the underlying module state for testing
 -spec get_modstate(state()) -> {module(), term()}.
@@ -616,13 +639,124 @@ tictacrebuild_complete(Vnode, StartTime, ProcessType) ->
                                 erlang:timestamp(),
                                 {atom(), non_neg_integer()}) -> ok.
 %% @doc
-%% Infor the vnode that an aae exchange is complete
+%% Inform the vnode that an aae exchange is complete
 tictacexchange_complete(Vnode, StartTime, ExchangeResult) ->
     riak_core_vnode_master:command(Vnode, 
                                     {exchange_complete,
                                         ExchangeResult,
                                         StartTime},
                                     riak_kv_vnode_master).
+
+-spec aae_prompt_nextrebuild([{partition(), node()}], non_neg_integer()) -> ok.
+%% @doc
+%% Prompt next rebuilding of tictac trees to occur `Delay` seconds from now
+aae_prompt_nextrebuild(Vnodes, Delay) ->
+    riak_core_vnode_master:command(Vnodes,
+                                   {prompt_nextrebuild, Delay},
+                                   riak_kv_vnode_master).
+
+-spec aae_rebuildpoke([{partition(), node()}]) -> ok.
+%% @doc
+%% Send a rebuild poke.
+aae_rebuildpoke(Vnodes) ->
+    riak_core_vnode_master:command(Vnodes,
+                                   tictacaae_rebuildpoke,
+                                   riak_kv_vnode_master).
+
+-spec aae_exchangepoke([{partition(), node()}]) -> ok.
+%% @doc
+%% Send an exchange poke.
+aae_exchangepoke(Vnodes) ->
+    riak_core_vnode_master:command(Vnodes,
+                                   tictacaae_exchangepoke,
+                                   riak_kv_vnode_master).
+
+-spec aae_get_rebuild_schedule({partition(), node()}) ->
+          {ok, aae_controller:rebuild_schedule()} | {error, aae_inactive}.
+%% @doc
+%% Return rebuild schedule in effect on a vnode's AAE Controller
+aae_get_rebuild_schedule(Vnode) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   get_rebuild_schedule,
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+-spec aae_set_rebuild_schedule({partition(), node()}, aae_controller:rebuild_schedule()) ->
+          ok | {error, aae_inactive}.
+%% @doc
+%% Set rebuild schedule on a vnode's AAE Controller
+aae_set_rebuild_schedule(Vnode, RS) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   {set_rebuild_schedule, RS},
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+-spec aae_get_storeheads({partition(), node()}) ->
+          {ok, boolean()} | {error, aae_inactive}.
+%% @doc
+%% Return storeheads flag in effect on a vnode's AAE Controller
+aae_get_storeheads(Vnode) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   get_storeheads,
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+-spec aae_set_storeheads({partition(), node()}, boolean()) ->
+          ok | {error, aae_inactive}.
+%% @doc
+%% Set storeheads on a vnode's AAE Controller
+aae_set_storeheads(Vnode, A) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   {set_storeheads, A},
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+-spec aae_get_tokenbucket({partition(), node()}) ->
+          {ok, boolean()}.
+%% @doc
+%% Return tokenbucket flag in effect on a vnode
+aae_get_tokenbucket(Vnode) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   get_tokenbucket,
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+-spec aae_set_tokenbucket({partition(), node()}, boolean()) ->
+          ok.
+%% @doc
+%% Set tokenbucket on a vnode
+aae_set_tokenbucket(Vnode, A) ->
+    Ref = make_ref(),
+    Sender = {raw, Ref, self()},
+    riak_core_vnode_master:command(Vnode,
+                                   {set_tokenbucket, A},
+                                   Sender,
+                                   riak_kv_vnode_master),
+    receive_with_ref(Ref).
+
+receive_with_ref(Ref) ->
+    receive
+        {Ref, Res} ->
+            Res
+    after 5000 ->
+            {error, timeout}
+    end.
+
 
 get(Preflist, BKey, ReqId) ->
     %% Assuming this function is called from a FSM process
@@ -1199,11 +1333,15 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
     %% If store rebuild complete - then need to rebuild trees
     AAECntrl = State#state.aae_controller,
     Partition = State#state.idx,
-    ?LOG_INFO("AAE pid=~w partition=~w rebuild store complete " ++
-                "in duration=~w seconds",
-                [AAECntrl,
-                    Partition,
-                    timer:now_diff(os:timestamp(), ST) div (1000 * 1000)]),
+    ?LOG_INFO(
+        "AAE pid=~w partition=~w rebuild store complete "
+        "in duration=~w seconds",
+        [
+            AAECntrl,
+            Partition,
+            timer:now_diff(os:timestamp(), ST) div (1000 * 1000)
+        ]
+    ),
     queue_tictactreerebuild(AAECntrl, Partition, false, State),
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
     {noreply, State};
@@ -1219,8 +1357,11 @@ handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
             {noreply, State};
         TS ->
             ProcessTime = timer:now_diff(os:timestamp(), TS) div (1000 * 1000),
-            ?LOG_INFO("Rebuild process for partition=~w complete in " ++
-                        "duration=~w seconds", [Partition, ProcessTime]),
+            ?LOG_INFO(
+                "Rebuild process for partition=~w complete in "
+                "duration=~w seconds",
+                [Partition, ProcessTime]
+            ),
             {noreply, State#state{tictac_rebuilding = false}}
     end;
 
@@ -1240,6 +1381,74 @@ handle_command({exchange_complete, ExchangeResult, ST},
                             tictac_deltacount = DC,
                             tictac_exchangetime = XT,
                             tictac_skiptick = 0}};
+
+handle_command({prompt_nextrebuild, Delay},
+               _Sender, State) ->
+    AAECntrl = State#state.aae_controller,
+    ok = aae_controller:aae_prompt_nextrebuild(AAECntrl, Delay),
+    {noreply, State};
+
+handle_command(get_rebuild_schedule,
+               Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            riak_core_vnode:reply(Sender, {error, aae_inactive}),
+            {noreply, State};
+        AAECntrl ->
+            Res = aae_controller:aae_get_rebuild_schedule(AAECntrl),
+            riak_core_vnode:reply(Sender, {ok, Res}),
+            {noreply, State}
+    end;
+
+handle_command({set_rebuild_schedule, RS},
+               Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            riak_core_vnode:reply(Sender, {error, aae_inactive}),
+            {reply, {error, aae_inactive}, State};
+        AAECntrl ->
+            Res = aae_controller:aae_set_rebuild_schedule(AAECntrl, RS),
+            riak_core_vnode:reply(Sender, Res),
+            {noreply, State}
+    end;
+
+handle_command(get_storeheads,
+               Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            riak_core_vnode:reply(Sender, {error, aae_inactive}),
+            {reply, {error, aae_inactive}, State};
+        AAECntrl ->
+            StoreheadsIsOn = aae_controller:wrapped_splitobjfun(
+                               riak_object:aae_from_object_binary(true)),
+            Res = aae_controller:aae_get_object_splitfun(AAECntrl),
+            riak_core_vnode:reply(Sender, (Res == StoreheadsIsOn)),
+            {noreply, State}
+    end;
+
+handle_command({set_storeheads, A},
+               Sender, State) ->
+    case State#state.aae_controller of
+        undefined ->
+            riak_core_vnode:reply(Sender, {error, aae_inactive}),
+            {reply, {error, aae_inactive}, State};
+        AAECntrl ->
+            A2 = aae_controller:wrapped_splitobjfun(
+                   riak_object:aae_from_object_binary(A)),
+            Res = aae_controller:aae_set_object_splitfun(AAECntrl, A2),
+            riak_core_vnode:reply(Sender, Res),
+            {noreply, State}
+    end;
+
+handle_command(get_tokenbucket,
+               Sender, State) ->
+    riak_core_vnode:reply(Sender, State#state.aae_tokenbucket),
+    {noreply, State};
+
+handle_command({set_tokenbucket, A},
+               Sender, State) ->
+    riak_core_vnode:reply(Sender, ok),
+    {noreply, State#state{aae_tokenbucket = A}};
 
 handle_command({upgrade_hashtree, Node}, _, State=#state{hashtrees=HT}) ->
     %% Make sure we dont kick off an upgrade during a possible handoff
@@ -1317,7 +1526,8 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
                     State#state.tictac_deltacount,
                     State#state.tictac_exchangetime div (1000 * 1000),
                     LoopDuration div (1000 * 1000)
-                ]
+                ],
+                riak_kv_util:set_metric_domain()
             ),
             {
                 noreply,
@@ -1419,8 +1629,10 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
     
     case {TimeToRebuild < 0, RebuildPending} of 
         {false, _} ->
-            ?LOG_INFO("No rebuild as next_rebuild=~w seconds in the future",
-                        [TimeToRebuild / (1000 * 1000)]),
+            ?LOG_INFO(
+                "No rebuild as next_rebuild=~w seconds in the future",
+                [TimeToRebuild / (1000 * 1000)]
+            ),
             {noreply, State};
         {true, true} ->
             HowLong = 
@@ -1428,20 +1640,25 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
                     / (1000 * 1000),
             case HowLong > ?MAX_REBUILD_TIME of
                 true ->
-                    ?LOG_WARNING("Pending rebuild time is now " ++ 
-                                    "~w seconds for partition ~w " ++ 
-                                    "... something isn't right", 
-                                [HowLong, State#state.idx]);
+                    ?LOG_WARNING(
+                        "Pending rebuild time is now ~w seconds for "
+                        "partition ~w ... something isn't right", 
+                        [HowLong, State#state.idx]
+                    );
                 false ->
-                    ?LOG_INFO("Skip poke with rebuild pending duration=~w" ++
-                                " for partition ~w",
-                            [HowLong, State#state.idx])
+                    ?LOG_INFO(
+                        "Skip poke with rebuild pending duration=~w"
+                        " for partition ~w",
+                        [HowLong, State#state.idx]
+                    )
             end,
             {noreply, State};
         {true, false} ->
             % Next Rebuild Time is in the past - prompt a rebuild
-            ?LOG_INFO("Prompting tictac_aae rebuild for controller=~w", 
-                        [State#state.aae_controller]),
+            ?LOG_INFO(
+                "Prompting tictac_aae rebuild for controller=~w", 
+                [State#state.aae_controller]
+            ),
             ReturnFun = tictac_returnfun(State#state.idx, store),
             State0 = State#state{tictac_rebuilding = os:timestamp()},
             case aae_controller:aae_rebuildstore(
@@ -1761,10 +1978,53 @@ handle_coverage_request(kv_aaefold_request, Req, FilterVNodes, Sender, State) ->
     Query = riak_kv_requests:get_query(Req),
     InitAcc = riak_kv_requests:get_initacc(Req),
     Nval = riak_kv_requests:get_nval(Req),
-    handle_coverage_aaefold(Query, InitAcc, Nval, 
-                            FilterVNodes, Sender, 
-                            State);
+    handle_coverage_aaefold(
+        Query, InitAcc, Nval, FilterVNodes, Sender, State);
+handle_coverage_request(kv_query_request, Req, FilterVNodes, Sender, State) ->
+    Bucket = riak_kv_requests:get_bucket(Req),
+    Query = riak_kv_requests:get_query(Req),
+    AccType = riak_kv_requests:get_accumulation_type(Req),
+    ReturnTerms = riak_kv_requests:get_return_terms(Req),
+    BufferSize = riak_kv_requests:get_buffer_size(Req),
+    ResultFun = result_fun_ack(Bucket, Sender),
+    BufferMod = riak_kv_query_buffer,
+    Buffer = riak_kv_query_buffer:new(BufferSize, AccType, ResultFun),
+    BackendMod = State#state.mod,
+    {ok, Capabilities} = BackendMod:capabilities(State#state.modstate),
+    Opts =
+        maybe_enable_async_fold(State#state.async_folding, Capabilities, []),
 
+    FilterVNode = proplists:get_value(State#state.idx, FilterVNodes),
+    Filter = 
+        riak_kv_coverage_filter:build_filter(
+            Bucket,
+            riak_kv_requests:get_item_filter(Req),
+            FilterVNode
+        ),
+    % Build the fold and finish functions
+    Extras = fold_extras_keys(State#state.idx, Bucket),
+    FoldFun = fold_fun(keys, BufferMod, Filter, Extras),
+    FinishFun = finish_fun(BufferMod, Sender),
+    case lists:member(complex_query, Capabilities) of
+        true ->
+            Work = 
+                BackendMod:complex_query(
+                    FoldFun,
+                    Buffer,
+                    Bucket,
+                    Query,
+                    ReturnTerms,
+                    Opts,
+                    State#state.modstate),
+            case Work of
+                {ok, Acc} ->
+                    FinishFun(Acc);
+                {async, AsyncWork} ->
+                    {async, {fold, AsyncWork, FinishFun}, Sender, State}
+            end;
+        false ->
+            {reply, {error, {queries_not_supported, BackendMod}}, State}
+    end;
 handle_coverage_request(kv_hotbackup_request, Req, _FilterVnodes, Sender,
                 State=#state{mod=Mod, modstate=ModState}) ->
     % If the backend is hot_backup capability, run the backup via the node
@@ -2756,8 +3016,10 @@ handle_info(retry_create_hashtree, State=#state{hashtrees=undefined}) ->
         undefined ->
             ok;
         _ ->
-            ?LOG_INFO("riak_kv/~p: successfully started index_hashtree on retry",
-                       [State#state.idx])
+            ?LOG_INFO(
+                "riak_kv/~p: successfully started index_hashtree on retry",
+                [State#state.idx]
+            )
     end,
     {ok, State2};
 handle_info(retry_create_hashtree, State) ->
@@ -2788,8 +3050,10 @@ handle_info({aae_pong, QueueTime}, State) ->
     QueueTimeMS = QueueTime div 1000,
     case QueueTimeMS >= State#state.max_aae_queue_time of
         true ->
-            ?LOG_INFO("AAE queue queue_time=~w ms prompting sync ping",
-                        [QueueTimeMS]),
+            ?LOG_INFO(
+                "AAE queue queue_time=~w ms prompting sync ping",
+                [QueueTimeMS]
+            ),
             StartDrain = os:timestamp(),
             R = aae_controller:aae_ping(State#state.aae_controller,
                                         StartDrain,
@@ -3800,8 +4064,9 @@ result_fun_ack(Bucket, Sender) ->
                     erlang:demonitor(Monitor, [flush]),
                     throw(stop_fold);
                 {'DOWN', Monitor, process, Pid, Reason} ->
-                    ?LOG_ERROR("Process ~w down for reason ~w", 
-                                    [Pid, Reason]),
+                    ?LOG_ERROR(
+                        "Process ~w down for reason ~w",  [Pid, Reason]
+                    ),
                     throw(receiver_down)
             end
     end.
@@ -3820,7 +4085,7 @@ stop_fold({Pid, Ref}) ->
 %% @private
 finish_fun(BufferMod, Sender) ->
     fun(Buffer) ->
-            finish_fold(BufferMod, Buffer, Sender)
+        finish_fold(BufferMod, Buffer, Sender)
     end.
 
 %% @private

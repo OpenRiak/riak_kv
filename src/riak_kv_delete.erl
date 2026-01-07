@@ -213,10 +213,16 @@ extract_passthru_options(Options) ->
                                                 -> riak_object:riak_object().
 generate_tombstone(Bucket, Key) ->
     TombLegacy =
-        riak_object:new(Bucket,
-                            Key,
-                            <<>>,
-                            dict:store(?MD_DELETED,"true", dict:new())),
+        riak_object:new(
+            Bucket,
+            Key,
+            <<>>,
+            riak_object:metadata_store(
+                ?MD_DELETED,
+                "true",
+                riak_object:metadata_new()
+            )
+        ),
     case app_helper:get_env(riak_kv, tombstone_timestamp, true) of
         true ->
             riak_object:apply_updates(

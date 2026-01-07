@@ -70,8 +70,11 @@ decode(Obj) ->
     riak_object:set_contents(RObj1, dejsonify_values(Values, [])).
 
 jsonify_metadata(MD) ->
-    L = [jsonify_pair(Pair) || {Key,_}=Pair <- dict:to_list(MD),
-                               Key /= ?DOT],
+    L =
+        [
+            jsonify_pair(Pair)
+            || {Key,_}=Pair <- riak_object:metadata_tolist(MD), Key /= ?DOT
+        ],
     {struct, L}.
 
 -spec jsonify_pair({term(), term()}) -> {term(), term()}.
@@ -133,22 +136,26 @@ dejsonify_values([], Accum) ->
     lists:reverse(Accum);
 dejsonify_values([{<<"metadata">>, {struct, MD0}},
                   {<<"data">>, D}|T], Accum) ->
-    Converter = fun({Key, Val}) ->
-                        case Key of
-                            ?MD_LINKS ->
-                                {Key, [{{B, K}, Tag} || [B, K, Tag] <- Val]};
-                            ?MD_LASTMOD ->
-                                {Key, os:timestamp()};
-                            _ ->
-                                {Key, if
-                                          is_binary(Val) ->
-                                              binary_to_list(Val);
-                                          true ->
-                                              dejsonify_meta_value(Val)
-                                      end}
+    Converter =
+        fun({Key, Val}) ->
+            case Key of
+                ?MD_LINKS ->
+                    {Key, [{{B, K}, Tag} || [B, K, Tag] <- Val]};
+                ?MD_LASTMOD ->
+                    {Key, os:timestamp()};
+                _ ->
+                    {
+                        Key, 
+                        if
+                            is_binary(Val) ->
+                                binary_to_list(Val);
+                            true ->
+                                dejsonify_meta_value(Val)
                         end
-                end,
-    MD = dict:from_list([Converter(KV) || KV <- MD0]),
+                    }
+            end
+    end,
+    MD = riak_object:metadata_fromlist([Converter(KV) || KV <- MD0]),
     dejsonify_values(T, [{MD, D}|Accum]).
 
 %% @doc convert structs back into proplists
@@ -179,23 +186,40 @@ jsonify_round_trip_test() ->
                {<<"test_bin">>, <<"two">>},
                {<<"test2_int">>, 4}],
     Meta = [{<<"foo">>, <<"bar">>}, {<<"baz">>, <<"quux">>}],
-    MD = dict:from_list([{?MD_USERMETA, Meta},
-                         {?MD_CTYPE, "application/json"},
-                         {?MD_INDEX, Indexes},
-                         {?MD_LINKS, Links}]),
-    [begin
+    MD =
+        riak_object:metadata_fromlist(
+            [{?MD_USERMETA, Meta},
+            {?MD_CTYPE, "application/json"},
+            {?MD_INDEX, Indexes},
+            {?MD_LINKS, Links}]
+        ),
+    [
+        begin
             O = riak_object:new(B, K, V, MD),
             O2 = decode(encode(O)),
             ?assertEqual(riak_object:bucket(O), riak_object:bucket(O2)),
             ?assertEqual(riak_object:key(O), riak_object:key(O2)),
             ?assert(vclock:equal(riak_object:vclock(O), riak_object:vclock(O2))),
-            ?assertEqual(lists:sort(Meta),
-                         lists:sort(dict:fetch(?MD_USERMETA,
-                                               riak_object:get_metadata(O2)))),
-            ?assertEqual(Links, dict:fetch(?MD_LINKS, riak_object:get_metadata(O2))),
+            ?assertEqual(
+                lists:sort(Meta),
+                lists:sort(
+                    riak_object:metadata_fetch(
+                        ?MD_USERMETA,
+                        riak_object:get_metadata(O2))
+                    )
+                ),
+            ?assertEqual(
+                Links,
+                riak_object:metadata_fetch(?MD_LINKS, riak_object:get_metadata(O2))
+            ),
             ?assertEqual(lists:sort(Indexes), lists:sort(riak_object:index_data(O2))),
             ?assertEqual(riak_object:get_contents(O), riak_object:get_contents(O2))
-        end || {B, K, V} <- [{<<"b">>, <<"k">>, <<"{\"a\":1}">>},
-                             {{<<"t">>, <<"b">>}, <<"k2">>, <<"{\"a\":2}">>}]].
+        end ||
+            {B, K, V} <-
+                [
+                    {<<"b">>, <<"k">>, <<"{\"a\":1}">>},
+                    {{<<"t">>, <<"b">>}, <<"k2">>, <<"{\"a\":2}">>}
+                ]
+    ].
 
 -endif.

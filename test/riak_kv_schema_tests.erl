@@ -74,6 +74,8 @@ basic_schema_test() ->
 
     cuttlefish_unit:assert_config(Config, "riak_kv.ttaaefs_allcheck_window", always),
 
+    cuttlefish_unit:assert_config(Config, "riak_kv.delete_mode", 3000),
+
     %% Default Bucket Properties
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.pr", 0),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.r", quorum),
@@ -281,6 +283,68 @@ all_check_window_test() ->
         ["priv/riak_kv.schema"], Conf, context(), predefined_schema()),
     
     cuttlefish_unit:assert_config(Config, "riak_kv.ttaaefs_allcheck_window", {18, 5}).
+
+delete_mode_test() ->
+    ConfigKeep =
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema"],
+            [{["delete_mode"], keep}],
+            context(),
+            predefined_schema()
+        ),
+    
+    cuttlefish_unit:assert_config(ConfigKeep, "riak_kv.delete_mode", keep),
+
+    ConfigImmediate =
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema"],
+            [{["delete_mode"], immediate}],
+            context(),
+            predefined_schema()
+        ),
+    
+    cuttlefish_unit:assert_config(ConfigImmediate, "riak_kv.delete_mode", immediate),
+
+    Config10s =
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema"],
+            [{["delete_mode"], 10000}],
+            context(),
+            predefined_schema()
+        ),
+    
+    cuttlefish_unit:assert_config(Config10s, "riak_kv.delete_mode", 10000),
+
+    BadConfig2Hours =
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema"],
+            [{["delete_mode"], 3600 * 1000}],
+            context(),
+            predefined_schema()
+        ),
+
+    ErrorText =
+        "must be immediate or keep, or an integer between"
+        " 0 and 300000 (5 minutes) - use advanced.config for other values",
+
+    {error, validation, {errorlist, [InnerError]}} = BadConfig2Hours,
+    {error, {validation, ActualError}} = InnerError,
+    
+    ?assertMatch({"delete_mode", ErrorText}, ActualError),
+
+    BadConfigZero =
+        cuttlefish_unit:generate_templated_config(
+            ["priv/riak_kv.schema"],
+            [{["delete_mode"], 0}],
+            context(),
+            predefined_schema()
+        ),
+
+    {error, validation, {errorlist, [InnerError0]}} = BadConfigZero,
+    {error, {validation, ActualError0}} = InnerError0,
+    
+    ?assertMatch({"delete_mode", ErrorText}, ActualError0)
+.
 
 commit_hooks_test() ->
     Conf = [

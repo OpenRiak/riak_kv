@@ -30,7 +30,19 @@
 -include("riak_object.hrl").
 -include("riak_kv_capability.hrl").
 
--export_type([riak_object/0, proxy_object/0, bucket/0, key/0, value/0, binary_version/0, index_value/0]).
+-export_type(
+    [
+        riak_object/0,
+        proxy_object/0,
+        bucket/0,
+        key/0,
+        value/0,
+        binary_version/0,
+        index_value/0,
+        index_spec/0,
+        riak_object_meta/0
+    ]
+).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -77,8 +89,6 @@
 -type index_spec() :: {index_op(), binary(), index_value()}.
 -type binary_version() :: v0 | v1.
 
--export_type([index_spec/0]).
-
 -define(MAX_KEY_SIZE, 65536).
 
 -define(V1_VERS, 1).
@@ -120,7 +130,9 @@
         metadata_erase/2,
         metadata_store/3,
         metadata_find/2,
-        metadata_fromlist/1
+        metadata_fromlist/1,
+        metadata_tolist/1,
+        metadata_iskey/2
     ]).
 
 -ifdef(TEST).

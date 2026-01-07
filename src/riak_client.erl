@@ -24,6 +24,8 @@
 
 -module(riak_client).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([new/2]).
 -export([get/3,get/4,get/5]).
 -export([put/2,put/3]).
@@ -38,6 +40,7 @@
 -export([stream_list_buckets/1,stream_list_buckets/2,
          stream_list_buckets/3,stream_list_buckets/4, stream_list_buckets/5]).
 -export([get_index/4,get_index/3]).
+-export([query/2]).
 -export([aae_fold/1, aae_fold/2]).
 -export([ttaaefs_fullsync/1, ttaaefs_fullsync/2, ttaaefs_fullsync/3]).
 -export([hotbackup/4]).
@@ -980,12 +983,30 @@ hotbackup(BackupPath, DefaultNVal, PlanNVal, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
     TimeOut = ?DEFAULT_FOLD_TIMEOUT,
-    riak_kv_hotbackup_fsm_sup:start_hotbackup_fsm(Node,
-                                                    [{raw, ReqId, Me},
-                                                    [BackupPath,
-                                                        {DefaultNVal, PlanNVal},
-                                                        TimeOut]]),
+    riak_kv_hotbackup_fsm_sup:start_hotbackup_fsm(
+        Node,
+        [{raw, ReqId, Me}, [BackupPath, {DefaultNVal, PlanNVal}, TimeOut]]),
     wait_for_fold_results(ReqId, TimeOut).
+
+
+-type query_result()
+    ::
+        [riak_object:key()] |
+        [{binary(), riak_object:key()}] |
+        #{binary() => non_neg_integer()} |
+        binary().
+
+-spec query(
+    riak_kv_query:complex_query_definition(), riak_client()) ->
+        {query_result(), none|{{binary(), riak_object:key()}}} |
+        {error, timeout} |
+        {error, term()}.
+query(Query, {?MODULE, [Node, _ClientId]}) ->
+    TimeoutSecs = riak_kv_query:get_timeout_secs(Query),
+    UpdQuery = riak_kv_query:finalise_request(Query),
+    {ok, Pid, ReqId} = riak_kv_query_sup:start_query_worker(Node, [UpdQuery]),
+    ?LOG_DEBUG("Query started with worker ~w request ~0p", [Pid, ReqId]),
+    wait_for_reqid(ReqId, TimeoutSecs * 1000).
 
 
 %% @spec get_index(Bucket :: binary(),

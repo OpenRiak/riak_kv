@@ -1,0 +1,6 @@
+dirs:
+  - docs
+files:
+  - ./README.md
+excludedDirs:
+  - docs/previous
