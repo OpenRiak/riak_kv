@@ -641,9 +641,11 @@ A backlog of compaction work within the ledger can be monitored by tracking leve
 
 ### Garbage collecting `.bak` files in leveled
 
-The leveled backend will in some cases store work in progress during compaction, and then find that work in progress orphaned if it is interrupted by a restart before the change can be applied.  At the next restart, within the leveled ledger, such orphaned files will be renamed as `*.bak` files.  Clearing up the history of these orphaned files is a manual process.  It is always safe to delete `*.bak` files, but for extra security some users may prefer to only delete those files unmodified since before the previous start.
+The leveled backend will in some cases persist to disk work in progress during compaction, and then find that work in progress orphaned if it is interrupted by a restart before the change can be applied - there is space consumed on disk by files not referred to in the manifest for the store.  At the next restart, within the leveled ledger, such orphaned files will be renamed as `*.bak` files.
 
-The journal may also orphan files, but in Riak 3.4 there is no automated process for detecting such files and renaming them.  They can though be [detected and renamed through operator intervention](https://github.com/martinsumner/leveled/issues/444).
+<span>Available from Riak 3.4.1</span>{: .label .label-purple }As well as examining the ledger, the journal will also be checked on startup, to detect journal files present on disk but not in the manifest.  These orphaned journal files will, as with the orphaned ledger files, be renamed with a `*.bak` extension.  On releases prior to Riak 3.4.1, [detecting such files in the journal is a manual process](https://github.com/martinsumner/leveled/issues/444).
+
+Clearing up the history of these orphaned files is a manual process.  It is always safe to delete `*.bak` files, but for extra caution one may choose to only delete those files unmodified since before the previous start of Riak.
 
 ## Data inspection
 
