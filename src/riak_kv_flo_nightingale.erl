@@ -26,7 +26,7 @@
 %%
 %% A set of stats is a set with a single type, but one or more names.  A set
 %% will use a common array of atomics or counters.  It is assumed there may be
-%% value in separating very busy stats of the same type on to different arrays. 
+%% value in separating very busy stats of the same type on to different arrays.
 %%
 %% Every individual stat (i.e. {Type, Name} combination) will have a Lamp which
 %% is used by Flo Nightingale to help gather the stats.  The Lamp will tick
@@ -35,13 +35,13 @@
 %%
 %% When stats are required, the last 60s of stats for each {Type, Name}
 %% combination are summarised into the required outputs:
-%% - _active and _60s and for rate (the current number of active processes, 
+%% - _active and _60s and for rate (the current number of active processes,
 %% and the average number over the past 60s).
 %% - . and _total for count (the total seen in the last 60s and the total seen
 %% over all time)
 %% - _mean, _median, _95, _99, _100 for lossy_histogram (approximations of
 %% mean median and percentiles based on sampling over the period)
-%% 
+%%
 %% The tick, width and depth are configurable:
 %% - `tick` is how long between a lamp taking a reading - and defaults to 1s.
 %% - `width` is how long the period over which each non-total stat is produced,
@@ -97,21 +97,18 @@
 -define(SUFFIX_HIST_MEDIAN, <<"_median">>).
 -define(SUFFIX_HIST_MEAN, <<"_mean">>).
 
+-record(state, {
+    time_slices = ?DEFAULT_TIME_SLICES ::
+        pos_integer(),
+    stat_result_map = maps:new() ::
+        #{{stat_type(), atom()} => stat_results()},
+    lamp_list = [] ::
+        list(lamp_ref()),
+    housekeep_tick = ?DEFAULT_TIME_SLICES * 1000 ::
+        pos_integer()
+}).
 
--record(state,
-    {
-        time_slices = ?DEFAULT_TIME_SLICES
-            :: pos_integer(),
-        stat_result_map = maps:new()
-            :: #{{stat_type(), atom()} => stat_results()},
-        lamp_list = []
-            :: list(lamp_ref()),
-        housekeep_tick = ?DEFAULT_TIME_SLICES * 1000
-            :: pos_integer()
-    }
-).
-
--type stat_type() :: rate|count|lossy_histogram.
+-type stat_type() :: rate | count | lossy_histogram.
 -type stat_set() :: {stat_type(), list(atom())}.
 -type lamp_ref() :: {stat_type(), atom(), pid()}.
 -type rate_result() :: {rate, list(non_neg_integer())}.
@@ -122,9 +119,9 @@
 -type stat_output() :: list({atom(), non_neg_integer()}).
 
 -type option() ::
-    {width, pos_integer()} |
-    {tick, pos_integer()} |
-    {depth, pos_integer()}.
+    {width, pos_integer()}
+    | {tick, pos_integer()}
+    | {depth, pos_integer()}.
 
 -export_type([stat_type/0, stat_set/0, option/0]).
 
@@ -143,7 +140,7 @@ start_link() ->
         ),
     {ok, Pid}.
 
-%% @doc Used by process to generate a stat change 
+%% @doc Used by process to generate a stat change
 update_rate(Name, starting) ->
     nobadarg(
         fun() ->
@@ -189,7 +186,7 @@ update_lossyhistogram(Name, Timing) ->
     ).
 
 %% @doc Used by a Lamp to update Flo Nightingale
--spec update(stat_type(), atom(), list(pos_integer())|pos_integer()) -> ok.
+-spec update(stat_type(), atom(), list(pos_integer()) | pos_integer()) -> ok.
 update(Type, Name, Update) ->
     gen_server:cast(?MODULE, {update, Type, Name, Update}).
 
@@ -219,7 +216,7 @@ stop() ->
 %%%============================================================================
 
 init({RequiredStatSets, Options}) ->
-    UpdatedOptions = lists:ukeysort(1, [{tick, get_tick(Options)}|Options]),
+    UpdatedOptions = lists:ukeysort(1, [{tick, get_tick(Options)} | Options]),
     LampList = setup_stats(RequiredStatSets, UpdatedOptions),
     ResultMap =
         lists:foldl(
@@ -275,10 +272,10 @@ handle_cast({update, rate, Name, LatestRate}, State) ->
             stat_result_map =
                 maps:update_with(
                     {rate, Name},
-                    fun({rate, RL}) -> {rate, [LatestRate|RL]} end,
+                    fun({rate, RL}) -> {rate, [LatestRate | RL]} end,
                     State#state.stat_result_map
                 )
-            }
+        }
     };
 handle_cast({update, count, Name, LatestCount}, State) ->
     {
@@ -288,11 +285,11 @@ handle_cast({update, count, Name, LatestCount}, State) ->
                 maps:update_with(
                     {count, Name},
                     fun({count, {RL, T}}) ->
-                        {count, {[LatestCount|RL], T + LatestCount}}
+                        {count, {[LatestCount | RL], T + LatestCount}}
                     end,
                     State#state.stat_result_map
                 )
-            }
+        }
     };
 handle_cast({update, lossy_histogram, Name, ResultList}, State) ->
     {
@@ -302,11 +299,11 @@ handle_cast({update, lossy_histogram, Name, ResultList}, State) ->
                 maps:update_with(
                     {lossy_histogram, Name},
                     fun({lossy_histogram, ListOfRL}) ->
-                        {lossy_histogram, [ResultList|ListOfRL]} 
+                        {lossy_histogram, [ResultList | ListOfRL]}
                     end,
                     State#state.stat_result_map
                 )
-            }
+        }
     }.
 
 handle_info(house_keeping, State) ->
@@ -337,7 +334,7 @@ setup_stats(StatNeeds, Options) ->
 
 setup_stats([], _Options, Acc) ->
     Acc;
-setup_stats([{lossy_histogram, Names}|Rest], Options, Acc) ->
+setup_stats([{lossy_histogram, Names} | Rest], Options, Acc) ->
     Ref = atomics:new(length(Names), [{signed, false}]),
     HistogramSlots = get_depth(Options),
     LampList =
@@ -359,7 +356,7 @@ setup_stats([{lossy_histogram, Names}|Rest], Options, Acc) ->
             lists:zip(Names, lists:seq(1, length(Names)))
         ),
     setup_stats(Rest, Options, LampList ++ Acc);
-setup_stats([{Type, Names}|Rest], Options, Acc) ->
+setup_stats([{Type, Names} | Rest], Options, Acc) ->
     Ref = counters:new(length(Names), [write_concurrency]),
     LampList =
         lists:map(
@@ -382,8 +379,9 @@ housekeep_results({lossy_histogram, RecentResults}, TimeSlices) ->
     {lossy_histogram, lists:sublist(RecentResults, TimeSlices)}.
 
 -spec produce_result(
-    {stat_type(), atom()}, stat_results(), pos_integer()) ->
-        stat_output().
+    {stat_type(), atom()}, stat_results(), pos_integer()
+) ->
+    stat_output().
 produce_result({rate, Name}, {rate, RecentResults}, TimeSlices) ->
     {CurrentRate, MeanRate} =
         case length(RecentResults) of
@@ -395,7 +393,7 @@ produce_result({rate, Name}, {rate, RecentResults}, TimeSlices) ->
                     hd(RecentResults),
                     trunc(lists:sum(ResultsToUse) / length(ResultsToUse))
                 }
-            end,
+        end,
     NameBin = atom_to_binary(Name),
     [
         {Name, CurrentRate},
@@ -409,8 +407,9 @@ produce_result({count, Name}, {count, {RecentResults, Total}}, TimeSlices) ->
         {Name, RecentCount},
         {get_name(NameBin, ?SUFFIX_COUNT_TOTAL), Total}
     ];
-produce_result({Type, Name}, {Type, ResultLists}, TimeSlices)
-        when Type == lossy_histogram ->
+produce_result({Type, Name}, {Type, ResultLists}, TimeSlices) when
+    Type == lossy_histogram
+->
     Timings = lists:umerge(lists:sublist(ResultLists, TimeSlices)),
     {Median, Mean, P95, P99, P100} =
         case length(Timings) of
@@ -424,7 +423,7 @@ produce_result({Type, Name}, {Type, ResultLists}, TimeSlices)
                     lists:nth(max(1, Count - (Count div 100)), Timings),
                     lists:last(Timings)
                 }
-        end,        
+        end,
     NameBin = atom_to_binary(Name),
     [
         {get_name(NameBin, ?SUFFIX_HIST_100), P100},
@@ -440,10 +439,11 @@ produce_result({Type, Name}, {Type, ResultLists}, TimeSlices)
 
 -spec get_option(
     list(option()),
-    tick|width|depth,
-    flo_tick|flo_width|flo_depth,
-    pos_integer()) ->
-        pos_integer().
+    tick | width | depth,
+    flo_tick | flo_width | flo_depth,
+    pos_integer()
+) ->
+    pos_integer().
 get_option(Options, OptionName, AppKey, Default) ->
     case lists:keyfind(OptionName, 1, Options) of
         {OptionName, I} when is_integer(I), I > 0 ->
@@ -458,7 +458,11 @@ get_option(Options, OptionName, AppKey, Default) ->
 
 -spec nobadarg(fun(() -> ok)) -> ok.
 nobadarg(Fun) ->
-    try Fun() catch error:badarg -> ok end.
+    try
+        Fun()
+    catch
+        error:badarg -> ok
+    end.
 
 -spec get_name(binary(), binary()) -> atom().
 get_name(NameBin, SuffixBin) ->
@@ -555,7 +559,8 @@ simple_count_tester() ->
         {node_puts_set_total, _SCT},
         {node_puts_total, _PCT}
     ] = get_stats(),
-    timer:sleep(Tick), % Wait a tick
+    % Wait a tick
+    timer:sleep(Tick),
     [
         {node_puts, _PC},
         {node_puts_set, _SC},
@@ -566,14 +571,14 @@ simple_count_tester() ->
     ?assertMatch(
         {300, 240},
         {PCT, SCT}
-    ), % Totals must match exactly
+        % Totals must match exactly
+    ),
 
     true = PC >= 250 andalso PC < 254,
     true = SC >= 200 andalso SC < 203,
-        % The rate can be over-estimated slightly, but by less than 1%
+    % The rate can be over-estimated slightly, but by less than 1%
 
     gen_server:stop(?MODULE).
-
 
 simple_histo_tester() ->
     Tick = 500,
@@ -641,5 +646,5 @@ simple_histo_tester() ->
         Stats1
     ),
     gen_server:stop(?MODULE).
-    
+
 -endif.

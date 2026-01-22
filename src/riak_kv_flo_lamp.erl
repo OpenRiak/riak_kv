@@ -44,22 +44,21 @@
     ]
 ).
 
--define(
-    NEW_SLICE(Width),
+-define(NEW_SLICE(Width),
     array:new([{size, Width}, {fixed, true}, {default, unset}])
 ).
 
--record(state,
-    {
-        type :: riak_kv_flo_nightingale:stat_type(),
-        name :: atom(),
-        counter_ref :: atomics:atomics_ref()|counters:counters_ref(),
-        counter_idx :: pos_integer(),
-        tick :: pos_integer(), 
-        depth :: pos_integer(), % only required in lossy_histogram
-        current_slices :: undefined|array:array() % only in lossy_histogram
-    }
-).
+-record(state, {
+    type :: riak_kv_flo_nightingale:stat_type(),
+    name :: atom(),
+    counter_ref :: atomics:atomics_ref() | counters:counters_ref(),
+    counter_idx :: pos_integer(),
+    tick :: pos_integer(),
+    % only required in lossy_histogram
+    depth :: pos_integer(),
+    % only in lossy_histogram
+    current_slices :: undefined | array:array()
+}).
 
 -type lamp_state() :: #state{}.
 
@@ -70,9 +69,10 @@
 -spec start_link(
     riak_kv_flo_nightingale:stat_type(),
     atom(),
-    {atomics:atomics_ref()|counters:counters_ref(), pos_integer()},
-    list(riak_kv_flo_nightingale:option())) ->
-        {ok, pid()}.
+    {atomics:atomics_ref() | counters:counters_ref(), pos_integer()},
+    list(riak_kv_flo_nightingale:option())
+) ->
+    {ok, pid()}.
 start_link(Type, Name, Ref, Options) ->
     {ok, Pid} =
         gen_server:start_link(
@@ -128,8 +128,10 @@ handle_call(fetch, _From, State) ->
 
 handle_cast(
     {add_timing, Timing, Slice},
-    State = #state{type = T, current_slices = CS})
-        when T == lossy_histogram, CS =/= undefined ->
+    State = #state{type = T, current_slices = CS}
+) when
+    T == lossy_histogram, CS =/= undefined
+->
     {
         noreply,
         State#state{
