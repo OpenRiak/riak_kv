@@ -3,6 +3,7 @@
 %%
 %% Copyright (c) 2013-2014 Basho Technologies, Inc.
 %% Copyright (c) 2025 Workday, Inc.
+%% Copyright (c) 2026 T.R. Burghart.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -130,6 +131,7 @@ doc_env() ->
 -type sctl_param()  :: {sctl_key(), sctl_value(), val_compare()}.
 -type sctl_params() :: list(sctl_param()).
 -type sctl_value()  :: non_neg_integer().
+-type sh_command()  :: list(binary()).
 
 -type val_compare() :: eq | max | min.
 %%  min - Actual Value must be `>=' Target Value.
@@ -324,12 +326,24 @@ os_limits({Fam, Name}) ->
         "Unsupported OS ~ts:~ts, no platform-specific info", [Fam, Name]}].
 
 -spec u_limits(
-    ULimitExeOrOSType :: os_type() | exe_path()) -> log_recs().
+    ULimitExeOrOSType :: os_type() | exe_path() | sh_command()) -> log_recs().
 %% We don't really care about anything but core dump and open file limits.
 %% Note that on some supported platforms these values can be obtained with
 %% fewer invocations of the external program, but it's not worth managing
 %% separate implementations.  This implementation *should* work properly on
 %% all platforms we care about.
+u_limits({unix, linux}) ->
+    %% Some brain-dead Linux distros don't include a standalone `ulimit'
+    %% executable, only a shell builtin. Since POSIX expects `ulimit' to be a
+    %% distinct command, it does not specify it as a `/bin/sh' command, hence
+    %% we need to rely on a non-POSIX shell for it if it's not present, and
+    %% the Linux standard is bash.
+    case os:find_executable("/usr/bin/ulimit") of
+        false ->
+            u_limits([<<"/bin/bash">>, <<"ulimit">>]);
+        _ ->
+            u_limits(<<"/usr/bin/ulimit">>)
+    end;
 u_limits({unix, _}) ->
     u_limits(<<"/usr/bin/ulimit">>);
 u_limits({Fam, Name}) ->
@@ -364,13 +378,27 @@ u_limits(ULimitExe) ->
     end,
     [OFRec, CFRec].
 
--spec u_limit(Cmd :: exe_path(), Arg :: exe_arg())
+-spec u_limit(Cmd :: exe_path() | sh_command(), Arg :: exe_arg())
         -> non_neg_integer() | unlimited.
-u_limit(Cmd, Arg) ->
+%% @hidden
+%% On POSIX-compliant OSes where there's a distinct `ulimit' executable,
+%% passes the call (almost) directly to `u_limit_exec/2'.
+%% If the OS only implements `ulimit' via the shell (sigh), fixes up the
+%% arguments to do so transparently.
+u_limit(Exe, Arg) when erlang:is_binary(Exe) ->
+    u_limit_exec(Exe, [Arg]);
+u_limit([Sh, Cmd], Arg) when erlang:is_binary(Cmd) ->
+    u_limit_exec(Sh, [<<"-c">>, <<Cmd/binary, $\s, Arg/binary>>]);
+u_limit([Sh | CmdArgs], Arg) ->
+    u_limit([Sh, erlang:iolist_to_binary(lists:join(<<$\s>>, CmdArgs))], Arg).
+
+-spec u_limit_exec(Cmd :: exe_path(), Args :: exe_args())
+        -> non_neg_integer() | unlimited.
+u_limit_exec(Cmd, Args) ->
     %% Relies on undocumented behavior of string:trim(...) whereby the
     %% returned value is the same type as the 1st parameter, so we can
     %% count on it being a binary.
-    case string:trim(run_exe(Cmd, [Arg])) of
+    case string:trim(run_exe(Cmd, Args)) of
         <<"unlimited">> ->
             unlimited;
         Int ->
@@ -482,7 +510,7 @@ compare_text(min) ->
 %% Everything in and out is binaries.
 %% This is about 3x faster than os:cmd/1 for a simple command, with the speed
 %% improvement going up as output increases by skipping the string() ->
-%% binary() -> string conversions. Invocations of sysctl with a dozen or more
+%% binary() -> string() conversions. Invocations of sysctl with a dozen or more
 %% keys are 8x faster, or more, while using a lot less heap memory.
 
 -spec run_exe(Exe :: exe_path(), Args :: exe_args()) -> binary().
