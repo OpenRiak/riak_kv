@@ -1403,7 +1403,7 @@ take_next_workitem([NextAlloc|T], Wants,
             SliceCount
         ),
     {Mega, Sec, _Micro} = ScheduleStartTime,
-    Slices = lists:sum(lists:map(fun(W) -> element(2, W) end, Wants)),
+    Slices = lists:sum(lists:map(fun({_, WItem}) -> WItem end, Wants)),
     MinSpacing = max(1, ?SECONDS_IN_DAY div (Slices * NodeCount * 4)),
     ScheduleSeconds =
         Mega * ?MEGA
