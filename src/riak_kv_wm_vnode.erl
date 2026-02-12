@@ -184,7 +184,9 @@ jsonify_vnode_status(Idx, PP) ->
 
 jsonify_backend_status(riak_kv_leveled_backend, PP) ->
     maps:fold(
-      fun(Item, A, Q) when Item == penciller_last_merge_time;
+      fun(Item, undefined, Q) ->
+              [{Item, null} | Q];
+         (Item, A, Q) when Item == penciller_last_merge_time;
                            Item == journal_last_compaction_time ->
               [{Item, list_to_binary(calendar:system_time_to_rfc3339(A, [{unit, millisecond}]))} | Q];
          (journal_last_compaction_result, {NCompacted, Score}, Q) ->
