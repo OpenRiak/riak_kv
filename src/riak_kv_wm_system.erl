@@ -31,6 +31,7 @@
          allowed_methods/2,
          content_types_provided/2,
          is_authorized/2,
+         forbidden/2,
          options/2,
          to_json/2
         ]).
@@ -38,8 +39,10 @@
 -include_lib("webmachine/include/webmachine.hrl").
 -include_lib("kernel/include/logger.hrl").
 
+-record(context, {security :: undefined | riak_core_security:context()}).
+
 init([]) ->
-    {ok, undefined}.
+    {ok, #context{}}.
 
 -spec service_available(#wm_reqdata{}, undefined) -> {boolean(), #wm_reqdata{}, undefined}.
 service_available(RD, Ctx) ->
@@ -64,12 +67,35 @@ is_authorized2(RD, Ctx) ->
     case riak_api_web_security:is_authorized(RD) of
         false ->
             {"Basic realm=\"Riak\"", RD, Ctx};
-        {true, _SecContext} ->
+        {true, _} ->
             {true, RD, Ctx};
         insecure ->
             {{halt, 426}, wrq:append_to_resp_body(<<"Security is enabled and "
                     "Riak does not accept credentials over HTTP. Try HTTPS "
                     "instead.">>, RD), Ctx}
+    end.
+
+-spec forbidden(#wm_reqdata{}, #context{}) -> {boolean(), #wm_reqdata{}, #context{}}.
+forbidden(RD, Ctx = #context{security = undefined}) ->
+    {riak_kv_wm_utils:is_forbidden(RD), RD, Ctx};
+forbidden(RD, Ctx = #context{security = Security}) ->
+    case riak_kv_wm_utils:is_forbidden(RD) of
+        true ->
+            {true, RD, Ctx};
+        false when Security == undefined ->
+            RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
+            {true, wrq:append_to_resp_body(<<"Riak security not enabled">>, RD1), Ctx};
+        false ->
+            Res = riak_core_security:check_permission(
+                    {"riak_kv.riak_control"}, Security),
+            case Res of
+                {false, Error, _} ->
+                    RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
+                    {true, wrq:append_to_resp_body(
+                             unicode:characters_to_binary(Error, utf8, utf8), RD1), Ctx};
+                {true, _} ->
+                    {false, RD, Ctx}
+            end
     end.
 
 content_types_provided(RD, Ctx) ->

@@ -88,6 +88,9 @@ forbidden2(RD, Ctx = #context{security = Security}) ->
     case riak_kv_wm_utils:is_forbidden(RD) of
         true ->
             {true, RD, Ctx};
+        false when Security == undefined ->
+            RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
+            {true, wrq:append_to_resp_body(<<"Riak security not enabled">>, RD1), Ctx};
         false ->
             Res = riak_core_security:check_permission(
                     {"riak_kv.riak_control"}, Security),
