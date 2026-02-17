@@ -23,7 +23,7 @@
 %% @doc Riak get logic
 %%
 -module(riak_kv_get_core).
--export([init/11, update_init/2, head_merge/1,
+-export([init/12, update_init/2, head_merge/1,
             add_result/4, update_result/5, result_shortcode/1,
             enough/1, response/1, has_all_results/1, final_action/1, info/1]).
 -export_type([getcore/0, result/0, reply/0, final_action/0]).
@@ -49,42 +49,45 @@
     {delete_repair,
         [{non_neg_integer(), repair_reason()}],
         riak_object:riak_object()} |
-    {read_repair_fetch,
-        [{non_neg_integer(), repair_reason()}],
-        non_neg_integer()} |
     delete.
 -type idxresult() :: {non_neg_integer(), result()}.
 -type idx_type() :: [{non_neg_integer, 'primary' | 'fallback'}].
 
--record(getcore, {n :: pos_integer(),
-                  r :: pos_integer(),
-                  pr :: pos_integer(),
-                  ur :: non_neg_integer(), % updated reads
-                  fail_threshold :: pos_integer(),
-                  notfound_ok :: boolean(),
-                  allow_mult :: boolean(),
-                  deletedvclock :: boolean(),
-                  %% NOTE: throughout this module it is expected these
-                  %% results in the reverse order to which they are
-                  %% received, fastest last at the end of the list
-                  results = [] :: [idxresult()],
-                  merged ::
-                    {notfound, undefined} |
-                        {tombstone, riak_object:riak_object()} |
-                        {ok, riak_object:riak_object()} |
-                        undefined,
-                  num_ok = 0 :: non_neg_integer(),
-                  num_pok = 0 :: non_neg_integer(),
-                  num_notfound = 0 :: non_neg_integer(),
-                  num_deleted = 0 :: non_neg_integer(),
-                  num_fail = 0 :: non_neg_integer(),
-                  num_upd = 0 :: non_neg_integer(),
-                  idx_type :: idx_type(),
-                  head_merge = false :: boolean(),
-                  expected_fetchclock = false :: boolean()|vclock:vclock(),
-                  node_confirms = 0 :: non_neg_integer(),
-                  return_body = true :: boolean(),
-                  confirmed_nodes = []}).
+-record(getcore,
+    {
+        n :: pos_integer(),
+        r :: pos_integer(),
+        pr :: pos_integer(),
+        ur :: non_neg_integer(), % updated reads
+        fail_threshold :: pos_integer(),
+        notfound_ok :: boolean(),
+        allow_mult :: boolean(),
+        deletedvclock :: boolean(),
+        %% NOTE: throughout this module it is expected these
+        %% results in the reverse order to which they are
+        %% received, fastest last at the end of the list
+        results = [] :: [idxresult()],
+        merged ::
+        {notfound, undefined} |
+            {tombstone, riak_object:riak_object()} |
+            {ok, riak_object:riak_object()} |
+            undefined,
+        num_ok = 0 :: non_neg_integer(),
+        num_pok = 0 :: non_neg_integer(),
+        num_notfound = 0 :: non_neg_integer(),
+        num_deleted = 0 :: non_neg_integer(),
+        num_fail = 0 :: non_neg_integer(),
+        num_upd = 0 :: non_neg_integer(),
+        idx_type :: idx_type(),
+        head_merge = false :: boolean(),
+        expected_fetchclock = false :: boolean()|vclock:vclock(),
+        node_confirms = 0 :: non_neg_integer(),
+        return_body = true :: boolean(),
+        confirmed_nodes = [],
+        partial_read :: boolean(),
+        bkey :: {riak_object:bucket(), riak_object:key()}
+    }
+).
 -opaque getcore() :: #getcore{}.
 
 %% ====================================================================
@@ -98,10 +101,11 @@
            IdxType::idx_type(),
            ExpClock::false|vclock:vclock(),
            NodeConfirms::non_neg_integer(),
-           ReturnBody::boolean()
+           ReturnBody::boolean(),
+           BucketKey::{riak_object:bucket(), riak_object:key()}
         ) -> getcore().
 init(N, R, PR, FailThreshold, NotFoundOk, AllowMult,
-        DeletedVClock, IdxType, ExpClock, NodeConfirms, ReturnBody) ->
+        DeletedVClock, IdxType, ExpClock, NodeConfirms, ReturnBody, BucketKey) ->
     #getcore{
         n = N,
         r = case ExpClock of false -> R; _ -> N end,
@@ -114,7 +118,9 @@ init(N, R, PR, FailThreshold, NotFoundOk, AllowMult,
         idx_type = IdxType,
         expected_fetchclock = ExpClock,
         node_confirms = NodeConfirms,
-        return_body = ReturnBody
+        return_body = ReturnBody,
+        partial_read = R < N,
+        bkey = BucketKey
     }.
 
 %% Re-initialise a get to a restricted number of vnodes (that must all respond)
@@ -357,8 +363,18 @@ has_all_results(#getcore{n = N, num_ok = NOk,
 %%          supplemented with a check that the vnodes were all primaries.
 %%
 -spec final_action(getcore()) -> {final_action(), getcore()}.
-final_action(GetCore = #getcore{n = N, merged = Merged0, results = Results,
-                                allow_mult = AllowMult, head_merge = HeadMerge}) ->
+final_action(
+    GetCore =
+        #getcore{
+            n = N,
+            merged = Merged0,
+            results = Results,
+            allow_mult = AllowMult,
+            head_merge = HeadMerge,
+            partial_read = PartialRead,
+            bkey = BucketKey
+        }
+    ) ->
 
     ?LOG_DEBUG("Starting with HeadMerge=~w, Merged0=~w, Results count=~w",
               [HeadMerge, Merged0 =/= undefined, length(Results)]),
@@ -435,12 +451,13 @@ final_action(GetCore = #getcore{n = N, merged = Merged0, results = Results,
             %% Need to fetch full object before read repair
             case find_best_head_for_fetch(SuccessfulHeads) of
                 undefined ->
-                    ?LOG_WARNING("Action=read_repair_fetch -- Cancelled read repair HEAD fetch"),
+                    ok = request_full_readrepair(BucketKey, PartialRead),
                     nop;
                 BestIdx ->
                     ?LOG_DEBUG("Action=read_repair_fetch (BestIdx=~w, ReadRepairs count=~w)",
                     [BestIdx, length(ReadRepairs)]),
-                    {read_repair_fetch, ReadRepairs, BestIdx}
+                    ok = request_full_readrepair(BucketKey, PartialRead),
+                    nop
             end;
         {_, false} when ObjState == tombstone, AllResultsReceived ->
             ?LOG_DEBUG("Action=delete_repair (tombstone, repairs count=~w)", [length(ReadRepairs)]),
@@ -452,23 +469,35 @@ final_action(GetCore = #getcore{n = N, merged = Merged0, results = Results,
 
     {Action, GetCore#getcore{merged = Merged}}.
 
+-spec request_full_readrepair(
+    {riak_object:bucket(), riak_object:key()}, boolean()) -> ok.
+request_full_readrepair({Bucket, Key}, false) ->
+    %% This condition is unexpecetd.  Must not prompt read as this would have
+    %% the potential for an infinite loop
+    ?LOG_ERROR(
+        "Unexpected failure to prompt repair for ~0p ~0p",
+        [Bucket, Key]
+    );
+request_full_readrepair(BucketKey, true) ->
+    riak_kv_reader:request_read(BucketKey).
+
 -spec find_best_head_for_fetch([{ok, idxresult()}]) -> non_neg_integer() | undefined.
 find_best_head_for_fetch(SuccessfulHeads) ->
     Objects = [RObj || {_Idx, {ok, RObj}} <- SuccessfulHeads],
     NonDominatedObjects = riak_object:remove_dominated(Objects),
-
     case NonDominatedObjects of
         [Obj] ->
+            ?LOG_INFO("Prompting reader due to dominant head response"),
             {Idx, _} = lists:keyfind({ok, Obj}, 2, SuccessfulHeads),
             Idx;
         [] ->
             %% This condition should never hit.
-            ?LOG_ERROR("Skipping read repair due to missing non-dominated object"),
+            ?LOG_WARNING("Prompting reader due to missing non-dominated object"),
             undefined;
         Siblings ->
             %% Multiple siblings - not safe to repair since current mechanism
             %% only handles fetching from a single HEAD request
-            ?LOG_WARNING("Skipping read repair due to ~b siblings", [erlang:length(Siblings)]),
+            ?LOG_INFO("Prompting reader due to ~b siblings", [erlang:length(Siblings)]),
             undefined
     end.
 

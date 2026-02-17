@@ -127,7 +127,7 @@ action({B, K}, _Redo) ->
         true ->
             _ = riak_kv_exchange_fsm:repair_consistent({B, K});
         false ->
-            _ = riak_client:get(B, K, C)
+            _ = riak_client:get(B, K, [{r, all}], C)
     end,
     true.
 

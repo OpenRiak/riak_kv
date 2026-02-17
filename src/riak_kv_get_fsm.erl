@@ -38,8 +38,6 @@
             prepare/2,
             validate/2,
             execute/2,
-            read_repair_fetch/2,
-            waiting_read_repair_fetch/2,
             waiting_vnode_r/2,
             waiting_read_repair/2]).
 
@@ -355,12 +353,18 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
             ReturnBody = get_option(return_body, Options, true),
             GetCore =
                 riak_kv_get_core:init(
-                    N, R, PR, FailThreshold,
-                    NotFoundOk, AllowMult,
-                    DeletedVClock, IdxType,
+                    N,
+                    R,
+                    PR,
+                    FailThreshold,
+                    NotFoundOk,
+                    AllowMult,
+                    DeletedVClock,
+                    IdxType,
                     ExpClock,
                     NodeConfirms,
-                    ReturnBody
+                    ReturnBody,
+                    StateData#state.bkey
                 ),
             new_state_timeout(execute, StateData#state{get_core = GetCore,
                                                        timeout = Timeout,
@@ -487,72 +491,6 @@ waiting_vnode_r(request_timeout, StateData = #state{trace=Trace}) ->
     S2 = client_reply({error,timeout}, StateData),
     update_stats(timeout, S2),
     finalize(S2).
-
-%% @private
--spec read_repair_fetch(timeout, #state{}) ->
-    {stop, normal, #state{}} | {next_state, waiting_read_repair_fetch, #state{}}.
-read_repair_fetch(timeout, StateData=#state{preflist2 = Preflist2,
-                                           bkey = BKey,
-                                           req_id = ReqId,
-                                           repair_fetch_idx = FetchIdx,
-                                           repair_indices = RepairIndices
-                                        }) ->
-
-    ?LOG_DEBUG("Starting fetch for repair - FetchIdx=~p, RepairIndices=~p",
-              [FetchIdx, RepairIndices]),
-
-    FetchVnode = case lists:keyfind(FetchIdx, 1,
-                                   [IndexNode || {IndexNode, _Type} <- Preflist2]) of
-        {FetchIdx, Node} ->
-            ?LOG_DEBUG("Found vnode {~p, ~p} for fetch", [FetchIdx, Node]),
-            [{FetchIdx, Node}];
-        false ->
-            ?LOG_WARNING("FetchIdx ~p not in current preflist, skipping repair",
-                         [FetchIdx]),
-            []
-    end,
-
-    case FetchVnode of
-        [] ->
-            ?LOG_WARNING("No vnode available, stopping"),
-            {stop, normal, StateData};
-        _ ->
-            
-            riak_kv_vnode:get(FetchVnode, BKey, ReqId),
-            new_state(waiting_read_repair_fetch, StateData)
-    end.
-
--spec waiting_read_repair_fetch({r, {ok, term()} | {error, notfound | term()}, non_neg_integer(), non_neg_integer()}, #state{}) ->
-                                    {stop, normal, #state{}};
-                                ({timeout, reference(), request_timeout}, #state{}) ->
-                                    {stop, normal, #state{}}.
-waiting_read_repair_fetch({r, VnodeResult, Idx, _ReqId},
-                         StateData=#state{repair_indices = RepairIndices}) ->
-
-    ?LOG_DEBUG("Received response from Idx=~p, VnodeResult=~p",
-              [Idx, VnodeResult]),
-
-    case VnodeResult of
-        {ok, RepairObj} ->
-            ?LOG_DEBUG("Got repair object, performing read repair for ~p",
-                      [RepairIndices]),
-            maybe_read_repair(RepairIndices, RepairObj, StateData),
-            {stop, normal, StateData};
-
-        {error, notfound} ->
-            ?LOG_DEBUG("Object not found during fetch, skipping repair"),
-            {stop, normal, StateData};
-
-        {error, Reason} ->
-            ?LOG_DEBUG("Error during fetch: ~p, skipping repair", [Reason]),
-            {stop, normal, StateData}
-    end;
-
-waiting_read_repair_fetch({timeout, TRef, request_timeout},
-                         StateData=#state{tref = TRef0})
-        when TRef =:= TRef0 ->
-    ?LOG_WARNING("Timeout during repair fetch, skipping repair"),
-    {stop, normal, StateData}.
 
 waiting_read_repair({r, VnodeResult, Idx, _ReqId},
                     StateData = #state{get_core = GetCore, trace=Trace}) ->
@@ -702,13 +640,6 @@ finalize(StateData=#state{get_core = GetCore, trace = Trace}) ->
             maybe_read_repair(Indices, RepairObj, UpdStateData),
             maybe_delete(UpdStateData),
             {stop,normal,StateData};
-        {read_repair_fetch, Indices, FetchIdx} ->
-            %% Need to fetch full object before doing read repair
-            ?LOG_DEBUG("Executing read_repair_fetch action - Indices=~w, FetchIdx=~w",
-                      [Indices, FetchIdx]),
-            RepairState = UpdStateData#state{repair_indices = Indices,
-                                repair_fetch_idx = FetchIdx},
-            new_state_timeout(read_repair_fetch, RepairState);
         _Nop ->
             ?LOG_DEBUG("FSM finalize: No action needed (nop)"),
             ?DTRACE(Trace, ?C_GET_FSM_FINALIZE, [], ["finalize"]),
