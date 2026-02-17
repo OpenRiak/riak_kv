@@ -222,6 +222,7 @@ erlef
 eval
 priv
 env
+proc
 
 # Computing terminology
 incast
