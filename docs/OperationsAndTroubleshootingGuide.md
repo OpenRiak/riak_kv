@@ -773,7 +773,11 @@ Monitoring of activity related to these issues is important.  Further, it is vit
   - Memory used by the Riak process,
     - Low thresholds for memory should be used because of the value in over-provisioning memory, and the possibility for large requests to trigger volatile changes in memory demand.
   - Open file descriptors.
-- Utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
+- Limits on the Erlang Virtual Machine should be monitored
+  - <span>Available from Riak 3.4.1</span>{: .label .label-purple }The [Riak stats endpoint](#riak-stats) directly reports the percentage utilisation of,
+    - `vm_ets_percent` - controlled via the hidden configuration option `erlang.max_ets_tables` in `riak.conf`;
+    - `vm_proc_percent` - controlled via the hidden configuration option `erlang.process_limit` in `riak.conf`.
+- Infrastructure utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
   - Interface bandwidth.
   - CPU utilisation.
   - Disk I/O operations (especially when I/O is limited by cloud providers).
