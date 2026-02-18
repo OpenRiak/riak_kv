@@ -774,9 +774,9 @@ Monitoring of activity related to these issues is important.  Further, it is vit
     - Low thresholds for memory should be used because of the value in over-provisioning memory, and the possibility for large requests to trigger volatile changes in memory demand.
   - Open file descriptors.
 - Limits on the Erlang Virtual Machine should be monitored
-  - <span>Available from Riak 3.4.1</span>{: .label .label-purple }The [Riak stats endpoint](#riak-stats) directly reports the percentage utilisation of,
-    - `vm_ets_percent` - controlled via the hidden configuration option `erlang.max_ets_tables` in `riak.conf`;
-    - `vm_proc_percent` - controlled via the hidden configuration option `erlang.process_limit` in `riak.conf`.
+  - <span>Available from Riak 3.4.1</span>{: .label .label-purple }The [Riak stats endpoint](#riak-stats) directly reports the percentage utilisation of key virtual machine statistics.
+    - `vm_proc_percent` - controlled via the hidden configuration option `erlang.process_limit` in `riak.conf`. The underlying numbers are reported in `vm_proc_count` and `vm_proc_limit`.  The number of processes will expand with the size of the store in keys per-node - in particular when using the leveled backend - so the limit may require reconfiguration as nodes vertically scale.
+    - Also tracked are the hard limits on ports (`vm_port_percent`) and atoms (`vm_atom_percent`), and the soft limit on ETS tables (`vm_ets_percent`).  These numbers should not normally increase significantly as the key count expands.
 - Infrastructure utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
   - Interface bandwidth.
   - CPU utilisation.
