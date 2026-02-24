@@ -61,7 +61,7 @@ get_vnode_status_specs() ->
 
 get_vnode_status_cmd([_, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
-    PerNode = [ {Node, [[{idx, Idx} | tableify(X)] || {Idx, X} <- Res]}
+    PerNode = [ {Node, [[{idx, integer_to_binary(Idx)} | tableify(X)] || {Idx, X} <- Res]}
                 || {Res, Node} <- vnode_status_on_nodes(Nodes, [])],
     case Args of
         [] ->
