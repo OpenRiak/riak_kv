@@ -75,9 +75,11 @@ jsonify1(PP) ->
 
 jsonify2({P, undefined}) ->
     [{P, null}];
-jsonify2({backend_status, riak_kv_multi_backend, BB}) ->
-    [{backend, riak_kv_multi_backend},
-     {backend_status, [{N, [{mod, Mod} | jsonify_backend(Mod, Status)]} || {N, [{mod, Mod} | Status]} <- BB]}];
+jsonify2({backend_status, MB, BB}) when MB == riak_kv_multi_backend;
+                                        MB == riak_kv_multi_prefix_backend ->
+    [{backend, MB},
+     {backend_status, [{N, [{mod, Mod} | jsonify_backend(Mod, Status)]}
+                       || {N, [{mod, Mod} | Status]} <- BB]}];
 jsonify2({backend_status, N, BS}) ->
     [{backend, N}, {backend_status, jsonify_backend(N, BS)}];
 jsonify2({vnodeid, Id}) ->
