@@ -50,22 +50,26 @@ main_usage() ->
         {node, [{shortname, "n"},
                 {longname, "node"},
                 {typecast, fun to_node/1}]}).
+-define(PARTITIONOPT, {partition, [{shortname, "p"},
+                                   {longname, "partition"},
+                                   {typecast, fun to_partition/1}]}).
+
 
 get_vnode_status_specs() ->
     [["riak-admin", "vnode-status"],
-     '_', [?NODEOPT],
+     '_', [?NODEOPT, ?PARTITIONOPT],
      fun get_vnode_status_cmd/3
     ].
 
 
 get_vnode_status_cmd([_, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
+    Partitions = extract_vnodes(Options),
     PerNode = [{Node, [{integer_to_binary(Idx), jsonify1(X)} || {Idx, X} <- Res]}
-                || {Res, Node} <- vnode_status_on_nodes(Nodes, [])],
+                || {Res, Node} <- vnode_status_on_nodes(Nodes, Partitions, [])],
     case Args of
         [] ->
-            io:format("~s\n", [mochijson2:encode(PerNode)]),
-            [];
+            [clique_status:text(mochijson2:encode(PerNode))];
         _ ->
             clique_status:usage()
     end.
@@ -130,17 +134,22 @@ any_ref_or_pid_to_string([AB|CC], Q) ->
 
 
 
-vnode_status_on_nodes([], Q) ->
+vnode_status_on_nodes([], _, Q) ->
     Q;
-vnode_status_on_nodes([N|Rest], Q) when N == node() ->
-    Preflists = riak_core_vnode_manager:all_index_pid(riak_kv_vnode),
+vnode_status_on_nodes([N|Rest], PP, Q) when N == node() ->
+    Preflists = filter(PP, riak_core_vnode_manager:all_index_pid(riak_kv_vnode)),
     Res = riak_kv_vnode:vnode_status(Preflists),
-    vnode_status_on_nodes(Rest, [{Res, N} | Q]);
-vnode_status_on_nodes([N|Rest], Q) ->
-    Preflists = rpc:call(N, riak_core_vnode_manager, all_index_pid, [riak_kv_vnode]),
+    vnode_status_on_nodes(Rest, PP, [{Res, N} | Q]);
+vnode_status_on_nodes([N|Rest], PP, Q) ->
+    Preflists = filter(PP, rpc:call(N, riak_core_vnode_manager, all_index_pid, [riak_kv_vnode])),
     Res = rpc:call(N, riak_kv_vnode, vnode_status, [Preflists]),
-    vnode_status_on_nodes(Rest, [{Res, N} | Q]).
+    vnode_status_on_nodes(Rest, PP, [{Res, N} | Q]).
 
+filter(all, Preflists) ->
+    Preflists;
+filter(PP, Preflists) ->
+    lists:filter(
+      fun({P, _}) -> lists:member(P, PP) end, Preflists).
 
 extract_nodes(Options) ->
     NN = [N || {node, N} <- Options],
@@ -153,11 +162,28 @@ extract_nodes(Options) ->
             [node()]
     end.
 
+extract_vnodes(Options) ->
+    PP = [P || {partition, P} <- Options],
+    case lists:member(all, PP) or (length(PP) == 0) of
+        true ->
+            all;
+        false ->
+            PP
+    end.
+
 to_node("all") ->
     all;
 to_node(A) ->
     clique_typecast:to_node(A).
 
+to_partition("all") ->
+    all;
+to_partition(A) ->
+    try
+        list_to_integer(A)
+    catch _:_ ->
+            {error, bad_partition}
+    end.
 
 printable_bin(K) ->
     iolist_to_binary(["0x", mochihex:to_hex(K)]).
