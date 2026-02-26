@@ -25,7 +25,6 @@
 -include_lib("kernel/include/logger.hrl").
 
 -export([register_cli/0]).
--export([vnode_status_on_nodes/2, tableify/1, tableify1/1]).
 
 register_cli() ->
     register_all_usage(),
@@ -61,7 +60,7 @@ get_vnode_status_specs() ->
 
 get_vnode_status_cmd([_, _ | Args], _, Options) ->
     Nodes = extract_nodes(Options),
-    PerNode = [ {Node, [[{idx, integer_to_binary(Idx)} | tableify(X)] || {Idx, X} <- Res]}
+    PerNode = [{Node, [{integer_to_binary(Idx), jsonify1(X)} || {Idx, X} <- Res]}
                 || {Res, Node} <- vnode_status_on_nodes(Nodes, [])],
     case Args of
         [] ->
@@ -71,34 +70,62 @@ get_vnode_status_cmd([_, _ | Args], _, Options) ->
             clique_status:usage()
     end.
 
-tableify(PP) ->
-    lists:append([tableify1(P) || P <- PP]).
+jsonify1(PP) ->
+    lists:append([jsonify2(P) || P <- PP]).
 
-tableify1({P, undefined}) ->
+jsonify2({P, undefined}) ->
     [{P, null}];
-tableify1({backend_status, Backend, BS}) ->
-    [{backend, Backend}, {backend_status, tableify_backend(Backend, BS)}];
-tableify1({vnodeid, Id}) ->
+jsonify2({backend_status, riak_kv_multi_backend, BB}) ->
+    [{backend, riak_kv_multi_backend},
+     {backend_status, [{N, [{mod, Mod} | jsonify_backend(Mod, Status)]} || {N, [{mod, Mod} | Status]} <- BB]}];
+jsonify2({backend_status, N, BS}) ->
+    [{backend, N}, {backend_status, jsonify_backend(N, BS)}];
+jsonify2({vnodeid, Id}) ->
     [{vnodeid, printable_bin(Id)}];
-tableify1(P) -> [P].
+jsonify2(P) -> [P].
 
-tableify_backend(riak_kv_leveled_backend, PP) ->
-    [tableify_led_prop(P) || P <- PP];
-tableify_backend(_, PP) when is_map(PP) ->
-    maps:to_list(PP);
-tableify_backend(_, PP) ->
-    PP.
+jsonify_backend(Backend, PP) ->
+    lists:append(
+      [jsonify_backend_prop(Backend, P) || P <- PP]).
 
-tableify_led_prop({A, undefined}) ->
-    {A, undefined};
-tableify_led_prop({A, TS}) when A =:= penciller_last_merge_time;
-                                A =:= journal_last_compaction_time ->
-    {A, iolist_to_binary(
-          calendar:system_time_to_rfc3339(TS, [{unit, millisecond}]))};
-tableify_led_prop({penciller_work_backlog_status, {A, B1, B2}}) ->
-    {penciller_work_backlog_status, #{work_items => A, backlog => B1, l0_full => B2}};
-tableify_led_prop(Unchanged) ->
-    Unchanged.
+jsonify_backend_prop(_, {A, undefined}) ->
+    [{A, null}];
+jsonify_backend_prop(riak_kv_leveled_backend, {A, TS})
+  when A =:= penciller_last_merge_time;
+       A =:= journal_last_compaction_time ->
+    [{A, iolist_to_binary(
+           calendar:system_time_to_rfc3339(TS, [{unit, millisecond}]))}];
+jsonify_backend_prop(riak_kv_leveled_backend, {penciller_work_backlog_status, {A, B1, B2}}) ->
+    [{penciller_work_backlog_status, #{work_items => A, backlog => B1, l0_full => B2}}];
+jsonify_backend_prop(riak_kv_leveled_backend, Unchanged) ->
+    [Unchanged];
+
+jsonify_backend_prop(riak_kv_memory_backend, {TableStatus, TSProps})
+  when is_list(TSProps) ->
+    [{TableStatus, any_ref_or_pid_to_string(TSProps, [])}];
+jsonify_backend_prop(riak_kv_eleveldb_backend, {stats, StatsString}) ->
+    case re:run(StatsString,
+                <<"(\\d+) +(\\d+) +(\\d+) +(\\d+) +(\\d+) +(\\d+)">>,
+                [{capture, all, binary}]) of
+        {match, [_|Values]} ->
+            lists:zip(
+              [compactions, level, files_size_mb, time, read_mb, write_mb],
+              [binary_to_integer(X) || X <- Values]);
+        _ ->
+            []
+    end;
+jsonify_backend_prop(_, AsIs) ->
+    [AsIs].
+
+any_ref_or_pid_to_string([], Q) ->
+    Q;
+any_ref_or_pid_to_string([{A, B}|CC], Q) when is_pid(B) ->
+    any_ref_or_pid_to_string(CC, [{A, list_to_binary(pid_to_list(B))} | Q]);
+any_ref_or_pid_to_string([{A, B}|CC], Q) when is_reference(B) ->
+    any_ref_or_pid_to_string(CC, [{A, list_to_binary(ref_to_list(B))} | Q]);
+any_ref_or_pid_to_string([AB|CC], Q) ->
+    any_ref_or_pid_to_string(CC, [AB | Q]).
+
 
 
 vnode_status_on_nodes([], Q) ->
