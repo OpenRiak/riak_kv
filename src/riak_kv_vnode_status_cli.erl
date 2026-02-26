@@ -130,6 +130,10 @@ any_ref_or_pid_to_string([AB|CC], Q) ->
 
 vnode_status_on_nodes([], Q) ->
     Q;
+vnode_status_on_nodes([N|Rest], Q) when N == node() ->
+    Preflists = riak_core_vnode_manager:all_index_pid(riak_kv_vnode),
+    Res = riak_kv_vnode:vnode_status(Preflists),
+    vnode_status_on_nodes(Rest, [{Res, N} | Q]);
 vnode_status_on_nodes([N|Rest], Q) ->
     Preflists = rpc:call(N, riak_core_vnode_manager, all_index_pid, [riak_kv_vnode]),
     Res = rpc:call(N, riak_kv_vnode, vnode_status, [Preflists]),
