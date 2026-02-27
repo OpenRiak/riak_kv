@@ -23,66 +23,58 @@
 %% Available operations:
 %%
 %% ```
-%% POST types/BucketType/buckets/Bucket/query
+%% POST types/<BucketType>/buckets/<Bucket>/query
+%% POST buckets/<Bucket>/query (legacy support for untyped buckets)
 %% ```
 %%
 %% The query should be posted as the HTTP body, where there are the following
 %% JSON keys at the root of the document
+%%
+%% ?AGGREGATION_EXPRESSION
+%% ?ACCUMULATION_OPTION
+%% ?ACCUMULATION_TERM
+%% ?SUBSTITUTIONS
+%% ?TIMEOUT
+%% ?MAX_RESULTS
+%% ?CONTINUATION
+%% ?QUERY_LIST
 %% 
-%% - aggregation_expression (optional)
-%% If multiple queries are to be run, the aggregation expression is used to
-%% inform the database how those results should be combined, using $1, $2 etc
-%% to refer to the numeric aggregation_tag for each query - with the key words
-%% UNION, INTERSECT and SUBTRACT to show how the sets of results are to be
-%% combined.  Parenthesis may be used for clarity.
-%% e.g. ($1 INTERSECT $2) UNION ($3 SUBTRACT $1)
+%% Each query in the query list must be a JSON document supporting the
+%% following keys:
 %% 
-%% - accumulation_option (optional - default = keys)
-%% There are six options for accumulating the results from a single query: 
-%% keys (return a list of keys), term_with_keys (return a list of term/key
-%% tuples), match_count (return a count of the matches made), key_count (return
-%% a count of unique keys matched), term_with_matchcount/term_with_keycount
-%% (return a map of term to either count of matches, or count of unique keys).
-%% If an aggregation_expression is used, only keys, key_count and match_count
-%% can be used.
+%% ?QL_AGGREGATION_TAG
+%% ?QL_INDEX_NAME
+%% ?QL_START_TERM
+%% ?QL_END_TERM
+%% ?QL_REGULAR_EXPRESSION
+%% ?QL_EVALUATION_EXPRESSION
+%% ?QL_FILTER_EXPRESSION
 %% 
-%% - accumulation_term (optional - default = $term)
-%% When using an accumulation option of term_with_keys, term_with_matchcount or
-%% term_with_keycount which term in the evaluated index term should be used.
-%% The default is $term - the whole term.  However a sub-term extracted in the
-%% evaluation expression may be used instead.  
+%% For details on usage see https://openriak.github.io/riak_kv/QueryAPI.html.
 %% 
-%% - result_provision (not yet implemented)
+%% Queries POST'd will return a JSON object with the result format determined
+%% by the ?ACCUMULATION_OPTION passed in the query
 %% 
-%% - max_results (not yet implemented)
+%% ```
+%% GET types/<BucketType>/bucket/<Bucket>/query
+%% GET buckets/<Bucket>/query (legacy support for untyped buckets)
+%% ```
 %% 
-%% - term_rate_kpersec (not yet implemented)
+%% The GET operation is used to extract results queued using a query with the
+%% ?ACCUMULATION_OPTION of `queue_raw_keys` or `queue_raw_terms`
 %% 
-%% - substitutions (optional)
-%% A array of key/value pairs that match string that are referred to in queries
-%% to substitution values that should replace those keys in the query.
-%% e.g. {"low_dob" : "19550301", "high_dob" : "19560630"} can be passed as
-%% substitutions to populate an evaluation of
-%% "$dob" BETWEEN ":low_dob" AND ":high_dob"
+%% Requests support two query parameters:
 %% 
-%% - timeout (optional)
-%% The timeout in seconds to wait for the query to complete
+%% ?result_queue=<EncodedQueueReference>%max_results=<NonNegInteger>
 %% 
-%% - query_list
-%% A list of queries (should be a list of just one query if an
-%% aggregation_expression is not used).
-%% Each query has the following parts:
-%% - aggregation_tag (optional unless an aggregation_expression is used)
-%% - index_name (should be a binary index)
-%% - start_term
-%% - end_term
-%% - regular expression (optional alternative to using evaluation or filter
-%%  expressions)
-%% - evaluation_expression (optional, an expression to extract projected
-%% attributes from the term)
-%% - filter_expression (optional, an expression to filter results based on
-%% those projected attributes)
- 
+%% The result_queue is a mandatory parameter, and is returned as the
+%% ?RSP_RESULT_QUEUE key in the JSON object received from POSTing a query with
+%% a queue-based ?ACCUMULATION_OPTION.
+%% 
+%% Multiple client-side processes may request results from the queue
+%% concurrently, from any connected node within the cluster.  Each result will
+%% be returned once only.
+
 -module(riak_kv_wm_query).
 
 -include_lib("webmachine/include/webmachine.hrl").
@@ -99,17 +91,29 @@
     resource_exists/2,
     process_post/2,
     encode_key/2,
-    encode_key_withterm/2
+    encode_key_withterm/2,
+    content_types_provided/2,
+    return_queued_results/2
 ]).
 
--record(ctx, {
-          client,       %% riak_client() - the store client
-          riak,         %% local | {node(), atom()} - params for riak client
-          bucket_type,  %% Bucket type (from uri)
-          query,        %% The query..
-          security,     %% security context
-          accumulation_option
-         }).
+-export(
+    [
+        get_result_key/1
+    ]
+).
+
+-record(ctx,
+    {
+        client,       %% riak_client() - the store client
+        riak,         %% local | {node(), atom()} - params for riak client
+        bucket_type,  %% Bucket type (from uri)
+        query_request,        %% The query..
+        queue_request,
+        security,
+        method
+    }
+).
+
 -type context() :: #ctx{}.
 -type request_data() :: #wm_reqdata{}.
 
@@ -118,6 +122,7 @@
 -define(ACCUMULATION_TERM, <<"accumulation_term">>).
 -define(SUBSTITUTIONS, <<"substitutions">>).
 -define(TIMEOUT, <<"timeout">>).
+-define(INACTIVITY_TIMEOUT, <<"inactivity_timeout">>).
 -define(MAX_RESULTS, <<"max_results">>).
 -define(CONTINUATION, <<"continuation">>).
 -define(QUERY_LIST, <<"query_list">>).
@@ -138,7 +143,6 @@
 -define(ACCKEY_RAWCOUNT, <<"raw_count">>).
 -define(ACCKEY_TERMRAWCOUNT, <<"term_with_rawcount">>).
 
-
 -define(REQUIRED_KEYS, [?QUERY_LIST]).
 -define(POSSIBLE_KEYS,
     [
@@ -147,6 +151,7 @@
         ?ACCUMULATION_TERM,
         ?SUBSTITUTIONS,
         ?TIMEOUT,
+        ?INACTIVITY_TIMEOUT,
         ?QUERY_LIST,
         ?MAX_RESULTS,
         ?CONTINUATION
@@ -174,12 +179,13 @@
 -define(REQUEST_CLASS, {riak_kv, secondary_index}).
 
 -define(QUERY_TIMEOUT, 60).
+-define(QUEUE_INACTIVITY_TIMEOUT, 120).
+-define(MAX_RESULTS_FROM_QUEUE, 1000).
 
 -define(HEAD_CONTINUATION, "X-Riak-Continuation").
 
 -type query_map() ::
     #{binary() => binary()|non_neg_integer()|list(map())}.
-
 
 -spec init(proplists:proplist()) -> {ok, context()}.
 %% @doc Initialize this resource.
@@ -188,7 +194,6 @@ init(Props) ->
        riak=proplists:get_value(riak, Props),
        bucket_type=proplists:get_value(bucket_type, Props)
       }}.
-
 
 -spec service_available(request_data(), context()) ->
     {boolean(), request_data(), context()}.
@@ -199,13 +204,19 @@ service_available(RD, Ctx0=#ctx{riak=RiakProps}) ->
     ClientID = riak_kv_wm_utils:get_client_id(RD),
     case riak_kv_wm_utils:get_riak_client(RiakProps, ClientID) of
         {ok, C} ->
-            {true, RD, Ctx#ctx { client=C }};
+            {
+                true,
+                RD,
+                Ctx#ctx{client = C, method = wrq:method(RD)}
+            };
         Error ->
-            {false,
-             wrq:set_resp_body(
-               io_lib:format("Unable to connect to Riak: ~p~n", [Error]),
-               wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
-             Ctx}
+            {
+                false,
+                wrq:set_resp_body(
+                    io_lib:format("Unable to connect to Riak: ~p~n", [Error]),
+                    wrq:set_resp_header(?HEAD_CTYPE, "text/plain", RD)),
+                Ctx
+            }
     end.
 
 resource_exists(RD, #ctx{bucket_type=BType}=Ctx) ->
@@ -266,17 +277,13 @@ forbidden(ReqDataIn, #ctx{bucket_type = BT, security = Sec} = Context) ->
 -spec allowed_methods(
     request_data(), context()) -> {list(atom()), request_data(), context()}.
 allowed_methods(RD, Ctx) ->
-    {['POST'], RD, Ctx}.
+    {['POST', 'GET'], RD, Ctx}.
 
 -spec malformed_request(
     request_data(), context()) ->
         {boolean(), request_data(), context()}.
-malformed_request(RD, Ctx) ->
-    Bucket =
-        list_to_binary(
-            riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(bucket, RD)
-        )
-    ),
+malformed_request(RD, Ctx) when Ctx#ctx.method =:= 'POST' ->
+    Bucket = get_bucket(RD),
     BT = riak_kv_wm_utils:maybe_bucket_type(Ctx#ctx.bucket_type, Bucket),
     Body = riak_kv_wm_utils:accept_value("application/json", wrq:req_body(RD)),
     case decode_json_body(Body) of
@@ -286,9 +293,9 @@ malformed_request(RD, Ctx) ->
                     QueryList = maps:get(?QUERY_LIST, QueryMap),
                     case check_querylist(QueryList, false) of
                         ok ->
-                            case make_query(BT, QueryMap) of
+                            case make_query_request(BT, QueryMap) of
                                 {ok, Query} ->
-                                    {false, RD, Ctx#ctx{query = Query}};
+                                    {false, RD, Ctx#ctx{query_request = Query}};
                                 {error, Stage, Reason} ->
                                     {
                                         true,
@@ -307,7 +314,93 @@ malformed_request(RD, Ctx) ->
             end;
         {error, Reason} ->
             {true, return_json_error(Reason, RD), Ctx}
+    end;
+malformed_request(RD, Ctx) when Ctx#ctx.method =:= 'GET' ->
+    Bucket = get_bucket(RD),
+    BT = riak_kv_wm_utils:maybe_bucket_type(Ctx#ctx.bucket_type, Bucket),
+    case wrq:get_qs_value("result_queue", RD) of
+        QueueString when is_list(QueueString) ->
+            case wrq:get_qs_value("max_results", RD) of
+                undefined ->
+                    application:get_env(
+                        riak_kv,
+                        queue_raw_max_results,
+                        ?MAX_RESULTS_FROM_QUEUE
+                    );
+                MaxResultsString ->
+                    try
+                        case list_to_integer(MaxResultsString) of
+                            MR when is_integer(MR), MR >= 0 ->
+                                {
+                                    false,
+                                    RD,
+                                    Ctx#ctx{
+                                        queue_request =
+                                            make_queue_request(
+                                                BT,
+                                                list_to_binary(QueueString),
+                                                MR
+                                            )
+                                    }
+                                }
+                                
+                        end
+                    catch
+                        _CP:_EP ->
+                            {
+                                true,
+                                return_json_error(
+                                    "Invalid max_results parameter",
+                                    RD
+                                ),
+                                Ctx
+                            }
+                    end
+            end;
+        _ ->
+            {
+                true,
+                return_json_error(
+                    "No valid result_queue reference"
+                    "passed as query parameter",
+                    RD
+                ),
+                Ctx
+            }
     end.
+
+-spec content_types_provided(request_data(), context()) ->
+    {[{ContentType::string(), Producer::atom()}], request_data(), context()}.
+%% @doc List the content types available for representing this resource.
+%%      "application/json" is the content-type for bucket lists.
+content_types_provided(RD, Ctx) when Ctx#ctx.method =:= 'POST' ->
+    {[{"application/json", nop}], RD, Ctx};
+content_types_provided(RD, Ctx) when Ctx#ctx.method =:= 'GET' ->
+    {[{"application/json", return_queued_results}], RD, Ctx}.
+
+-spec return_queued_results(
+    request_data(), context()
+) -> 
+    {binary(), request_data(), context()}.
+return_queued_results(RD, Ctx = #ctx{queue_request = QR, client = C}) ->
+    case riak_client:query_result_request(QR, C) of
+        {ok, ResultMap} ->
+            {encode_queued_results(ResultMap), RD, Ctx};
+        {error, Reason} ->
+            {{error, Reason}, RD, Ctx}
+    end.
+
+%% The bucket is available in the dispatch properties, however it may need to
+%% URL quoted, and so it needs to be unquoted.
+%% 
+%% Note that it is possible to disable quoting, and force it per request using
+%% the "X-Riak-URL-Encoding" header - hence why the full RD is required to
+%% decide on the unquoting or not of one part.
+get_bucket(RD) ->
+    list_to_binary(
+            riak_kv_wm_utils:maybe_decode_uri(RD, wrq:path_info(bucket, RD)
+        )
+    ).
 
 expand_query_reason(Stage, Reason) ->
     lists:flatten(
@@ -403,25 +496,37 @@ check_keys(Keys, RequiredKeys, PossibleKeys) ->
             }
     end.
 
--spec make_query(
+-spec make_queue_request(
+    riak_object:bucket(), binary(), non_neg_integer()
+) ->
+    #{atom() => term()}.
+make_queue_request(Bucket, EncodedQueueRef, MaxResults) ->
+    #{
+        bucket => Bucket,
+        encoded_queue_reference => EncodedQueueRef,
+        max_results => MaxResults
+    }.
+
+-spec make_query_request(
     riak_object:bucket(), query_map()) ->
         {ok, riak_kv_query:complex_query_definition()}|riak_kv_query:validation_error().
-make_query(BucketType, QueryMap) ->
-    Timeout =
-        maps:get(
-            ?TIMEOUT,
-            QueryMap,
-            application:get_env(riak_kv, query_timeout_secs, ?QUERY_TIMEOUT)
-        ),
-    case Timeout of
-        T when is_integer(T), T > 0 ->
-            InitQuery =
+make_query_request(BucketType, QueryMap) ->
+    case fetch_timeouts(QueryMap) of
+        {ok, Timeout, InactivityTimeout} ->
+            QueryType =
                 case maps:get(?QUERY_LIST, QueryMap) of
                     QueryList when length(QueryList) == 1 ->
-                        riak_kv_query:new(BucketType, single_query, Timeout);
+                        single_query;
                     QueryList when length(QueryList) > 1 ->
-                        riak_kv_query:new(BucketType, combo_query, Timeout)
+                        combo_query
                 end,
+            InitQuery =
+                riak_kv_query:new(
+                    BucketType,
+                    QueryType,
+                    Timeout,
+                    InactivityTimeout
+                ),
             case add_accumulation(QueryMap, InitQuery) of
                 {ok, Q1} ->
                     case add_queries(QueryMap, Q1, QueryList) of
@@ -438,10 +543,43 @@ make_query(BucketType, QueryMap) ->
                 Error ->
                     Error
             end;
+        Error ->
+            Error
+    end.
+
+-spec fetch_timeouts(
+    query_map()
+) ->
+    {ok, pos_integer(), pos_integer()} | riak_kv_query:validation_error().
+fetch_timeouts(QueryMap) ->
+    Timeout =
+        maps:get(
+            ?TIMEOUT,
+            QueryMap,
+            application:get_env(riak_kv, query_timeout_secs, ?QUERY_TIMEOUT)
+        ),
+    InactivityTimeout =
+        maps:get(
+            ?INACTIVITY_TIMEOUT,
+            QueryMap,
+            application:get_env(
+                riak_kv,
+                queue_inactivity_timeout_secs,
+                ?QUEUE_INACTIVITY_TIMEOUT
+            )
+        ),
+    case Timeout of
+        T when is_integer(T), T > 0 ->
+            case InactivityTimeout of
+                IT when is_integer(IT), IT > 0 ->
+                    {ok, T, IT};
+                _ ->
+                    {error, init, <<"Bad inactivity timeout">>}
+            end;
         _ ->
             {error, init, <<"Bad timeout">>}
     end.
-                    
+
 -spec add_accumulation(
     query_map(), riak_kv_query:complex_query_definition())
         -> 
@@ -507,10 +645,10 @@ convert_query(QM) ->
 %% @doc Produce the JSON response to an index lookup.
 process_post(RD, Ctx) ->
     Client = Ctx#ctx.client,
-    AccOpt = riak_kv_query:get_accumulator(Ctx#ctx.query),
+    AccOpt = riak_kv_query:get_accumulator(Ctx#ctx.query_request),
     {ok, Query} =
         riak_kv_query:add_result_encodingfun(
-            Ctx#ctx.query,
+            Ctx#ctx.query_request,
             encoding_function(AccOpt)
         ),
     case riak_client:query(Query, Client) of
@@ -525,6 +663,17 @@ process_post(RD, Ctx) ->
                     )
                 ),
             {{halt, 500}, return_json_error(Error, RD), Ctx};
+        {result_reference, ResultReference} when is_binary(ResultReference) ->
+            {
+                true,
+                wrq:append_to_resp_body(
+                    riak_kv_wm_json:encode(
+                        #{result_reference => ResultReference}
+                    ),
+                    wrq:set_resp_header(?HEAD_CTYPE, "application/json", RD)
+                ),
+                Ctx
+            };
         {JsonEncodedResults, none} when is_binary(JsonEncodedResults) ->
             {
                 true,
@@ -563,51 +712,53 @@ process_post(RD, Ctx) ->
 encoding_function(AccOpt) ->
     fun(Results) -> encode_results(AccOpt, Results) end.
 
+-spec encode_queued_results(
+    riak_kv_query_server:partial_result_map()) -> binary().
+encode_queued_results(ResultMap) ->
+    case maps:is_key(get_result_key(raw_keys), ResultMap) of
+        true ->
+            iolist_to_binary(
+                riak_kv_wm_json:encode(
+                    ResultMap,
+                    fun riak_kv_wm_query:encode_key/2
+                )
+            );
+        false ->
+            case maps:is_key(get_result_key(raw_terms), ResultMap) of
+                true ->
+                    iolist_to_binary(
+                        riak_kv_wm_json:encode(
+                            ResultMap,
+                            fun riak_kv_wm_query:encode_key_withterm/2
+                        )
+                    )
+            end
+    end.
+
 -spec encode_results(
     riak_kv_query:accumulation_option(), riak_kv_query_server:results()) -> binary().
-encode_results(keys, Results) ->
+encode_results(AccOpt, Results) when AccOpt == keys; AccOpt == raw_keys ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
-            #{?ACCKEY_KEYS => Results},
+            #{get_result_key(AccOpt) => Results},
             fun riak_kv_wm_query:encode_key/2
         )
     );
-encode_results(raw_keys, Results) ->
+encode_results(AccOpt, Results) when AccOpt == terms; AccOpt == raw_terms ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
-            #{?ACCKEY_RAWKEYS => Results},
-            fun riak_kv_wm_query:encode_key/2
-        )
-    );
-encode_results(terms, Results) ->
-    iolist_to_binary(
-        riak_kv_wm_json:encode(
-            #{?ACCKEY_TERMS => Results},
+            #{get_result_key(AccOpt) => Results},
             fun riak_kv_wm_query:encode_key_withterm/2
         )
     );
-encode_results(raw_terms, Results) ->
+encode_results(AccOpt, Count) when AccOpt == count; AccOpt == raw_count ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(
-            #{?ACCKEY_RAWTERMS => Results},
-            fun riak_kv_wm_query:encode_key_withterm/2
-        )
+        riak_kv_wm_json:encode(#{get_result_key(AccOpt) => Count})
     );
-encode_results(raw_count, Count) ->
+encode_results(AccOpt, CountMap)
+        when AccOpt == term_with_count; AccOpt == term_with_rawcount ->
     iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_RAWCOUNT => Count})
-    );
-encode_results(count, Count) ->
-    iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_COUNT => Count})
-    );
-encode_results(term_with_rawcount, CountMap) ->
-    iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_TERMRAWCOUNT => CountMap})
-    );
-encode_results(term_with_count, CountMap) ->
-    iolist_to_binary(
-        riak_kv_wm_json:encode(#{?ACCKEY_TERMCOUNT => CountMap})
+        riak_kv_wm_json:encode(#{get_result_key(AccOpt) => CountMap})
     ).
 
 encode_key({{_Term, Key}}, Encode) when is_binary(Key) ->
@@ -623,6 +774,18 @@ encode_key_withterm({Term, Key}, Encode) when is_binary(Term), is_binary(Key) ->
     [123, [Encode(Term, Encode), $: | Encode(Key, Encode)], 125];
 encode_key_withterm(Result, Encode) ->
     riak_kv_wm_json:encode_value(Result, Encode).
+
+-spec get_result_key(riak_kv_query:accumulation_option()) -> binary().
+get_result_key(keys) -> ?ACCKEY_KEYS;
+get_result_key(raw_keys) -> ?ACCKEY_RAWKEYS;
+get_result_key(terms) -> ?ACCKEY_TERMS;
+get_result_key(raw_terms) -> ?ACCKEY_RAWTERMS;
+get_result_key(count) -> ?ACCKEY_COUNT;
+get_result_key(raw_count) -> ?ACCKEY_RAWCOUNT;
+get_result_key(term_with_count) -> ?ACCKEY_TERMCOUNT;
+get_result_key(term_with_rawcount) -> ?ACCKEY_TERMRAWCOUNT.
+
+
 
 %% ===================================================================
 %% EUnit tests
@@ -671,7 +834,7 @@ simple_query_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(SimpleQueryJson),
-    {ok, Q} = make_query({<<"BT">>, <<"B">>}, M),
+    {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)).
 
 invalid_query_ae1_test() ->
@@ -691,7 +854,7 @@ invalid_query_ae1_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {error, S, _E} = make_query({<<"BT">>, <<"B">>}, M),
+    {error, S, _E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(aggregation_expression, S).
 
 invalid_query_ae2_test() ->
@@ -718,7 +881,7 @@ invalid_query_ae2_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {error, S, _E} = make_query({<<"BT">>, <<"B">>}, M),
+    {error, S, _E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(aggregation_expression, S).
 
 invalid_query_ae3_test() ->
@@ -745,7 +908,7 @@ invalid_query_ae3_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {error, S, E} = make_query({<<"BT">>, <<"B">>}, M),
+    {error, S, E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(query_evaluation, S),
     ?assertMatch(<<"Untagged query in combination request">>, E).
 
@@ -755,6 +918,7 @@ valid_query_ae4_test() ->
             {
                 \"aggregation_expression\" : \"$1 INTERSECT $2\",
                 \"timeout\" : 60,
+                \"inactivity_timeout\" : 180,
                 \"query_list\" :
                     [
                         {
@@ -774,7 +938,7 @@ valid_query_ae4_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {ok, Q} = make_query({<<"BT">>, <<"B">>}, M),
+    {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)),
     QueryList = maps:get(<<"query_list">>, M),
     ?assertMatch(ok, check_querylist(QueryList, false)).
@@ -810,7 +974,7 @@ valid_query_ae5_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {ok, Q} = make_query({<<"BT">>, <<"B">>}, M),
+    {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)),
     QueryList = maps:get(<<"query_list">>, M),
     ?assertMatch(ok, check_querylist(QueryList, false)).
@@ -848,7 +1012,7 @@ invalid_query_ae6_test() ->
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid eval function">>},
-        make_query({<<"BT">>, <<"B">>}, M)
+        make_query_request({<<"BT">>, <<"B">>}, M)
     ).
 
 invalid_query_ae7_test() ->
@@ -884,7 +1048,7 @@ invalid_query_ae7_test() ->
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid filter function">>},
-        make_query({<<"BT">>, <<"B">>}, M)
+        make_query_request({<<"BT">>, <<"B">>}, M)
     ).
 
 invalid_query_ae8_test() ->
@@ -920,7 +1084,7 @@ invalid_query_ae8_test() ->
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid filter function">>},
-        make_query({<<"BT">>, <<"B">>}, M)
+        make_query_request({<<"BT">>, <<"B">>}, M)
     ).
 
 invalid_query_to_test() ->
@@ -948,7 +1112,7 @@ invalid_query_to_test() ->
             }
         ">>,
     {ok, M} = decode_json_body(IQJson),
-    {error, S, E} = make_query({<<"BT">>, <<"B">>}, M),
+    {error, S, E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(init, S),
     ?assertMatch(<<"Bad timeout">>, E).
 

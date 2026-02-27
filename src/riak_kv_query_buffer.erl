@@ -79,10 +79,12 @@
         {raw_keys, rawkey_accumulator() } |
         {count, non_neg_integer()} |
         {raw_count, non_neg_integer()} |
+        {queue_raw_keys, rawkey_accumulator()} |
         {terms, term_accumulator()} |
         {raw_terms, rawterm_accumulator()} |
         {term_with_rawcount, countby_aggregator()} |
-        {term_with_count, countby_aggregator()}.
+        {term_with_count, countby_aggregator()} |
+        {queue_raw_terms, rawterm_accumulator()}.
 -type reply_fun()
     :: fun((reply_type()|ping) -> ok).
 
@@ -109,6 +111,8 @@ new(Size, T, ReplyFun) when T == count->
     new_buffer(Size, ReplyFun, raw_keys, #key_agg{}, T);
 new(Size, T, ReplyFun) when T == raw_count ->
     new_buffer(Size, ReplyFun, none, none, T);
+new(Size, T, ReplyFun) when T == queue_raw_keys ->
+    new_buffer(Size, ReplyFun, raw_keys, none, raw_keys);
 new(Size, T, ReplyFun) when T == terms->
     new_buffer(Size, ReplyFun, terms, none, T);
 new(Size, T, ReplyFun) when T == raw_terms->
@@ -116,7 +120,9 @@ new(Size, T, ReplyFun) when T == raw_terms->
 new(Size, T, ReplyFun) when T == term_with_rawcount->
     new_buffer(Size, ReplyFun, terms, #termcount_agg{}, T);
 new(Size, T, ReplyFun) when T == term_with_count ->
-    new_buffer(Size, ReplyFun, terms, #termkeycount_agg{}, T).
+    new_buffer(Size, ReplyFun, terms, #termkeycount_agg{}, T);
+new(Size, T, ReplyFun) when T == queue_raw_terms->
+    new_buffer(Size, ReplyFun, raw_terms, none, raw_terms).
 
 new_buffer({BufferSize, JitterSize}, ReplyFun, AccType, InitAgg, Type)
         when BufferSize >= ?MIN_BUFFER, JitterSize =< BufferSize ->
