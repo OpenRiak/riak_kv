@@ -29,7 +29,6 @@
          leave/1,
          remove/1,
          status/1,
-         vnode_status/1,
          reip/1,
          reip_manual/1,
          ringready/1,
@@ -194,25 +193,6 @@ status([]) ->
             ?LOG_ERROR("Status failed ~p:~p", [Exception,
                     Reason]),
             io:format("Status failed, see log for details~n"),
-            error
-    end.
-
--spec(vnode_status([]) -> ok).
-vnode_status([]) ->
-    try
-        case riak_kv_status:vnode_status() of
-            [] ->
-                io:format("There are no active vnodes.~n");
-            Statuses ->
-                io:format("~s~n-------------------------------------------~n~n",
-                          ["Vnode status information"]),
-                print_vnode_statuses(lists:sort(Statuses))
-        end
-    catch
-        Exception:Reason ->
-            ?LOG_ERROR("Backend status failed ~p:~p", [Exception,
-                    Reason]),
-            io:format("Backend status failed, see log for details~n"),
             error
     end.
 
@@ -836,38 +816,6 @@ atomify_nodestrs(Strs) ->
                                          Acc
                                      end
                 end, [], Strs).
-
-print_vnode_statuses([]) ->
-    ok;
-print_vnode_statuses([{VNodeIndex, StatusData} | RestStatuses]) ->
-    io:format("VNode: ~p~n", [VNodeIndex]),
-    print_vnode_status(StatusData),
-    io:format("~n"),
-    print_vnode_statuses(RestStatuses).
-
-print_vnode_status([]) ->
-    ok;
-print_vnode_status([{backend_status,
-                     Backend,
-                     StatusItem} | RestStatusItems]) ->
-    if is_binary(StatusItem) ->
-            StatusString = binary_to_list(StatusItem),
-            io:format("Backend: ~p~nStatus: ~n~s~n",
-                      [Backend, string:strip(StatusString)]);
-       true ->
-            io:format("Backend: ~p~nStatus: ~n~p~n",
-                      [Backend, StatusItem])
-    end,
-    print_vnode_status(RestStatusItems);
-print_vnode_status([StatusItem | RestStatusItems]) ->
-    if is_binary(StatusItem) ->
-            StatusString = binary_to_list(StatusItem),
-            io:format("Status: ~n~s~n",
-                      [string:strip(StatusString)]);
-       true ->
-            io:format("Status: ~n~p~n", [StatusItem])
-    end,
-    print_vnode_status(RestStatusItems).
 
 bucket_error_xlate(Errors) when is_list(Errors) ->
     string:join(

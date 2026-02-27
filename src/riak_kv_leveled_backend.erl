@@ -705,7 +705,7 @@ hot_backup(#state{bookie=Bookie, partition=Partition, db_path=DBP}, BackupRoot) 
 status(#state{bookie = Bookie}) ->
     % We can run the bucket stats query getting all stats, but this would not
     % mean an immediate response (and how frequently is this called?)
-    leveled_bookie:book_status(Bookie).
+    maps:to_list(leveled_bookie:book_status(Bookie)).
 
 %% @doc Get an estimate of the data_size for this leveled backend
 -spec data_size(state()) ->
