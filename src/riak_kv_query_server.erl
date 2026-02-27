@@ -210,14 +210,12 @@ init(Query) ->
                     queue_raw_keys ->
                         {ok, RP} =
                             application:get_env(riak_kv, query_dataroot),
-                        InactivityTimeoutSecs =
+                        InactivitySecs =
                             riak_kv_query:get_inactivity_timeout_secs(Query),
                         {ok, RPid, RRef} =
-                            riak_kv_query_filebuffer:new(
-                                RP,
-                                1000 * InactivityTimeoutSecs,
-                                Bucket,
-                                raw_keys
+                            riak_kv_query_filebuffer_sup:start_query_filebuffer(
+                                node(),
+                                [RP, 1000 * InactivitySecs, Bucket, raw_keys]
                             ),
                         From ! {ReqID, {result_reference, RRef}},
                         RPid;
@@ -236,14 +234,12 @@ init(Query) ->
                     queue_raw_terms ->
                         {ok, RP} =
                             application:get_env(riak_kv, query_dataroot),
-                        InactivityTimeoutSecs =
+                        InactivitySecs =
                             riak_kv_query:get_inactivity_timeout_secs(Query),
                         {ok, RPid, RRef} =
-                            riak_kv_query_filebuffer:new(
-                                RP,
-                                1000 * InactivityTimeoutSecs,
-                                Bucket,
-                                raw_terms
+                            riak_kv_query_filebuffer_sup:start_query_filebuffer(
+                                node(),
+                                [RP, 1000 * InactivitySecs, Bucket, raw_terms]
                             ),
                         From ! {ReqID, {result_reference, RRef}},
                         RPid

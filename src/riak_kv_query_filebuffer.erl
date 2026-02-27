@@ -66,8 +66,8 @@
 
 -export(
     [
-        decode_ref/1,
-        encode_ref/1
+        safe_encode/1,
+        safe_decode/1
     ]
 ). % Required only for riak_test
 
@@ -94,7 +94,6 @@
 -define(RSPCOUNT_KEY, <<"responses_count">>).
 -define(RCVCOUNT_KEY, <<"received_count">>).
 -define(QCOMPLETE_KEY, <<"query_complete">>).
--define(ENCODE_OPTS, #{mode => urlsafe}).
 
 -type inbound_results() ::
     riak_kv_query_server:key_list() | riak_kv_query_server:term_list().
@@ -112,7 +111,7 @@
     {ok, pid(), binary()}.
 new(RootPath, InactivityTimeoutMS, Bucket, AccOpt) ->
     {ok, Pid} =
-        gen_server:start(
+        gen_server:start_link(
             ?MODULE,
             [RootPath, InactivityTimeoutMS, Bucket, AccOpt],
             []
@@ -135,6 +134,7 @@ return_results(RefB, MaxResults, B) when is_binary(RefB), MaxResults >= 0 ->
     return_results(decode_ref(RefB), MaxResults, B);
 return_results({N, Pid, Reference}, MaxResults, B) when N == node() ->
     try
+        true = check_pid(Pid),
         gen_server:call(
             Pid,
             {return_results, MaxResults, Reference, B},
@@ -148,30 +148,33 @@ return_results({N, Pid, Reference}, MaxResults, B) when N == node() ->
         {error, result_server_terminated}
     end;
 return_results({Node, Pid, Reference}, MaxResults, B) ->
-    RemoteResult =
-        erpc:call(
-            Node,
-            riak_kv_query_filebuffer,
-            return_results,
-            [{Node, Pid, Reference}, MaxResults, B]
-        ),
-    case RemoteResult of
-        {ok, Result} when is_map(Result) ->
-            {ok, Result};
-        {error, Term} ->
-            {error, Term};
-        {erpc, noconnection} ->
+    try
+        RemoteResult =
+            erpc:call(
+                Node,
+                riak_kv_query_filebuffer,
+                return_results,
+                [{Node, Pid, Reference}, MaxResults, B]
+            ),
+        case RemoteResult of
+            {ok, Result} when is_map(Result) ->
+                {ok, Result};
+            {error, Term} ->
+                {error, Term}
+        end
+    catch 
+        error:{erpc, ERpcErrorReason} ->
             ?LOG_WARNING(
-                "Issue connecting to query buffer on ~0p from ~0p",
-                [Node, node()]
-            ),
-            {error, node_unreachable};
-        UnexpectedError ->
-            ?LOG_ERROR(
-                "Unexpected error ~0p fetching remote results",
-                [UnexpectedError]
-            ),
-            {error, unexpected_error}
+                    "Error ~0p connecting to query buffer on ~0p from ~0p",
+                    [ERpcErrorReason, Node, node()]
+                ),
+                {error, node_unreachable};
+        _CP:UnexpectedError ->
+                ?LOG_ERROR(
+                    "Unexpected error ~0p fetching remote results",
+                    [UnexpectedError]
+                ),
+                {error, unexpected_error}
     end.
 
 -spec query_complete(pid()) -> {ok, non_neg_integer()}.
@@ -337,13 +340,77 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal Functions
 %%%============================================================================
 
+-ifdef(TEST).
+
+check_pid(Pid) -> is_process_alive(Pid).
+
+-else.
+-spec check_pid(pid()) -> boolean().
+check_pid(Pid) ->
+    is_process_alive(Pid) andalso
+        not
+            ({error, not_found} ==
+                supervisor:get_childspec(
+                    riak_kv_query_filebuffer_sup,
+                    Pid)
+                )
+    .
+
+-endif.
+
 -spec encode_ref(binary()) -> binary().
 encode_ref(Ref) ->
-    base64:encode(term_to_binary({node(), self(), Ref}), ?ENCODE_OPTS).
+    safe_encode(term_to_binary({node(), self(), Ref})).
 
 -spec decode_ref(binary()) -> {node(), pid(), binary()}.
 decode_ref(B64Ref) ->
-    binary_to_term(base64:decode(B64Ref, ?ENCODE_OPTS)).
+    binary_to_term(safe_decode(B64Ref)).
+
+-if(?OTP_RELEASE < 26).
+safe_encode(Bin) ->
+    iolist_to_binary(
+        string:replace(
+            iolist_to_binary(
+                string:replace(
+                    base64:encode(Bin),
+                    "+",
+                    "-",
+                    all
+                )
+            ),
+            "/",
+            "_",
+            all
+        )
+    ).
+
+safe_decode(B64Ref) ->
+    base64:decode(
+        iolist_to_binary(
+            string:replace(
+                iolist_to_binary(
+                    string:replace(
+                        B64Ref,
+                        "-",
+                        "+",
+                        all
+                    )
+                ),
+            "_",
+            "/",
+            all
+            )
+        )
+    ).
+-else.
+-define(ENCODE_OPTS, #{mode => urlsafe}).
+
+safe_encode(Bin) ->
+    base64:encode(Bin, ?ENCODE_OPTS).
+
+safe_decode(B64Ref) ->
+    base64:decode(B64Ref, ?ENCODE_OPTS).
+-endif.
 
 -spec encode_results(
     inbound_results(),
@@ -381,6 +448,17 @@ replenish_buffer(DLog, Buffer, Continuation) ->
 
 -include_lib("eunit/include/eunit.hrl").
 
+unlink_new(RootPath, InactivityTimeoutMS, Bucket, AccOpt) ->
+    {ok, Pid} =
+        gen_server:start(
+            ?MODULE,
+            [RootPath, InactivityTimeoutMS, Bucket, AccOpt],
+            []
+        ),
+    Ref = gen_server:call(Pid, get_ref, infinity),
+    {ok, Pid, Ref}.
+
+
 to_key(N) ->
     list_to_binary(io_lib:format("K~8..0B", [N])).
 
@@ -413,7 +491,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
     RootPath = riak_kv_test_util:get_test_dir("filebuffer_test/"),
     AllKeys = Generator(MaxCount),
     {InitialKeys, RestKeys} = lists:split(MaxCount div 2, AllKeys),
-    {ok, QFB, QFR} = new(RootPath, 2000, Bucket, AccOpt),
+    {ok, QFB, QFR} = unlink_new(RootPath, 2000, Bucket, AccOpt),
     ExpectedInitResult =
         #{
             riak_kv_wm_query:get_result_key(AccOpt) => [],
@@ -477,8 +555,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
         return_results(QFR, BatchSize, Bucket)
     ),
     {ok, Files} = file:list_dir(RootPath),
-    BadRef =
-        base64:encode(term_to_binary({node(), QFB, <<>>}), ?ENCODE_OPTS),
+    BadRef = safe_encode(term_to_binary({node(), QFB, <<>>})),
     ?assertMatch({_N, QFB, <<>>}, decode_ref(BadRef)),
     ?assertMatch(
         {error, incorrect_reference},
@@ -518,5 +595,60 @@ fetch_keys_in_batches(MaxResults, Acc, QFR, Bucket, AccOpt) ->
         {Rsp, Rcv} when Rsp < Rcv ->
             fetch_keys_in_batches(MaxResults, UpdAcc, QFR, Bucket, AccOpt)
     end.
+
+-if(?OTP_RELEASE == 26).
+legacy_encode(Bin) ->
+    iolist_to_binary(
+        string:replace(
+            iolist_to_binary(
+                string:replace(
+                    base64:encode(Bin),
+                    "+",
+                    "-",
+                    all
+                )
+            ),
+            "/",
+            "_",
+            all
+        )
+    ).
+
+legacy_decode(B64Ref) ->
+    base64:decode(
+        iolist_to_binary(
+            string:replace(
+                iolist_to_binary(
+                    string:replace(
+                        B64Ref,
+                        "-",
+                        "+",
+                        all
+                    )
+                ),
+            "_",
+            "/",
+            all
+            )
+        )
+    ).
+
+urlsafe_encode_test() ->
+    RandomNoise =
+        lists:map(
+            fun(I) -> crypto:strong_rand_bytes(I) end,
+            lists:seq(1, 128)
+        ),
+    lists:foreach(
+        fun(Bin) ->
+            LB64 = legacy_encode(Bin),
+            NB64 = safe_encode(Bin),
+            ?assertMatch(Bin, safe_decode(LB64)),
+            ?assertMatch(Bin, legacy_decode(NB64))
+        end,
+        RandomNoise
+    ).
+
+-endif.
 
 -endif.
