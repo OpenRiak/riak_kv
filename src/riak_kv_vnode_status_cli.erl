@@ -120,6 +120,11 @@ jsonify_backend_prop(riak_kv_eleveldb_backend, {stats, StatsString}) ->
         _ ->
             []
     end;
+
+jsonify_backend_prop(riak_kv_bitcask_backend, {status, StatusTuples}) ->
+    [{status, [[{filename, A1}, {fragmented, A2},
+                {dead_bytes, A3}, {total_bytes, A4}] || {A1, A2, A3, A4} <- StatusTuples]}];
+
 jsonify_backend_prop(_, AsIs) ->
     [AsIs].
 
