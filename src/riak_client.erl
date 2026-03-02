@@ -1048,7 +1048,7 @@ hotbackup(BackupPath, DefaultNVal, PlanNVal, {?MODULE, [Node, _ClientId]}) ->
     riak_kv_query:complex_query_definition(), riak_client()) ->
         {query_result(), none|
         {{binary(), riak_object:key()}}} |
-        {result_reference, binary()} |
+        {result_queue, binary()} |
         {error, timeout} |
         {error, term()}.
 query(Query, {?MODULE, [Node, _ClientId]}) ->

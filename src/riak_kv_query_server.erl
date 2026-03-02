@@ -217,7 +217,7 @@ init(Query) ->
                                 node(),
                                 [RP, 1000 * InactivitySecs, Bucket, raw_keys]
                             ),
-                        From ! {ReqID, {result_reference, RRef}},
+                        From ! {ReqID, {result_queue, RRef}},
                         RPid;
                     terms ->
                         #list_acc{};
@@ -241,7 +241,7 @@ init(Query) ->
                                 node(),
                                 [RP, 1000 * InactivitySecs, Bucket, raw_terms]
                             ),
-                        From ! {ReqID, {result_reference, RRef}},
+                        From ! {ReqID, {result_queue, RRef}},
                         RPid
                     end,
             erlang:send_after(TimeoutS * 1000, self(), {timeout, ReqID}),

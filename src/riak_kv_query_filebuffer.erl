@@ -91,8 +91,8 @@
     }
 ).
 
--define(RSPCOUNT_KEY, <<"responses_count">>).
--define(RCVCOUNT_KEY, <<"received_count">>).
+-define(RSPCOUNT_KEY, <<"returned_count">>).
+-define(RCVCOUNT_KEY, <<"queued_count">>).
 -define(QCOMPLETE_KEY, <<"query_complete">>).
 
 -type inbound_results() ::

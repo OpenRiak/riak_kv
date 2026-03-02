@@ -663,12 +663,12 @@ process_post(RD, Ctx) ->
                     )
                 ),
             {{halt, 500}, return_json_error(Error, RD), Ctx};
-        {result_reference, ResultReference} when is_binary(ResultReference) ->
+        {result_queue, ResultReference} when is_binary(ResultReference) ->
             {
                 true,
                 wrq:append_to_resp_body(
                     riak_kv_wm_json:encode(
-                        #{result_reference => ResultReference}
+                        #{result_queue => ResultReference}
                     ),
                     wrq:set_resp_header(?HEAD_CTYPE, "application/json", RD)
                 ),
