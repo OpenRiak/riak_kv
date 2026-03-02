@@ -147,6 +147,7 @@ repairfun
 foldresult
 jobid
 rtrq
+dataroot
 
 # Riak monitoring terms
 nosync
@@ -390,3 +391,9 @@ subproc
 lz
 edates
 unsync'd
+DmRldjFAMTI
+LjAuMC
+gDdw
+kZXYxQDEyNy
+wLjAuMVh
+xAAAMdwAAAABpPGQWbQAAAARkjfJI

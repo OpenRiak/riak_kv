@@ -702,7 +702,7 @@ For queries using an `accumulation_option` of `queue_raw_keys` or `queue_raw_ter
 - `queued_count`; an integer count of results that have been queued so far in response to the query (including any results already returned);
 - `query_complete`; a boolean value which will be `true` when the query has been complete and there will be no more results to be queued.
 
-When the `queued_count` is equal to the `returned_count` and also `query_complete` is true - then there are no more results to be fetched, and all subsequent requests wll contain an empty list of `raw_keys` or `raw_terms`, and unchanged results for `returned_count`, `queued_count` and `query_complete`.
+When the `queued_count` is equal to the `returned_count` and also `query_complete` is true - then there are no more results to be fetched, and all subsequent requests will contain an empty list of `raw_keys` or `raw_terms`, and unchanged results for `returned_count`, `queued_count` and `query_complete`.
 
 e.g.
 
