@@ -104,7 +104,7 @@ riak eval "riak_client:remove_node_from_coverage()."
 
 #### Completing a Repair
 
-The data can then be recovered from the other nodes in the cluster issuing the `riak_client:repair_node()` command from the `remote_console` of the replacement node.  This will prompt all vnodes which partially overlap the data held in the vnodes on the replacement node to race to play a role in repairing the node.  Each vnode will only repair the data which overlaps, filtering out any data that another vnode has already repaired (or is in the process of repairing).
+The data can then be recovered from the other nodes in the cluster issuing the `riak admin node repair -n NODE` command.  This will prompt all vnodes which partially overlap the data held in the vnodes on the replacement node to race to play a role in repairing the node.  Each vnode will only repair the data which overlaps, filtering out any data that another vnode has already repaired (or is in the process of repairing).
 
 <span>Available from Riak 3.4.0</span>{: .label .label-purple }To improve the performance of repair, the `repair_span` configuration in the [riak_core schema section of riak.conf](https://github.com/OpenRiak/riak_core/blob/openriak-3.4/priv/riak_core.schema) can be changed to `double_pair`, and this has been proven to be more effective when used with the leveled backend together with the enablement of the `repair_deferred` option in the [riak_kv schema section of riak.conf](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
