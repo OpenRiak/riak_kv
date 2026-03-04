@@ -20,7 +20,7 @@
 
 -module(riak_kv_cli_registry).
 
--define(CLI_MODULES, [riak_kv_tictacaae_cli]).
+-define(CLI_MODULES, [riak_kv_tictacaae_cli, riak_kv_node_cli]).
 
 -export([register_cli/0
         ]).
