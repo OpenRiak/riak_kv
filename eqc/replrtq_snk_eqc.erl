@@ -70,6 +70,7 @@ config_pre(_, [_Enabled, #{queue := _Q, peerlimit:= PL, workers := N}]) ->
     PL =< N.
 
 config(Enabled, #{queue := Q, peers := Peers, peerlimit:= PL, workers := N} = Sink) ->
+    logger:set_primary_config(level, critical),
     application:set_env(riak_kv, replrtq_enablesink, Enabled == enabled),
     %% default Queue will be called "default" in tests
     application:set_env(riak_kv, replrtq_sinkqueue, default),
@@ -341,7 +342,7 @@ get_workers(Workers, Trace) ->
 check_trace(QueueName, Peerlimit, Peers, {Workers, Trace}) ->
     Concurrent = concurrent_fetches(Trace),
     {Suspended, Active} = split_suspended(Concurrent),
-    Max        = lists:max([0 | [N || {_, N} <- Active ++ Suspended]]),
+    Max        = lists:max([0 | [N || {_, N} <- Active ++ lists:flatten(Suspended)]]),
     Avg        = weighted_average(Active),
     ActiveTime = lists:sum([ T || {T, _} <- Active ]),
     ActivePeers = length([ x || {_, {active, _}} <- Peers ]),
@@ -369,7 +370,7 @@ format_concurrent(Xs) ->
     [ io_lib:format("  ~p for ~5.1fms\n", [C, T / 1000])
       || {T, C} <- Xs, T >= 100 ].
 
--define(SLACK, 900). %% allow fetches 900µs after suspension
+-define(SLACK, 1500). %% allow fetches 1500µs after suspension
 
 drop_slack(Chunk) -> drop_slack(0, Chunk).
 drop_slack(_, []) -> [];
@@ -397,8 +398,12 @@ suspended_chunks(Xs, Acc) ->
 
 weighted_average([]) -> 0;
 weighted_average(Xs) ->
-    lists:sum([ W * X || {W, X} <- Xs]) /
-    lists:sum([ W     || {W, _} <- Xs]).
+    case lists:sum([ W || {W, _} <- Xs]) of
+        Count when Count > 0 ->
+            lists:sum([ W * X || {W, X} <- Xs]) / Count;
+        0 ->
+            0
+    end.
 
 concurrent_fetches([]) -> [];
 concurrent_fetches(Trace = [{T0, _} | _]) ->
@@ -422,7 +427,16 @@ concurrent_fetches([{T1, E} | Trace], T0, N, Status, Acc) ->
             _                        -> Status
         end,
     DT = timer:now_diff(T1, T0),
-    concurrent_fetches(Trace, T1, N1, Status1, [{DT, N, Status} || DT > 0] ++ Acc).
+    case Status1 of
+        Status ->
+            concurrent_fetches(
+                Trace, T1, N1, Status1, [{DT, N, Status} || DT > 0] ++ Acc
+                );
+        _StausChange ->
+            concurrent_fetches(
+                Trace, T1, N1, Status1, [{DT, N, Status} || DT >= 0] ++ Acc
+                )
+    end.
 
 %% -- API-spec ---------------------------------------------------------------
 api_spec() ->

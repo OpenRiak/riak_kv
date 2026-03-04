@@ -77,6 +77,7 @@
     % Reset the range if the number of results for repair are less than
     % MaxResults div ?RANGE_DIVISOR.  Either all the results have been
     % returned, or the range has narrowed and is no longer effective
+
 -define(SCHEDULE_JITTER, 60).
     % Jitter each schedule start time by up to a minute, to avoid overlaps
 
@@ -1399,25 +1400,31 @@ take_next_workitem([NextAlloc|T], Wants,
             SliceNumber,
             ClusterSlice,
             NodeCount,
-            SliceCount),
+            SliceCount
+        ),
     {Mega, Sec, _Micro} = ScheduleStartTime,
+    Slices = lists:sum(lists:map(fun({_, WItem}) -> WItem end, Wants)),
+    MinSpacing = max(1, ?SECONDS_IN_DAY div (Slices * NodeCount * 4)),
     ScheduleSeconds =
         Mega * ?MEGA
-     + Sec + SecsFromStartTime
-     + rand:uniform(?SCHEDULE_JITTER),
+        + Sec
+        + SecsFromStartTime
+        + rand:uniform(min(?SCHEDULE_JITTER, MinSpacing)) - 1,
     {MegaNow, SecNow, _MicroNow} = os:timestamp(),
     NowSeconds = MegaNow * ?MEGA + SecNow,
     case ScheduleSeconds > NowSeconds of
         true ->
             {NextAction, ScheduleSeconds - NowSeconds, T, ScheduleStartTime};
         false ->
-            ?LOG_INFO("Tictac AAE skipping action ~w as manager running "
-                        ++ "~w seconds late",
-                        [NextAction, NowSeconds - ScheduleSeconds]),
+            ?LOG_INFO(
+                "Tictac AAE skipping action ~w as manager running "
+                "~w seconds late",
+                [NextAction, NowSeconds - ScheduleSeconds]
+            ),
             ?LOG_INFO("Clearing any range due to skip to reduce load"),
             clear_range(),
-            take_next_workitem(T, Wants,
-                                ScheduleStartTime, SlotInfo, SliceCount)
+            take_next_workitem(
+                T, Wants, ScheduleStartTime, SlotInfo, SliceCount)
     end.
 
 -spec schedule_seconds(

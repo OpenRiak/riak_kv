@@ -687,7 +687,7 @@
 %% Legacy version is v0.
 %% Version v1 has improved performance, but all nodes in cluster will need
 %% to support version 1 before this can be enabled.  v1 is introduced with
-%% Riak 3.4
+%% Riak 3.4.0 - but should not be enabled prior to Riak 3.4.1
 %% From Riak 4.0 option will be removed, and all metadata will use v1.
 {mapping, "metadata.format", "riak_kv.metadata_version", [
   {default, v0},

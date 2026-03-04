@@ -954,15 +954,20 @@ resource_exists(RD, Ctx0) ->
                     case DocCtx#ctx.vtag of
                         undefined ->
                             {true, RD, DocCtx};
-                        Vtag ->
-                            MDs = riak_object:get_metadatas(Doc),
-                            {lists:any(
+                        VTag ->
+                            VtagMatchesASibling =
+                                lists:any(
                                     fun(M) ->
-                                        dict:fetch(?MD_VTAG, M) =:= Vtag
+                                        SibTag =
+                                            riak_object:metadata_fetch(
+                                                ?MD_VTAG,
+                                                M
+                                            ),
+                                        VTag == SibTag
                                     end,
-                                    MDs),
-                                RD,
-                                DocCtx#ctx{vtag=Vtag}}
+                                    riak_object:get_metadatas(Doc)
+                                ),
+                            {VtagMatchesASibling, RD, DocCtx}
                     end;
                 {error, _} ->
                     %% This should never actually be reached because all the
