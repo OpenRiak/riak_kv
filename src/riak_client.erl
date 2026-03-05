@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_client: object used for access into the riak system
@@ -19,9 +20,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc object used for access into the riak system
-
+%%
 -module(riak_client).
 
 -include_lib("kernel/include/logger.hrl").
@@ -948,7 +949,8 @@ aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
     end.
 
 
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem) ->
     ttaaefs_fullsync(WorkItem, 900).
 
@@ -960,7 +962,8 @@ ttaaefs_fullsync(WorkItem) ->
 %% - day_check (sync over past day, only allowed if bucket-based sync)
 %% - range_check (sync over a range if one has been discovered by a previour sync)
 %% - auto_check (sync over range if one is present, otherwise use all if within window, otherwise day)
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(
@@ -970,8 +973,9 @@ ttaaefs_fullsync(WorkItem, SecsTimeout) ->
 %% @doc
 %% Intended for tests only
 %% Allows for the view of now to be altered during a test.
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer(),
-                                                    erlang:timestamp()) -> ok.
+-spec ttaaefs_fullsync(
+    riak_kv_ttaaefs_manager:work_item(), integer(), erlang:timestamp())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout, Now) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(WorkItem, ReqId, Now),

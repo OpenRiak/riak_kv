@@ -1,6 +1,8 @@
-%% -------------------------------------------------------------------
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
+%% ----------------------------------------------------------------------------
 %%
-%% riak_kv_leveled_backend: Riak leveled backend
+%% Copyright (c) 2011-2016 Basho Technologies, Inc.
+%% Copyright (c) 2017-2022 Martin Sumner.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -16,8 +18,10 @@
 %% specific language governing permissions and limitations
 %% under the License.
 %%
-%% -------------------------------------------------------------------
-
+%% ----------------------------------------------------------------------------
+%%
+%% @doc Backend Driver for LevelEd
+%%
 -module(riak_kv_leveled_backend).
 -behavior(riak_kv_backend).
 
@@ -47,10 +51,6 @@
 
 -export([generate_partition_identity/1]).
 
--include("riak_kv_index.hrl").
-
--include_lib("kernel/include/logger.hrl").
-
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_leveled_backend/0]).
@@ -59,7 +59,8 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
-
+-include_lib("kernel/include/logger.hrl").
+-include("riak_kv_index.hrl").
 
 -define(RIAK_TAG, o_rkv).
 -define(CAPABILITIES,
@@ -955,44 +956,34 @@ valid_hours(LowHour, HighHour) ->
 -ifdef(EQC).
 
 prop_leveled_backend() ->
-    Path = riak_kv_test_util:get_test_dir("leveled-backend"),
-    ?SETUP(
+    TestDir = riak_core_test_util:get_test_dir("leveled-backend", true),
+    SetupFun =
         fun() ->
-            application:load(sasl),
-            application:set_env(
-                sasl,
-                sasl_error_logger,
-                {file, Path ++ "/riak_kv_leveled_backend_eqc_sasl.log"}
+            riak_core_test_util:logger_redirect(
+                "leveled-backend",
+                ?MODULE_STRING ++ "_eqc.log"
             ),
-            error_logger:tty(false),
-            error_logger:logfile(
-                {open, Path ++ "/riak_kv_leveled_backend_eqc.log"}
-            ),
-            fun() -> ?assertCmd("rm -rf " ++ Path ++ "/*") end
+            fun() -> ?assertCmd("rm -rf " ++ TestDir ++ "/*") end
         end,
-           backend_eqc:prop_backend(
-            ?MODULE,
-            false,
-            [
-                {data_root, Path},
-                {cache_size, 100},
-                {penciller_cache_size, 1000},
-                {sync_strategy, none},
-                {compression_method, native},
-                {compression_point, on_receipt},
-                {compaction_runs_perday, 1},
-                {compaction_low_hour, 1},
-                {compaction_top_hour, 23},
-                {max_run_length, 2},
-                {maxrunlength_compactionpercentage, 70.0},
-                {singlefile_compactionpercentage, 50.0},
-                {snapshot_timeout_short, 900},
-                {snapshot_timeout_long, 3600},
-                {log_level, error},
-                {journal_objectcount, 100}
-            ]
-        )
-    ).
+    BeProps = [
+        {data_root, TestDir},
+        {cache_size, 100},
+        {penciller_cache_size, 1000},
+        {sync_strategy, none},
+        {compression_method, native},
+        {compression_point, on_receipt},
+        {compaction_runs_perday, 1},
+        {compaction_low_hour, 1},
+        {compaction_top_hour, 23},
+        {max_run_length, 2},
+        {maxrunlength_compactionpercentage, 70.0},
+        {singlefile_compactionpercentage, 50.0},
+        {snapshot_timeout_short, 900},
+        {snapshot_timeout_long, 3600},
+        {log_level, error},
+        {journal_objectcount, 100}
+    ],
+    ?SETUP(SetupFun, backend_eqc:prop_backend(?MODULE, false, BeProps)).
 
 -endif. % EQC
 
