@@ -126,7 +126,13 @@ jsonify_backend_prop(riak_kv_eleveldb_backend, {stats, StatsString}) ->
               [compactions, level, files_size_mb, time, read_mb, write_mb],
               [binary_to_integer(X) || X <- Values]);
         _ ->
-            []
+            %% on fresh start, eleveldb (sometimes?) doesn't report these items, so:
+            [{compactions, 0},
+             {level, -1},
+             {files_size_mb, 0},
+             {time, 0},
+             {read_mb, 0},
+             {write_mb, 0}]
     end;
 
 jsonify_backend_prop(riak_kv_bitcask_backend, {status, StatusTuples}) ->
