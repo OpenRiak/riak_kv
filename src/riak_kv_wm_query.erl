@@ -386,6 +386,20 @@ return_queued_results(RD, Ctx = #ctx{queue_request = QR, client = C}) ->
     case riak_client:query_result_request(QR, C) of
         {ok, ResultMap} ->
             {encode_queued_results(ResultMap), RD, Ctx};
+        {error, result_server_terminated} ->
+            {
+                {halt, 410},
+                    % Response code for Gone, and likely to be permanent.
+                    % This may be as a result of an error on the server, but
+                    % is probably as a result of an error on the client - and
+                    % so to help with load-balancers tracking server errors,
+                    % err on the side of blaming the client
+                return_json_error(
+                    "queue no longer present or not currently reachable\n",
+                    RD
+                ),
+                Ctx
+            };
         {error, Reason} ->
             {{error, Reason}, RD, Ctx}
     end.
