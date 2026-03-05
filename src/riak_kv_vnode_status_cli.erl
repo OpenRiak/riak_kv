@@ -69,10 +69,18 @@ get_vnode_status_cmd([_, _ | Args], _, Options) ->
                 || {Res, Node} <- vnode_status_on_nodes(Nodes, Partitions, [])],
     case Args of
         [] ->
-            [clique_status:text(mochijson2:encode(PerNode))];
+            [clique_status:text(
+               riak_kv_wm_json:encode(map_from_deep_list(PerNode)))];
         _ ->
             clique_status:usage()
     end.
+
+map_from_deep_list(A) when is_map(A) ->
+    maps:fold(fun(K, V, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
+map_from_deep_list([{_,_}|_] = A) ->
+    lists:foldl(fun({K, V}, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
+map_from_deep_list(A) -> A.
+
 
 jsonify1(PP) ->
     lists:append([jsonify2(P) || P <- PP]).
