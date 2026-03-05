@@ -488,7 +488,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
         end,
     Bucket = {<<"BucketType">>, <<"BucketName">>},
     BatchSize = MaxCount div 20,
-    RootPath = riak_kv_test_util:get_test_dir("filebuffer_test/"),
+    RootPath = riak_core_test_util:get_test_dir("filebuffer_test/"),
     AllKeys = Generator(MaxCount),
     {InitialKeys, RestKeys} = lists:split(MaxCount div 2, AllKeys),
     {ok, QFB, QFR} = unlink_new(RootPath, 2000, Bucket, AccOpt),
