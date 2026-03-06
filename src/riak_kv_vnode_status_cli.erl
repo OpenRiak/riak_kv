@@ -79,6 +79,8 @@ map_from_deep_list(A) when is_map(A) ->
     maps:fold(fun(K, V, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
 map_from_deep_list([{_,_}|_] = A) ->
     lists:foldl(fun({K, V}, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
+map_from_deep_list(A) when is_list(A) ->
+    lists:map(fun map_from_deep_list/1, A);
 map_from_deep_list(A) -> A.
 
 
