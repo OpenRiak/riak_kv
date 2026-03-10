@@ -63,7 +63,7 @@ To create a local release, run `make rel`.  This will build a release of Riak in
 
 #### Local cluster
 
-To create a local cluster, which is ideal for experimenting with Riak, run `make devclean; make devrel`.  This will clean and rebuild a group of 8 Riak instances in the `dev/dev<n>` folder within the repository clone.
+To create a local development cluster, which is ideal for experimenting with Riak, run `make devclean; make devrel`.  This will clean and rebuild a group of 8 Riak instances in the `dev/dev<n>` folder within the repository clone.
 
 #### Generating a package
 
@@ -84,11 +84,11 @@ Organisations within the OpenRiak community do offer pre-built packages as part 
 
 ### Starting Riak by Make Method
 
-Starting Riak changes depending on [how Riak was made](#make-riak) - a local release or cluster, or through package deployment.  In all cases Riak is released using [the relx release generator](https://rebar3.org/docs/deployment/releases/), and inherits the control commands from the `relx` extended start script.
+Starting Riak changes depending on how Riak was made - a [local release](#local-release) or [local development cluster](#local-cluster), or through [package deployment](#package-deployment).  In all cases Riak is released using [the relx release generator](https://rebar3.org/docs/deployment/releases/), and inherits the control commands from the `relx` extended start script; but the location and method for accessing that script will vary.
 
 #### Local Release or Cluster
 
-For locally deployed instances (i.e. via `make rel` or `make devrel`), nodes can be controlled using the `bin/riak` script:
+For locally deployed instances (i.e. via `make rel` for a single node or `make devrel` for a development cluster), nodes can be controlled using the `bin/riak` script:
 
 ```console
 bin/riak daemon
