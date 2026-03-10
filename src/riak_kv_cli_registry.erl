@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2025 TI Tokyo.  All Rights Reserved.
+%% Copyright (c) 2025, 2026 TI Tokyo.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,7 +20,9 @@
 
 -module(riak_kv_cli_registry).
 
--define(CLI_MODULES, [riak_kv_tictacaae_cli]).
+-define(CLI_MODULES, [riak_kv_tictacaae_cli,
+                      riak_kv_vnode_status_cli
+                     ]).
 
 -export([register_cli/0
         ]).
