@@ -209,8 +209,7 @@ init([RootPath, InactivityTimeoutMS, Bucket, AccOpt]) ->
     }.
 
 handle_cast(
-    {aggregate_results, Results}, State)
-        when not State#state.query_complete ->
+    {aggregate_results, Results}, State) ->
     ok = disk_log:alog_terms(State#state.dlog, Results),
     {
         noreply,
@@ -347,13 +346,13 @@ check_pid(Pid) -> is_process_alive(Pid).
 -else.
 -spec check_pid(pid()) -> boolean().
 check_pid(Pid) ->
-    is_process_alive(Pid) andalso
-        not
-            ({error, not_found} ==
-                supervisor:get_childspec(
-                    riak_kv_query_filebuffer_sup,
-                    Pid)
-                )
+    is_process_alive(Pid)
+        andalso
+        ({error, not_found} /=
+            supervisor:get_childspec(
+                riak_kv_query_filebuffer_sup,
+                Pid)
+            )
     .
 
 -endif.

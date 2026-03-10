@@ -202,48 +202,12 @@ init(Query) ->
             InitMonitor = maps:from_keys(CoverageVnodes, 0),
             VnodesOngoing = sets:from_list(CoverageVnodes, ?VERSION),
             Acc =
-                case AccType of
-                    keys ->
-                        #list_acc{};
-                    raw_keys ->
-                        #list_acc{};
-                    queue_raw_keys ->
-                        {ok, RP} =
-                            application:get_env(riak_kv, query_dataroot),
-                        InactivitySecs =
-                            riak_kv_query:get_inactivity_timeout_secs(Query),
-                        {ok, RPid, RRef} =
-                            riak_kv_query_filebuffer_sup:start_query_filebuffer(
-                                node(),
-                                [RP, 1000 * InactivitySecs, Bucket, raw_keys]
-                            ),
-                        From ! {ReqID, {result_queue, RRef}},
-                        RPid;
-                    terms ->
-                        #list_acc{};
-                    raw_terms ->
-                        #list_acc{};
-                    raw_count ->
-                        #count_acc{};
-                    count ->
-                        #count_acc{};
-                    term_with_rawcount ->
-                        #map_acc{};
-                    term_with_count ->
-                        #map_acc{};
-                    queue_raw_terms ->
-                        {ok, RP} =
-                            application:get_env(riak_kv, query_dataroot),
-                        InactivitySecs =
-                            riak_kv_query:get_inactivity_timeout_secs(Query),
-                        {ok, RPid, RRef} =
-                            riak_kv_query_filebuffer_sup:start_query_filebuffer(
-                                node(),
-                                [RP, 1000 * InactivitySecs, Bucket, raw_terms]
-                            ),
-                        From ! {ReqID, {result_queue, RRef}},
-                        RPid
-                    end,
+                case init_acc(AccType) of
+                    start_queue ->
+                        start_queue(AccType, Query, Bucket, ReqID, From);
+                    InitAcc ->
+                        InitAcc
+                end,
             erlang:send_after(TimeoutS * 1000, self(), {timeout, ReqID}),
             {
                 ok, 
@@ -604,6 +568,45 @@ code_change(_OldVsn, State, _Extra) ->
 %%%============================================================================
 %%% Internal functions
 %%%============================================================================
+
+-spec init_acc(riak_kv_query:accumulation_option()) -> result_record()|start_queue.
+init_acc(KeysType) when KeysType == keys; KeysType == raw_keys ->
+    #list_acc{};
+init_acc(TermType) when TermType == terms; TermType == raw_terms ->
+    #list_acc{};
+init_acc(CountType) when CountType == count; CountType == raw_count ->
+    #count_acc{};
+init_acc(CountByType)
+        when CountByType == term_with_count; CountByType == term_with_rawcount ->
+    #map_acc{};
+init_acc(QueueType)
+        when QueueType == queue_raw_keys; QueueType == queue_raw_terms ->
+    start_queue.
+
+-spec start_queue(
+    queue_raw_keys|queue_raw_terms,
+    riak_kv_query:complex_query_definition(),
+    riak_object:bucket(),
+    req_id(),
+    pid()
+) -> 
+    pid().
+start_queue(QueueType, Query, Bucket, ReqID, From) ->
+    ConvertedType =
+        case QueueType of
+            queue_raw_keys -> raw_keys;
+            queue_raw_terms -> raw_terms
+        end,
+    {ok, RP} = application:get_env(riak_kv, query_dataroot),
+    InactivitySecs =
+        riak_kv_query:get_inactivity_timeout_secs(Query),
+    {ok, RPid, RRef} =
+        riak_kv_query_filebuffer_sup:start_query_filebuffer(
+            node(),
+            [RP, 1000 * InactivitySecs, Bucket, ConvertedType]
+        ),
+    From ! {ReqID, {result_queue, RRef}},
+    RPid.
 
 -spec update_monitor(vnode_id(), vnode_monitor()) -> vnode_monitor().
 update_monitor(Vnode, VnodeMonitor) ->

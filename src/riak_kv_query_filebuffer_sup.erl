@@ -20,8 +20,14 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc supervise the riak_kv query servers used to
-%% process complex secondary index queries.
+%% @doc supervise the riak_kv query server filebuffers used to
+%% process queues
+%% 
+%% A supervisor is used for the filebuffer, as it external messages will be
+%% received targeting the specific pid().  If the process has expired, or
+%% the request has been doctored - there is a risk that a random pid() will
+%% receive a message it cannot handle (and crash).  So we must always check
+%% the pid is the right type - by confirming it was started by this supervisor.
 
 -module(riak_kv_query_filebuffer_sup).
 
