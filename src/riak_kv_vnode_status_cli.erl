@@ -69,10 +69,20 @@ get_vnode_status_cmd([_, _ | Args], _, Options) ->
                 || {Res, Node} <- vnode_status_on_nodes(Nodes, Partitions, [])],
     case Args of
         [] ->
-            [clique_status:text(mochijson2:encode(PerNode))];
+            [clique_status:text(
+               riak_kv_wm_json:encode(map_from_deep_list(PerNode)))];
         _ ->
             clique_status:usage()
     end.
+
+map_from_deep_list(A) when is_map(A) ->
+    maps:fold(fun(K, V, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
+map_from_deep_list([{_,_}|_] = A) ->
+    lists:foldl(fun({K, V}, Q) -> Q#{K => map_from_deep_list(V)} end, #{}, A);
+map_from_deep_list(A) when is_list(A) ->
+    lists:map(fun map_from_deep_list/1, A);
+map_from_deep_list(A) -> A.
+
 
 jsonify1(PP) ->
     lists:append([jsonify2(P) || P <- PP]).
@@ -118,11 +128,17 @@ jsonify_backend_prop(riak_kv_eleveldb_backend, {stats, StatsString}) ->
               [compactions, level, files_size_mb, time, read_mb, write_mb],
               [binary_to_integer(X) || X <- Values]);
         _ ->
-            []
+            %% on fresh start, eleveldb (sometimes?) doesn't report these items, so:
+            [{compactions, 0},
+             {level, -1},
+             {files_size_mb, 0},
+             {time, 0},
+             {read_mb, 0},
+             {write_mb, 0}]
     end;
 
 jsonify_backend_prop(riak_kv_bitcask_backend, {status, StatusTuples}) ->
-    [{status, [[{filename, A1}, {fragmented, A2},
+    [{status, [[{filename, list_to_binary(A1)}, {fragmented, A2},
                 {dead_bytes, A3}, {total_bytes, A4}] || {A1, A2, A3, A4} <- StatusTuples]}];
 
 jsonify_backend_prop(_, AsIs) ->

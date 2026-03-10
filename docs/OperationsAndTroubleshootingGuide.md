@@ -314,6 +314,17 @@ All timings are internal timings, and not necessarily fully representative of ex
 
 The stats represent the statistics on the node from which they were requested.  The stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
 
+### Vnode Status
+{: .d-inline-block }
+
+Available from Riak 3.4.1
+{: .label .label-purple }
+
+A significant proportion of the work within Riak takes places within the vnode.  To see the status of each vnode in the cluster, and see available statistics from the backend:  `riak admin vnode-status | sed -n 1p | json_pp`
+
+To look at the statistics from specific nodes or partitions see: `riak admin vnode-status --help`.
+
+
 ## Monitoring Operational Services
 
 ### Monitoring Anti-Entropy

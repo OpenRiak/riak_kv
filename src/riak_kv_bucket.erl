@@ -1,8 +1,8 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_bucket: bucket validation functions
-%%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2011-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024-2025 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,8 +19,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+%%
 %% @doc KV Bucket validation functions
-
+%%
 -module(riak_kv_bucket).
 
 -export([validate/4]).
@@ -29,7 +30,7 @@
 -export([allow_mult/1,
          hll_precision/2]).
 
--include_lib("riak_kv_types.hrl").
+-export_type([props/0]).
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -39,6 +40,8 @@
 -endif.
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-include("riak_kv_types.hrl").
 
 -type propvalue() :: PropValue::any().
 -type prop() :: {PropName::atom(), propvalue()}.
@@ -65,8 +68,6 @@
 -type validate_props_return() :: {UnvalidatedProps :: props(),
                                   ValidatedProps :: props(),
                                   ErrorsGenerated :: errors()}.
--export_type([props/0]).
-
 -define(ERROR_ALLOW_MULT_CREATE, "Data Type buckets must be" ++
             " allow_mult=true").
 -define(ERROR_ALLOW_MULT_UPDATE, "Cannot change datatype bucket from" ++
@@ -1267,7 +1268,7 @@ immutable_consistent(true, _N, undefined, _Bad) ->
     %% consistent still set to true and n_val not modified
     true;
 immutable_consistent(Consistent, N, N, _Bad) when Consistent =:= undefined orelse
-                                                    Consistent =:= true ->
+                                                  Consistent =:= true ->
     %% consistent not modified or still set to true and n_val
     %% modified but set to same value
     true;

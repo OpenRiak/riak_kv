@@ -1,6 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_kv_reaper: Process for queueing and applying reap requests
+%% Copyright (c) 2019-2022 Martin Sumner.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,7 +18,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc Queue any reap request originating from this node.  The process will
 %% reap each tombstone one by one, waiting or the reap attempt to be
 %% acknowledged from each vnode - so as to act as a natural throttle on reap
@@ -25,14 +26,16 @@
 %% Each node should have a singleton reaper initiated at startup.  Should
 %% additional reap capacity be required, then reap jobs could start their own
 %% reapers.
-
+%%
 -module(riak_kv_reaper).
+-behaviour(riak_kv_queue_manager).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([start_link/1]).
 -endif.
 
--behaviour(riak_kv_queue_manager).
+-export_type([reap_reference/0, job_id/0]).
 
 -define(QUEUE_LIMIT, 100000).
 -define(OVERFLOW_LIMIT, 10000000).
@@ -85,8 +88,6 @@
     %% reap request).
 -type job_id() :: pos_integer().
 
--export_type([reap_reference/0, job_id/0]).
-
 %%%============================================================================
 %%% API
 %%%============================================================================
@@ -127,7 +128,7 @@ bulk_request_reap(Pid, RefList) ->
     list({atom(), non_neg_integer()|riak_kv_overflow_queue:queue_stats()}).
 reap_stats() -> reap_stats(?MODULE).
 
--spec reap_stats(pid()|module()) -> 
+-spec reap_stats(pid()|module()) ->
     list({atom(), non_neg_integer()|riak_kv_overflow_queue:queue_stats()}).
 reap_stats(Pid) ->
     riak_kv_queue_manager:stats(Pid).
@@ -409,7 +410,7 @@ failure_reaper_test_() ->
 
 standard_reaper_tester() ->
     NumberOfRefs = 1000,
-    {ok, P} = start_job(1, riak_kv_test_util:get_test_dir("std_reaper")),
+    {ok, P} = start_job(1, riak_core_test_util:get_test_dir("std_reaper")),
     ok = gen_server:call(P, {override_action, fun test_100reap/2}),
     B = {<<"type1">>, <<"B1">>},
     RefList =
@@ -453,7 +454,7 @@ somefail_reaper_tester() ->
 
 somefail_reaper_tester(N) ->
     NumberOfRefs = 1000,
-    {ok, P} = start_job(1, riak_kv_test_util:get_test_dir("err_reaper")),
+    {ok, P} = start_job(1, riak_core_test_util:get_test_dir("err_reaper")),
     ok = gen_server:call(P, {override_action, test_1inNreapfun(N)}),
     B = {<<"type1">>, <<"B1">>},
     RefList =

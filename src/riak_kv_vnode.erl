@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_kv_vnode: VNode Implementation
@@ -19,6 +20,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+%%
+%% riak_kv_vnode: VNode Implementation
+%%
 -module(riak_kv_vnode).
 -behaviour(riak_core_vnode).
 
@@ -101,18 +105,18 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--include_lib("riak_kv_vnode.hrl").
--include_lib("riak_kv_index.hrl").
--include_lib("riak_kv_map_phase.hrl").
--include_lib("riak_core_pb.hrl").
--include("riak_kv_types.hrl").
--include("riak_kv_capability.hrl").
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("riak_core/include/riak_core_bg_manager.hrl").
 -export([put_merge/6]). %% For fsm_eqc_vnode
 -endif.
+
+-include("riak_kv_vnode.hrl").
+-include("riak_kv_index.hrl").
+-include("riak_kv_map_phase.hrl").
+-include("riak_core_pb.hrl").
+-include("riak_kv_types.hrl").
+-include("riak_kv_capability.hrl").
 
 -record(mrjob, {cachekey :: term(),
                 bkey :: term(),
@@ -4995,7 +4999,7 @@ maybe_should_handoff(UpdateHook, HandoffDest) ->
 
 -define(MGR, riak_kv_vnode_status_mgr).
 -define(MAX_INT, 4294967295).
--define(DATA_DIR, riak_kv_test_util:get_test_dir("riak_kv_vnode_blocking_test")).
+-define(DATA_DIR, riak_core_test_util:get_test_dir("riak_kv_vnode_blocking_test")).
 
 blocking_setup() ->
     application:set_env(riak_core, platform_data_dir, ?DATA_DIR),
