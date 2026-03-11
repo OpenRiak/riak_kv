@@ -264,6 +264,9 @@ yymmdd
 yyyymmdd
 xput
 endraw
+stdout
+sed
+json_pp
 
 # Product names
 debian
@@ -397,5 +400,3 @@ gDdw
 kZXYxQDEyNy
 wLjAuMVh
 xAAAMdwAAAABpPGQWbQAAAARkjfJI
-sed
-json_pp

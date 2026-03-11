@@ -324,7 +324,6 @@ A significant proportion of the work within Riak takes places within the vnode. 
 
 To look at the statistics from specific nodes or partitions see: `riak admin vnode-status --help`.
 
-
 ## Monitoring Operational Services
 
 ### Monitoring Anti-Entropy
