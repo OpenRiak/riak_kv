@@ -400,6 +400,15 @@ return_queued_results(RD, Ctx = #ctx{queue_request = QR, client = C}) ->
                 ),
                 Ctx
             };
+        {error, unexpected_reference_format} ->
+            {
+                {halt, 400},
+                return_json_error(
+                    "queue reference passed had an invalid format\n",
+                    RD
+                ),
+                Ctx
+            };
         {error, Reason} ->
             {{error, Reason}, RD, Ctx}
     end.

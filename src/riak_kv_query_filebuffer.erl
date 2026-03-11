@@ -178,7 +178,7 @@ return_results({Node, Pid, Reference}, MaxResults, B) ->
     end;
 return_results(_UnexpectedRefFormat, _MaxResults, _B) ->
     ?LOG_WARNING("Queue reference received in unexpected format"),
-    {error, unexpected_error}.
+    {error, unexpected_reference_format}.
 
 
 -spec query_complete(pid()) -> {ok, non_neg_integer()}.
