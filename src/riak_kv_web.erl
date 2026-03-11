@@ -45,11 +45,7 @@ dispatch_table() ->
        {[proplists:get_value(prefix, StatsProps)],
         riak_kv_wm_stats, StatsProps},
        {["ping"], riak_kv_wm_ping, []},
-       {["system_info"], riak_kv_wm_system, []},
-       {["cluster"], riak_kv_wm_cluster, []},
-       {["vnode"], riak_kv_wm_vnode, []},
-       {["security"], riak_kv_wm_security, []},
-       {["tictacaae"], riak_kv_wm_tictacaae, []}
+       {["ctl"], riak_kv_wm_ctl, []}
       ]).
 
 raw_dispatch() ->

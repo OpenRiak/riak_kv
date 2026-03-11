@@ -513,7 +513,6 @@ cors_headers() ->
     , {"Access-Control-Allow-Headers",
        "host,"
        "origin,"
-       "referer,"
        "authorization,"
        "content-type,"
        "content-md5,"
