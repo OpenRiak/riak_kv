@@ -31,7 +31,7 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"SystemGetVersionInfo">>,
+            #{<<"action">> := <<"GetVersionInfo">>,
               <<"params">> := Params} ->
                 Node =
                     case maps:get(<<"node">>, Params, undefined) of

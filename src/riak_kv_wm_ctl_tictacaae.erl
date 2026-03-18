@@ -31,7 +31,7 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"TictacaaeGetStatus">>,
+            #{<<"action">> := <<"GetTictacaaeStatus">>,
               <<"params">> := Params} ->
                 Node =
                     case maps:get(<<"node">>, Params, undefined) of
