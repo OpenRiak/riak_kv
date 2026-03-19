@@ -31,7 +31,7 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"GetVnodeStatus">>,
+            #{<<"action">> := <<"VnodeGetStatus">>,
               <<"params">> := Params = #{<<"preflists">> := PrefLists_}} ->
                 Node =
                     case maps:get(<<"node">>, Params, undefined) of

@@ -146,41 +146,41 @@ process_post(RD, Ctx) ->
                  #{error => <<"Malformed request">>}), RD), Ctx}
     end.
 
-handler_mod(<<"GetClusterStatus">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"ClearPlan">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"CommitPlan">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StageJoin">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StageLeave">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StageRemove">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StageReplace">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StageForceReplace">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"DownNode">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"StopNode">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"GetNodeAppEnv">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"PutNodeAppEnv">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"GetNodeAdvancedConfig">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"PutNodeAdvancedConfig">>) -> riak_kv_wm_ctl_cluster;
-handler_mod(<<"RestartNode">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterGetStatus">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterClearPlan">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterCommitPlan">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStageJoin">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStageLeave">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStageRemove">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStageReplace">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStageForceReplace">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterDownNode">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"ClusterStopNode">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"NodeGetAppEnv">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"NodePutAppEnv">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"NodeGetAdvancedConfig">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"NodePutAdvancedConfig">>) -> riak_kv_wm_ctl_cluster;
+handler_mod(<<"NodeRestart">>) -> riak_kv_wm_ctl_cluster;
 
-handler_mod(<<"GetVnodeStatus">>) -> riak_kv_wm_ctl_vnode;
-handler_mod(<<"GetTictacaaeStatus">>) -> riak_kv_wm_ctl_tictacaae;
+handler_mod(<<"VnodeGetStatus">>) -> riak_kv_wm_ctl_vnode;
+handler_mod(<<"TictacaaeGetStatus">>) -> riak_kv_wm_ctl_tictacaae;
 
-handler_mod(<<"GetVersionInfo">>) -> riak_kv_wm_ctl_version_info;
+handler_mod(<<"SystemGetVersionInfo">>) -> riak_kv_wm_ctl_version_info;
 
-handler_mod(<<"ListUsers">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"CreateUser">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"UpdateUser">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"DeleteUser">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"ListGroups">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"CreateGroup">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"UpdateGroup">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"DeleteGroup">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"AddUserGroup">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"DeleteUserGroup">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"AddUserGrant">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"DeleteUserGrant">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"AddGroupGrant">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"DeleteGroupGrant">>) -> riak_kv_wm_ctl_security;
-handler_mod(<<"ListPermissions">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityListUsers">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityCreateUser">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityUpdateUser">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityDeleteUser">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityListGroups">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityCreateGroup">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityUpdateGroup">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityDeleteGroup">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityAddUserGroup">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityDeleteUserGroup">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityAddUserGrant">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityDeleteUserGrant">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityAddGroupGrant">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityDeleteGroupGrant">>) -> riak_kv_wm_ctl_security;
+handler_mod(<<"SecurityListPermissions">>) -> riak_kv_wm_ctl_security;
 
 handler_mod(_) -> undefined.

@@ -31,7 +31,7 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"ListUsers">>,
+            #{<<"action">> := <<"SecurityListUsers">>,
               <<"params">> := #{}} ->
                 A = [ begin
                           PasswordOptions = proplists:get_value("password", Options, []),
@@ -52,23 +52,23 @@ process_request(Request) ->
                             grants => Grants}
                       end || {Name, [Options]} <- riak_core_security:get_users() ],
                 {ok, A};
-            #{<<"action">> := <<"CreateUser">>,
+            #{<<"action">> := <<"SecurityCreateUser">>,
               <<"params">> := #{<<"name">> := Name,
                                 <<"options">> := Options}} ->
                 riak_core_security:add_user(
                   binary_to_list(Name),
                   maps:to_list(deep_binary_to_list(Options)));
-            #{<<"action">> := <<"UpdateUser">>,
+            #{<<"action">> := <<"SecurityUpdateUser">>,
               <<"params">> := #{<<"name">> := Name,
                                 <<"options">> := Options}} ->
                 riak_core_security:alter_user(
                   binary_to_list(Name),
                   maps:to_list(deep_binary_to_list(Options)));
-            #{<<"action">> := <<"DeleteUser">>,
+            #{<<"action">> := <<"SecurityDeleteUser">>,
               <<"params">> := #{<<"name">> := Name}} ->
                 riak_core_security:del_user(binary_to_list(Name));
 
-            #{<<"action">> := <<"ListGroups">>,
+            #{<<"action">> := <<"SecurityListGroups">>,
               <<"params">> := #{}} ->
                 A = [ begin
                           Grants = [#{scope => jsonify_scope(Scope),
@@ -82,23 +82,23 @@ process_request(Request) ->
                             options => OtherOptions}
                       end || {Name, [Options]} <- riak_core_security:get_groups() ],
                 {ok, A};
-            #{<<"action">> := <<"CreateGroup">>,
+            #{<<"action">> := <<"SecurityCreateGroup">>,
               <<"params">> := #{<<"name">> := Name,
                                 <<"options">> := Options}} ->
                 riak_core_security:add_group(
                   binary_to_list(Name),
                   maps:to_list(deep_binary_to_list(Options)));
-            #{<<"action">> := <<"UpdateGroup">>,
+            #{<<"action">> := <<"SecurityUpdateGroup">>,
               <<"params">> := #{<<"name">> := Name,
                                 <<"options">> := Options}} ->
                 riak_core_security:alter_group(
                   binary_to_list(Name),
                   maps:to_list(deep_binary_to_list(Options)));
-            #{<<"action">> := <<"DeleteGroup">>,
+            #{<<"action">> := <<"SecurityDeleteGroup">>,
               <<"params">> := #{<<"name">> := Name}} ->
                 riak_core_security:del_group(binary_to_list(Name));
 
-            #{<<"action">> := <<"AddUserGroup">>,
+            #{<<"action">> := <<"SecurityAddUserGroup">>,
               <<"params">> := #{<<"user">> := User,
                                 <<"group">> := Group}} ->
                 case lists:keyfind(User, 1, riak_core_security:get_users()) of
@@ -110,7 +110,7 @@ process_request(Request) ->
                     _ ->
                         {error, notfound}
                 end;
-            #{<<"action">> := <<"DeleteUserGroup">>,
+            #{<<"action">> := <<"SecurityDeleteUserGroup">>,
               <<"params">> := #{<<"user">> := User,
                                 <<"group">> := Group}} ->
                 case lists:keyfind(User, 1, riak_core_security:get_users()) of
@@ -123,7 +123,7 @@ process_request(Request) ->
                         {error, notfound}
                 end;
 
-            #{<<"action">> := <<"AddUserGrant">>,
+            #{<<"action">> := <<"SecurityAddUserGrant">>,
               <<"params">> := #{<<"user">> := User,
                                 <<"permission">> := Permission,
                                 <<"scope">> := Scope}} ->
@@ -136,7 +136,7 @@ process_request(Request) ->
                     _ ->
                         {error, notfound}
                 end;
-            #{<<"action">> := <<"DeleteUserGrant">>,
+            #{<<"action">> := <<"SecurityDeleteUserGrant">>,
               <<"params">> := #{<<"user">> := User,
                                 <<"permission">> := Permission,
                                 <<"scope">> := Scope}} ->
@@ -150,7 +150,7 @@ process_request(Request) ->
                         {error, notfound}
                 end;
 
-            #{<<"action">> := <<"AddGroupGrant">>,
+            #{<<"action">> := <<"SecurityAddGroupGrant">>,
               <<"params">> := #{<<"group">> := Group,
                                 <<"permission">> := Permission,
                                 <<"scope">> := Scope}} ->
@@ -163,7 +163,7 @@ process_request(Request) ->
                     _ ->
                         {error, notfound}
                 end;
-            #{<<"action">> := <<"DeleteGroupGrant">>,
+            #{<<"action">> := <<"SecurityDeleteGroupGrant">>,
               <<"params">> := #{<<"group">> := Group,
                                 <<"permission">> := Permission,
                                 <<"scope">> := Scope}} ->
@@ -177,7 +177,7 @@ process_request(Request) ->
                         {error, notfound}
                 end;
 
-            #{<<"action">> := <<"ListPermissions">>,
+            #{<<"action">> := <<"SecurityListPermissions">>,
               <<"params">> := #{}} ->
                 {ok, PP} = application:get_env(riak_core, permissions),
                 {ok, lists:flatten(

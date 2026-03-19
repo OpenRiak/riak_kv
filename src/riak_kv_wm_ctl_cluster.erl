@@ -31,14 +31,14 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"GetClusterStatus">>} ->
+            #{<<"action">> := <<"ClusterGetStatus">>} ->
                 get_cluster();
-            #{<<"action">> := <<"ClearPlan">>} ->
+            #{<<"action">> := <<"ClusterClearPlan">>} ->
                 riak_core_claimant:clear();
-            #{<<"action">> := <<"CommitPlan">>} ->
+            #{<<"action">> := <<"ClusterCommitPlan">>} ->
                 riak_core_claimant:commit();
 
-            #{<<"action">> := <<"StageJoin">>,
+            #{<<"action">> := <<"ClusterStageJoin">>,
               <<"params">> := #{<<"node">> := A}} ->
                 Node = binary_to_atom(A),
                 {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -55,26 +55,26 @@ process_request(Request) ->
                                 {badrpc, nodedown}
                         end
                 end;
-            #{<<"action">> := <<"StageLeave">>,
+            #{<<"action">> := <<"ClusterStageLeave">>,
               <<"params">> := #{<<"node">> := A}} ->
                 riak_core_claimant:leave_member(binary_to_atom(A));
-            #{<<"action">> := <<"StageRemove">>,
+            #{<<"action">> := <<"ClusterStageRemove">>,
               <<"params">> := #{<<"node">> := A}} ->
                 riak_core_claimant:remove_member(binary_to_atom(A));
-            #{<<"action">> := <<"StageReplace">>,
+            #{<<"action">> := <<"ClusterStageReplace">>,
               <<"params">> := #{<<"node">> := A1,
                                 <<"with">> := A2}} ->
                 riak_core_claimant:replace(binary_to_atom(A1), binary_to_atom(A2));
-            #{<<"action">> := <<"StageForceReplace">>,
+            #{<<"action">> := <<"ClusterStageForceReplace">>,
               <<"params">> := #{<<"node">> := A1,
                                 <<"with">> := A2}} ->
                 riak_core_claimant:force_replace(binary_to_atom(A1), binary_to_atom(A2));
 
-            #{<<"action">> := <<"DownNode">>,
+            #{<<"action">> := <<"ClusterDownNode">>,
               <<"params">> := #{<<"node">> := A}} ->
                 riak_core:down(binary_to_atom(A));
 
-            #{<<"action">> := <<"StopNode">>,
+            #{<<"action">> := <<"ClusterStopNode">>,
               <<"params">> := #{<<"node">> := A}} ->
                 Node = binary_to_atom(A),
                 try rpc:call(Node, riak_core, stop, []) of
@@ -85,24 +85,24 @@ process_request(Request) ->
                         {badrpc, nodedown}
                 end;
 
-            #{<<"action">> := <<"GetNodeAppEnv">>,
+            #{<<"action">> := <<"NodeGetAppEnv">>,
               <<"params">> := #{<<"node">> := A}} ->
                 AllAppEnvs = collect_app_env(binary_to_atom(A)),
                 {ok, iolist_to_binary(io_lib:format("~120p", [AllAppEnvs]))};
-            #{<<"action">> := <<"PutNodeAppEnv">>,
+            #{<<"action">> := <<"NodePutAppEnv">>,
               <<"params">> := #{<<"node">> := A,
                                 <<"config">> := B}} ->
                 apply_app_env(binary_to_atom(A), B);
-            #{<<"action">> := <<"GetNodeAdvancedConfig">>,
+            #{<<"action">> := <<"NodeGetAdvancedConfig">>,
               <<"params">> := #{<<"node">> := A}} ->
                 {ok, AdvConfig} = get_advanced_config(binary_to_atom(A)),
                 {ok, iolist_to_binary(io_lib:format("~120p", [AdvConfig]))};
-            #{<<"action">> := <<"PutNodeAdvancedConfig">>,
+            #{<<"action">> := <<"NodePutAdvancedConfig">>,
               <<"params">> := #{<<"node">> := A,
                                 <<"config">> := B}} ->
                 write_advanced_config(binary_to_atom(A), B);
 
-            #{<<"action">> := <<"RestartNode">>,
+            #{<<"action">> := <<"NodeRestart">>,
               <<"params">> := #{<<"node">> := A}} ->
                 ok = signal_restart(binary_to_atom(A)),
                 spawn(
