@@ -31,8 +31,7 @@
 process_request(Request) ->
     Res =
         case Request of
-            #{<<"action">> := <<"SecurityListUsers">>,
-              <<"params">> := #{}} ->
+            #{<<"action">> := <<"SecurityListUsers">>} ->
                 A = [ begin
                           PasswordOptions = proplists:get_value("password", Options, []),
                           PwdHash = proplists:get_value(hash_pass, PasswordOptions, <<"--">>),
@@ -68,8 +67,7 @@ process_request(Request) ->
               <<"params">> := #{<<"name">> := Name}} ->
                 riak_core_security:del_user(binary_to_list(Name));
 
-            #{<<"action">> := <<"SecurityListGroups">>,
-              <<"params">> := #{}} ->
+            #{<<"action">> := <<"SecurityListGroups">>} ->
                 A = [ begin
                           Grants = [#{scope => jsonify_scope(Scope),
                                       permissions => jsonify_permissions(PP)}
@@ -177,8 +175,7 @@ process_request(Request) ->
                         {error, notfound}
                 end;
 
-            #{<<"action">> := <<"SecurityListPermissions">>,
-              <<"params">> := #{}} ->
+            #{<<"action">> := <<"SecurityListPermissions">>} ->
                 {ok, PP} = application:get_env(riak_core, permissions),
                 {ok, lists:flatten(
                        [[iolist_to_binary([atom_to_list(App), $., atom_to_list(K)]) || K <- KK]
