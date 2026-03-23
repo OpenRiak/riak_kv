@@ -509,7 +509,7 @@ method_to_perm('DELETE') ->
 cors_headers() ->
     [ {"Access-Control-Allow-Origin", "*"}
     , {"Access-Control-Allow-Credentials", "true"}
-    , {"Access-Control-Allow-Methods", "POST,PUT,GET,OPTIONS,DELETE"}
+    , {"Access-Control-Allow-Methods", "POST,OPTIONS"}
     , {"Access-Control-Allow-Headers",
        "host,"
        "origin,"
