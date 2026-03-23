@@ -231,8 +231,8 @@ jsonify_current_node(Node, Claimant, Services) ->
               low_mem => LowMem,
               is_me => (proplists:get_value(node, Node) == node()),
               claimant => (proplists:get_value(node, Node) == Claimant),
-              staged_action => proplists:get_value(action, Node),
-              replacement => proplists:get_value(replacement, Node)};
+              staged_action => proplists:get_value(action, Node, null),
+              replacement => proplists:get_value(replacement, Node, null)};
        el/=se ->
             #{name => proplists:get_value(node, Node),
               status => proplists:get_value(status, Node),
