@@ -27,7 +27,6 @@
          service_available/2,
          allowed_methods/2,
          is_authorized/2,
-         forbidden/2,
          content_types_provided/2,
          content_types_accepted/2,
          process_post/2
@@ -36,71 +35,52 @@
 -include_lib("webmachine/include/webmachine.hrl").
 -include_lib("kernel/include/logger.hrl").
 
--record(context, {security :: undefined | riak_core_security:context()}).
+-record(context, {request :: undefined | #{},
+                  user :: string()}).
 
 init([]) ->
     {ok, #context{}}.
 
--spec service_available(#wm_reqdata{}, #context{}) -> {boolean(), #wm_reqdata{}, #context{}}.
+-spec service_available(#wm_reqdata{}, #context{}) ->
+          {boolean(), #wm_reqdata{}, #context{}}.
 service_available(RD, Ctx) ->
-    {true, wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD), Ctx}.
+    {riak_control_enabled(),
+     wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD), Ctx}.
 
--spec allowed_methods(#wm_reqdata{}, #context{}) -> {[atom()], #wm_reqdata{}, #context{}}.
+riak_control_enabled() ->
+    ?LOG_NOTICE("STUB: riak_control_enabled() returns true", []),
+    true.
+
+-spec allowed_methods(#wm_reqdata{}, #context{}) ->
+          {[atom()], #wm_reqdata{}, #context{}}.
 allowed_methods(RD, Ctx) ->
-    {['OPTIONS', 'POST'], wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD), Ctx}.
+    {['OPTIONS', 'POST'],
+     wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD), Ctx}.
 
--spec options(#wm_reqdata{}, #context{}) -> {[{string(), string()}], #wm_reqdata{}, #context{}}.
+-spec options(#wm_reqdata{}, #context{}) ->
+          {[{string(), string()}], #wm_reqdata{}, #context{}}.
 options(RD, Ctx) ->
     {riak_kv_wm_utils:cors_headers(), RD, Ctx}.
 
 -spec is_authorized(#wm_reqdata{}, #context{}) ->
-          {string()|boolean()|{halt,426}, #wm_reqdata{}, #context{}}.
+          {true, #wm_reqdata{}, #context{}}.
 is_authorized(RD, Ctx) ->
-    case wrq:method(RD) of
-        'OPTIONS' ->
-            {true, wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD), Ctx};
-        _ ->
-            is_authorized2(RD, Ctx)
-    end.
-is_authorized2(RD, Ctx) ->
-    case riak_api_web_security:is_authorized(RD) of
-        false ->
-            {"Basic realm=\"Riak\"", RD, Ctx};
-        {true, SecContext} ->
-            {true, RD, Ctx#context{security = SecContext}};
-        insecure ->
-            {{halt, 426}, wrq:append_to_resp_body(
-                            <<"Security is enabled and Riak does not accept credentials over HTTP. "
-                              "Try HTTPS instead.">>, RD), Ctx}
-    end.
+    Request = #{<<"action">> := Action} =
+        riak_kv_wm_json:decode(wrq:req_body(RD)),
+    User = extract_user(RD),
+    UserPermissions = get_user_permissions(User),
+    ReqPermissions = permissions_for(Action),
+    {intersect(UserPermissions, ReqPermissions),
+     wrq:set_resp_headers(riak_kv_wm_utils:cors_headers(), RD),
+     Ctx#context{request = Request, user = User}}.
 
--spec forbidden(#wm_reqdata{}, #context{}) -> {boolean(), #wm_reqdata{}, #context{}}.
-forbidden(RD, Ctx) ->
-    case wrq:method(RD) of
-        'OPTIONS' ->
-            {false, RD, Ctx};
-        _ ->
-            forbidden2(RD, Ctx)
-    end.
-forbidden2(RD, Ctx = #context{security = Security}) ->
-    case riak_kv_wm_utils:is_forbidden(RD) of
-        true ->
-            {true, RD, Ctx};
-        false when Security == undefined ->
-            RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
-            {true, wrq:append_to_resp_body(<<"Riak security not enabled">>, RD1), Ctx};
-        false ->
-            Res = riak_core_security:check_permission(
-                    {"riak_kv.riak_control"}, Security),
-            case Res of
-                {false, Error, _} ->
-                    RD1 = wrq:set_resp_header("Content-Type", "text/plain", RD),
-                    {true, wrq:append_to_resp_body(
-                             unicode:characters_to_binary(Error, utf8, utf8), RD1), Ctx};
-                {true, _} ->
-                    {false, RD, Ctx}
-            end
-    end.
+extract_user(RD) ->
+    wrq:get_req_header("X-Riak-User", RD).
+get_user_permissions(User) ->
+    ?LOG_NOTICE("STUB: get_user_permissions(~p) returns all permissions", [User]),
+    [cluster_observer, cluster_admin, security].
+intersect(AA, BB) ->
+    lists:any(fun(A) -> lists:member(A, BB) end, AA).
 
 
 -spec content_types_provided(#wm_reqdata{}, #context{}) ->
@@ -116,10 +96,9 @@ content_types_accepted(RD, Ctx) ->
 
 -spec process_post(#wm_reqdata{}, #context{}) ->
           {boolean()|{halt, 400..500}, #wm_reqdata{}, #context{}}.
-process_post(RD, Ctx) ->
+process_post(RD, Ctx = #context{request = Request}) ->
+    #{<<"action">> := Action} = Request,
     try
-        Request = #{<<"action">> := Action} =
-            riak_kv_wm_json:decode(wrq:req_body(RD)),
         case handler_mod(Action) of
             undefined ->
                 {{halt, 400},
@@ -184,3 +163,43 @@ handler_mod(<<"SecurityDeleteGroupGrant">>) -> riak_kv_wm_ctl_security;
 handler_mod(<<"SecurityListPermissions">>) -> riak_kv_wm_ctl_security;
 
 handler_mod(_) -> undefined.
+
+
+permissions_for(<<"ClusterGetStatus">>) -> [cluster_observer];
+permissions_for(<<"ClusterClearPlan">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterCommitPlan">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStageJoin">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStageLeave">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStageRemove">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStageReplace">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStageForceReplace">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterDownNode">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"ClusterStopNode">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"NodeGetAppEnv">>) -> [cluster_observer];
+permissions_for(<<"NodePutAppEnv">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"NodeGetAdvancedConfig">>) -> [cluster_observer];
+permissions_for(<<"NodePutAdvancedConfig">>) -> [cluster_observer, cluster_admin];
+permissions_for(<<"NodeRestart">>) -> [cluster_observer, cluster_admin];
+
+permissions_for(<<"VnodeGetStatus">>) -> [cluster_observer];
+permissions_for(<<"TictacaaeGetStatus">>) -> [cluster_observer];
+
+permissions_for(<<"SystemGetVersionInfo">>) -> [];
+
+permissions_for(<<"SecurityListUsers">>) -> [security];
+permissions_for(<<"SecurityCreateUser">>) -> [security];
+permissions_for(<<"SecurityUpdateUser">>) -> [security];
+permissions_for(<<"SecurityDeleteUser">>) -> [security];
+permissions_for(<<"SecurityListGroups">>) -> [security];
+permissions_for(<<"SecurityCreateGroup">>) -> [security];
+permissions_for(<<"SecurityUpdateGroup">>) -> [security];
+permissions_for(<<"SecurityDeleteGroup">>) -> [security];
+permissions_for(<<"SecurityAddUserGroup">>) -> [security];
+permissions_for(<<"SecurityDeleteUserGroup">>) -> [security];
+permissions_for(<<"SecurityAddUserGrant">>) -> [security];
+permissions_for(<<"SecurityDeleteUserGrant">>) -> [security];
+permissions_for(<<"SecurityAddGroupGrant">>) -> [security];
+permissions_for(<<"SecurityDeleteGroupGrant">>) -> [security];
+permissions_for(<<"SecurityListPermissions">>) -> [security];
+
+permissions_for(_) -> [].
