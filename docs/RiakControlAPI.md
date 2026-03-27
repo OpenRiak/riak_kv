@@ -25,7 +25,7 @@ All requests are POSTs, with body as a JSON of the form:
     "params": PARAMETER_MAP
 }
 ```
-where ACTION is the command name, and PARAMETER_MAP is a map of
+ACTION is the command name, and PARAMETER_MAP is a map of
 parameters, detailed below.
 
 A response will have a JSON object specific to the request under key
@@ -146,7 +146,7 @@ On error,
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to stage for joining the cluster.
+NODENAME is the node to stage for joining the cluster.
 
 #### Response
 On success,
@@ -165,7 +165,7 @@ On error,
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to stage for leaving the cluster.
+NODENAME is the node to stage for leaving the cluster.
 
 #### Response
 On success,
@@ -184,7 +184,7 @@ On error,
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to stage for removing from the cluster.
+NODENAME is the node to stage for removing from the cluster.
 #### Response
 On success,
 ```
@@ -202,7 +202,7 @@ On error,
 ```
 {"node": NODENAME, "with": REPLACEMENT}
 ```
-where NODENAME is the node to be replaced with REPLACEMENT.
+NODENAME is the node to be replaced with REPLACEMENT.
 #### Response
 On success,
 ```
@@ -220,7 +220,7 @@ On error,
 ```
 {"node": NODENAME, "with": REPLACEMENT}
 ```
-where NODENAME is the node to be force-replaced with REPLACEMENT.
+NODENAME is the node to be force-replaced with REPLACEMENT.
 #### Response
 On success,
 ```
@@ -238,7 +238,7 @@ On error,
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to down.
+NODENAME is the node to down.
 #### Response
 On success,
 ```
@@ -256,7 +256,7 @@ On error,
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to stop.
+NODENAME is the node to stop.
 #### Response
 On success,
 ```
@@ -269,19 +269,19 @@ On error,
 
 
 ### NodeGetAppEnv
-**Permissions required**: cluster\_observer.
+**Permissions required**: cluster\_admin.
 #### Parameters
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to collect application environment
+NODENAME is the node to collect application environment
 variables on.
 #### Response
 On success,
 ```
 {"result": APPENV}
 ```
-where APPENV is a proplist of all Erlang applications and their
+APPENV is a proplist of all Erlang applications and their
 environments, as a string produced by passing it through
 `io_lib:format("~120p\n", [AllAppEnvAsProplist])`.
 On error,
@@ -289,33 +289,89 @@ On error,
 {"error": ERROR_STRING}
 ```
 
+
 ### NodePutAppEnv
+**Permissions required**: cluster\_admin.
+#### Parameters
+```
+{"node": NODENAME, "config": CONFIG}
+```
+NODENAME is the node to put application environment
+variables on, and CONFIG is a string that can be parsed with
+`erl_scan:string/1` and `erl_parse:parse_term/1`, of the result of
+printing a proplist of all application environments with
+`io_lib:format/2`,  or a fragment of such proplist. The final `.` is
+not required.
+#### Response
+On success,
+```
+{"result": "ok"}
+```
+On error,
+```
+{"error": ERROR_STRING}
+```
+
+
+### NodeGetAdvancedConfig
 **Permissions required**: cluster\_admin.
 #### Parameters
 ```
 {"node": NODENAME}
 ```
-where NODENAME is the node to collect application environment
-variables on.
+NODENAME is the node to pull advanced.config from.
 #### Response
 On success,
-
-### NodeGetAdvancedConfig
-#### Parameters
-None.
-#### Response
-On success,
+```
+{"result": CONFIG}
+```
+CONFIG is the contents of `$PLATFORM_ETC_DIR/advanced.cofig`, as a string produced by passing it through
+`io_lib:format("~120p\n", [Config])`.
+On error,
+```
+{"error": ERROR_STRING}
+```
 
 ### NodePutAdvancedConfig
+**Permissions required**: cluster\_admin.
 #### Parameters
-None.
-#### Response
-
-### NodeRestart
-#### Parameters
-None.
+```
+{"node": NODENAME, "config": CONFIG}
+```
+NODENAME is the node to put application environment variables on, and
+CONFIG is a string that can be parsed with `erl_scan:string/1` and
+`erl_parse:parse_term/1`, of the the entire contents of
+advanced.config, without a final `.`.
 #### Response
 On success,
+```
+{"result": "ok"}
+```
+On error,
+```
+{"error": ERROR_STRING}
+```
+
+
+### NodeRestart
+**Permissions required**: cluster\_admin.
+#### Parameters
+```
+{"node": NODENAME}
+```
+NODENAME is the node to restart.
+{: .note }
+> This action requires `riak_deadmanshand`. If it is not running, the
+> request will succeed but the node will not be restarted.
+#### Response
+On success,
+```
+{"result": "ok"}
+```
+On error,
+```
+{"error": ERROR_STRING}
+```
 
 
 VnodeGetStatus

@@ -175,9 +175,9 @@ permissions_for(<<"ClusterStageReplace">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"ClusterStageForceReplace">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"ClusterDownNode">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"ClusterStopNode">>) -> [cluster_observer, cluster_admin];
-permissions_for(<<"NodeGetAppEnv">>) -> [cluster_observer];
+permissions_for(<<"NodeGetAppEnv">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"NodePutAppEnv">>) -> [cluster_observer, cluster_admin];
-permissions_for(<<"NodeGetAdvancedConfig">>) -> [cluster_observer];
+permissions_for(<<"NodeGetAdvancedConfig">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"NodePutAdvancedConfig">>) -> [cluster_observer, cluster_admin];
 permissions_for(<<"NodeRestart">>) -> [cluster_observer, cluster_admin];
 
