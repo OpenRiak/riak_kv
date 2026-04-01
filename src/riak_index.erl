@@ -47,7 +47,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include("riak_kv_wm_raw.hrl").
+-include("riak_object.hrl").
 -include("riak_kv_index.hrl").
 -include("riak_kv_capability.hrl").
 -define(TIMEOUT, 30000).

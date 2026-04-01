@@ -48,6 +48,22 @@
          bucket_type_list/1
         ]).
 
+%% Names of JSON fields in bucket properties
+-define(JSON_PROPS,   <<"props">>).
+-define(JSON_BUCKETS, <<"buckets">>).
+-define(JSON_KEYS,    <<"keys">>).
+-define(JSON_LINKFUN, <<"linkfun">>).
+-define(JSON_MOD,     <<"mod">>).
+-define(JSON_FUN,     <<"fun">>).
+-define(JSON_ARG,     <<"arg">>).
+-define(JSON_CHASH,   <<"chash_keyfun">>).
+-define(JSON_JSFUN,    <<"jsfun">>).
+-define(JSON_JSANON,   <<"jsanon">>).
+-define(JSON_JSBUCKET, <<"bucket">>).
+-define(JSON_JSKEY,    <<"key">>).
+-define(JSON_ALLOW_MULT, <<"allow_mult">>).
+-define(JSON_DATATYPE, <<"datatype">>).
+
 -export([command/1]).  %% new callbacks go here, and are to be implemented using clique
 
 %% Reused by Yokozuna for printing AAE status.
@@ -57,6 +73,9 @@
 
 -include_lib("kernel/include/logger.hrl").
 
+-type jsonpropvalue() :: integer()|string()|boolean()|{struct,[jsonmodfun()]}.
+-type jsonmodfun() :: {ModBinary :: term(), binary()}|{FunBinary :: term(), binary()}.
+-type erlpropvalue() :: integer()|string()|boolean().
 
 -spec command([string()]) -> ok.
 command(Cmd) ->
@@ -553,7 +572,7 @@ bucket_type_create([TypeStr, PropsStr]) ->
 bucket_type_create(Type, {struct, Fields}) ->
     case proplists:get_value(<<"props">>, Fields) of
         {struct, Props} ->
-            ErlProps = [riak_kv_wm_utils:erlify_bucket_prop(P) || P <- Props],
+            ErlProps = [erlify_bucket_prop(P) || P <- Props],
             bucket_type_print_create_result(Type, riak_core_bucket_type:create(Type, ErlProps));
         _ ->
             io:format("Cannot create bucket type ~ts: no props field found in json~n", [Type]),
@@ -587,7 +606,7 @@ bucket_type_update([TypeStr, PropsStr]) ->
 bucket_type_update(Type, {struct, Fields}) ->
     case proplists:get_value(<<"props">>, Fields) of
         {struct, Props} ->
-            ErlProps = [riak_kv_wm_utils:erlify_bucket_prop(P) || P <- Props],
+            ErlProps = [erlify_bucket_prop(P) || P <- Props],
             bucket_type_print_update_result(Type, riak_core_bucket_type:update(Type, ErlProps));
         _ ->
             io:format("Cannot create bucket type ~ts: no props field found in json~n", [Type]),
@@ -740,6 +759,46 @@ repair_2i(Args) ->
                       "node are repaired\n", []),
             error
     end.
+
+-spec erlify_bucket_prop({Property::binary(), jsonpropvalue()}) ->
+          {Property::atom(), erlpropvalue()}.
+%% @doc The reverse of jsonify_bucket_prop/1.  Converts JSON representation
+%%      of bucket properties to their Erlang form.
+erlify_bucket_prop({?JSON_DATATYPE, Type}) when is_binary(Type) ->
+    {datatype, binary_to_existing_atom(Type, utf8)};
+erlify_bucket_prop({?JSON_LINKFUN, {struct, Props}}) ->
+    case {proplists:get_value(?JSON_MOD, Props),
+          proplists:get_value(?JSON_FUN, Props)} of
+        {Mod, Fun} when is_binary(Mod), is_binary(Fun) ->
+            {linkfun, {modfun,
+                       list_to_existing_atom(binary_to_list(Mod)),
+                       list_to_existing_atom(binary_to_list(Fun))}};
+        {undefined, undefined} ->
+            case proplists:get_value(?JSON_JSFUN, Props) of
+                Name when is_binary(Name) ->
+                    {linkfun, {jsfun, Name}};
+                undefined ->
+                    case proplists:get_value(?JSON_JSANON, Props) of
+                        {struct, Bkey} ->
+                            Bucket = proplists:get_value(?JSON_JSBUCKET, Bkey),
+                            Key = proplists:get_value(?JSON_JSKEY, Bkey),
+                            %% bomb if malformed
+                            true = is_binary(Bucket) andalso is_binary(Key),
+                            {linkfun, {jsanon, {Bucket, Key}}};
+                        Source when is_binary(Source) ->
+                            {linkfun, {jsanon, Source}}
+                    end
+            end
+    end;
+erlify_bucket_prop({?JSON_CHASH, {struct, Props}}) ->
+    {chash_keyfun, {list_to_existing_atom(
+                      binary_to_list(
+                        proplists:get_value(?JSON_MOD, Props))),
+                    list_to_existing_atom(
+                      binary_to_list(
+                        proplists:get_value(?JSON_FUN, Props)))}};
+erlify_bucket_prop({Prop, Value}) ->
+    {list_to_existing_atom(binary_to_list(Prop)), Value}.
 
 
 %%%===================================================================

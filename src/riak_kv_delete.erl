@@ -27,7 +27,8 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
--include("riak_kv_wm_raw.hrl").
+
+-include("riak_object.hrl").
 
 -export([start_link/6, start_link/7, start_link/8, delete/8, generate_tombstone/2]).
 
