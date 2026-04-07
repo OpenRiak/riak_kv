@@ -34,3 +34,5 @@ jobs:
         run: ./rebar3 do xref, dialyzer
       - name: Run eunit
         run: ./rebar3 as gha do eunit
+      - name: Check format
+        run: ./rebar3 fmt --check

@@ -296,7 +296,11 @@ metadata_fetch(Key, MetaAsMap) when is_map(MetaAsMap) ->
 metadata_fetch(Key, Meta) ->
     dict:fetch(Key, Meta).
 
--spec metadata_find(metadata_key(), riak_object_meta()) -> metadata_value().
+-spec metadata_find(
+    metadata_key(),
+    riak_object_meta()
+) -> 
+    {ok, metadata_value()}|error.
 metadata_find(Key, MetaAsMap) when is_map(MetaAsMap) ->
     maps:find(Key, MetaAsMap);
 metadata_find(Key, Meta) ->
