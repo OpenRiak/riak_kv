@@ -100,7 +100,7 @@
         bucket :: riak_object:bucket(),
         vnode_monitor :: vnode_monitor(),
         vnodes_ongoing :: sets:set(vnode_id()),
-        acc :: result_record()|redacted,
+        acc :: result_record()|pid()|redacted,
         max_results = unlimited :: pos_integer()|unlimited,
         result_table = none :: none|ets:table(),
         result_encoding_fun :: riak_kv_query:encoding_fun()|raw
@@ -126,9 +126,12 @@
 -type key_list() :: list({riak_object:key()})|list(riak_object:key()).
 -type term_list() :: list({{binary(), riak_object:key()}}).
 -type count_map() :: #{binary() => non_neg_integer()}|#{}.
+-type partial_result_map() ::
+    #{binary() => key_list()|term_list()|non_neg_integer()|boolean()}.
 
 -type result_record() :: #count_acc{}|#list_acc{}|#map_acc{}.
--type results() :: key_list()|term_list()|count_map()|non_neg_integer().
+-type results() ::
+    key_list()|term_list()|count_map()|non_neg_integer()|partial_result_map().
 
 -type from() :: {atom(), req_id(), pid()}.
 -type req_id() :: non_neg_integer().
@@ -138,7 +141,7 @@
 -type vnode_id() :: non_neg_integer().
 -type vnode_monitor() :: #{vnode_id() => non_neg_integer()}|#{}.
 
--export_type([results/0]).
+-export_type([results/0, key_list/0, term_list/0, partial_result_map/0]).
 
 
 %%%============================================================================
@@ -199,24 +202,12 @@ init(Query) ->
             InitMonitor = maps:from_keys(CoverageVnodes, 0),
             VnodesOngoing = sets:from_list(CoverageVnodes, ?VERSION),
             Acc =
-                case AccType of
-                    keys ->
-                        #list_acc{};
-                    raw_keys ->
-                        #list_acc{};
-                    terms ->
-                        #list_acc{};
-                    raw_terms ->
-                        #list_acc{};
-                    raw_count ->
-                        #count_acc{};
-                    count ->
-                        #count_acc{};
-                    term_with_rawcount ->
-                        #map_acc{};
-                    term_with_count ->
-                        #map_acc{}
-                    end,
+                case init_acc(AccType) of
+                    start_queue ->
+                        start_queue(AccType, Query, Bucket, ReqID, From);
+                    InitAcc ->
+                        InitAcc
+                end,
             erlang:send_after(TimeoutS * 1000, self(), {timeout, ReqID}),
             {
                 ok, 
@@ -381,6 +372,19 @@ handle_info(
     };
 handle_info(
     {{ReqID, Vnode}, {From, _B, {T, Results}}}, 
+    #state{req_id = ReqID, result_table = none, acc = QFB} = State)
+        when is_pid(QFB), T == raw_keys orelse T == raw_terms ->
+    riak_kv_vnode:ack_keys(From),
+    ok = riak_kv_query_filebuffer:aggregate_results(QFB, Results),
+    {
+        noreply,
+        State#state{
+            vnode_monitor =
+                update_monitor(Vnode, State#state.vnode_monitor)
+        }
+    };
+handle_info(
+    {{ReqID, Vnode}, {From, _B, {T, Results}}}, 
     #state{req_id = ReqID, result_table = none} = State)
         when T == raw_keys; T == raw_terms ->
     riak_kv_vnode:ack_keys(From),
@@ -465,12 +469,21 @@ handle_info(
     {{ReqID, Vnode}, done}, #state{req_id = ReqID} = State) ->
     UpdCoverageVnodes = sets:del_element(Vnode, State#state.vnodes_ongoing),
     UpdTimings = update_timings(State#state.timings),
-    case sets:size(UpdCoverageVnodes) of
-        0 ->
+    case {sets:size(UpdCoverageVnodes), State#state.acc} of
+        {0, QFB} when is_pid(QFB) ->
+            {ok, ResultsBuffered} =
+                riak_kv_query_filebuffer:query_complete(QFB),
+            log_timings(
+                UpdTimings,
+                State#state.bucket,
+                ResultsBuffered
+            ),
+            {stop, normal, State};
+        {0, Acc} ->
             Results =
                 case State#state.result_table of
                     none ->
-                        extract_results(State#state.acc);
+                        extract_results(Acc);
                     RT0 ->
                         ets:tab2list(RT0)
                 end,
@@ -496,7 +509,7 @@ handle_info(
             ResultsSent =
                 case State#state.result_table of
                     none ->
-                        extract_count(State#state.acc);
+                        extract_count(Acc);
                     RT1 ->
                         ets:info(RT1, size)
                 end,
@@ -555,6 +568,45 @@ code_change(_OldVsn, State, _Extra) ->
 %%%============================================================================
 %%% Internal functions
 %%%============================================================================
+
+-spec init_acc(riak_kv_query:accumulation_option()) -> result_record()|start_queue.
+init_acc(KeysType) when KeysType == keys; KeysType == raw_keys ->
+    #list_acc{};
+init_acc(TermType) when TermType == terms; TermType == raw_terms ->
+    #list_acc{};
+init_acc(CountType) when CountType == count; CountType == raw_count ->
+    #count_acc{};
+init_acc(CountByType)
+        when CountByType == term_with_count; CountByType == term_with_rawcount ->
+    #map_acc{};
+init_acc(QueueType)
+        when QueueType == queue_raw_keys; QueueType == queue_raw_terms ->
+    start_queue.
+
+-spec start_queue(
+    queue_raw_keys|queue_raw_terms,
+    riak_kv_query:complex_query_definition(),
+    riak_object:bucket(),
+    req_id(),
+    pid()
+) -> 
+    pid().
+start_queue(QueueType, Query, Bucket, ReqID, From) ->
+    ConvertedType =
+        case QueueType of
+            queue_raw_keys -> raw_keys;
+            queue_raw_terms -> raw_terms
+        end,
+    {ok, RP} = application:get_env(riak_kv, query_dataroot),
+    InactivitySecs =
+        riak_kv_query:get_inactivity_timeout_secs(Query),
+    {ok, RPid, RRef} =
+        riak_kv_query_filebuffer_sup:start_query_filebuffer(
+            node(),
+            [RP, 1000 * InactivitySecs, Bucket, ConvertedType]
+        ),
+    From ! {ReqID, {result_queue, RRef}},
+    RPid.
 
 -spec update_monitor(vnode_id(), vnode_monitor()) -> vnode_monitor().
 update_monitor(Vnode, VnodeMonitor) ->
@@ -645,14 +697,18 @@ log_timings(Timings, Bucket, ResultCount) ->
 log_timings(_Timings, _Bucket, _ResultCount, false) ->
     ok;
 log_timings(Timings, Bucket, ResultCount, true) ->
-    ?LOG_INFO("Index query on bucket=~p " ++
-                "max_vnodeq=~w min_vnodeq=~w sum_vnodeq=~w count_vnodeq=~w " ++
-                "slow_count_vnodeq=~w fast_count_vnodeq=~w result_count=~w",
-                [Bucket,
-                    Timings#timings.max, Timings#timings.min,
-                    Timings#timings.sum, Timings#timings.count,
-                    Timings#timings.slow_count, Timings#timings.fast_count,
-                    ResultCount]).
+    ?LOG_INFO(
+        "Index query on bucket=~p "
+        "max_vnodeq=~w min_vnodeq=~w sum_vnodeq=~w count_vnodeq=~w "
+        "slow_count_vnodeq=~w fast_count_vnodeq=~w result_count=~w",
+        [
+            Bucket,
+            Timings#timings.max, Timings#timings.min,
+            Timings#timings.sum, Timings#timings.count,
+            Timings#timings.slow_count, Timings#timings.fast_count,
+            ResultCount
+        ]
+    ).
 
 %%%============================================================================
 %%% Test

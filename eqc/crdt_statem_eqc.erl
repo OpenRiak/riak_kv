@@ -1,8 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% crdt_statem_eqc: Quickcheck statem test for riak_dt modules
-%%
-%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,17 +18,19 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% crdt_statem_eqc: Quickcheck statem test for riak_dt modules
+%%
 -module(crdt_statem_eqc).
 
--include("include/riak_kv_types.hrl").
-
 -ifdef(EQC).
+
+-compile([export_all, nowarn_export_all]).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--compile([export_all, nowarn_export_all]).
+-include("riak_kv_types.hrl").
 
 -record(state,{vnodes=[], mod_state, vnode_id=0, mod}).
 

@@ -123,8 +123,9 @@ The most common options used are:
 - `pw`; can be set to 1..N where N is the `n_val` for that object.  Stipulates how many primary vnodes must have acknowledged acceptance of a store request before returning a positive response to the client.  Only valid for write requests.
 - `return_body`; should the updated object be returned in response to a store request.  Only valid for write requests.
 - `deleted_vclock`; if an object is not_found, but is in fact a tombstone, should the version vector of the tombstone be returned, to be used if it is required to update the deleted object with a new object.  Only valid for read requests.
+- `timeout`; the maximum time (in milliseconds) to wait for a response from Riak before returning a timeout error.
 
-There are a number of other options, but changing of these defaults is not recommended without an understanding of the underlying Riak code:  `w`, `r`, `dw`, `asis`, `sloppy_quorum` and `timeout`.
+There are four other potential PUT and GET options related to the balance between consistency, performance and availability: `w`, `r`, `sloppy_quorum` and `dw`; but changing of these defaults on a per-request basis is not recommended.
 
 ## Conditional Requests
 {: .d-inline-block }
@@ -301,7 +302,7 @@ The Object API is designed to be the most efficient of all the Riak APIs; it is 
 
 In summary, the performance targets for the Object API are:
 
-- With high-speed infrastructure, a 1ms mean response times should be achievable assuming small object sizes and a limited number of index entries per object.
+- With high-speed infrastructure, a 1ms mean response time should be achievable assuming small object sizes and a limited number of index entries per object.
 - Without contention and under healthy conditions, for objects of o(100KB) in size with o(10) index entries per object (via the HTTP API) into a store with > 100M records, as measured from the application;
   - 3ms per GET (mean).
   - 7ms per PUT (mean).

@@ -27,6 +27,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 stop() ->
+    erlang:yield(), % Wait 1ms for any spawned fetches to arrive
     gen_server:call(?SERVER, stop).
 
 fetch(Client, QueueName) ->

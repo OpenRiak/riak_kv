@@ -1,8 +1,7 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
-%% riak_memory_backend: storage engine using ETS tables
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,7 +18,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc riak_kv_memory_backend is a Riak storage backend that uses ets
 %% tables to store all data in memory.
 %%
@@ -35,7 +34,6 @@
 %% <li>`test' - When true, allow public access to ETS tables so they can be cleared efficiently.</li>
 %% </ul>
 %%
-
 -module(riak_kv_memory_backend).
 -behavior(riak_kv_backend).
 
@@ -62,8 +60,6 @@
 %% "Testing" backend API
 -export([reset/0]).
 
--include("riak_kv_index.hrl").
-
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_memory_backend/0]).
@@ -73,6 +69,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile([export_all, nowarn_export_all]).
 -endif.
+
+-include("riak_kv_index.hrl").
 
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold, indexes, size]).
@@ -854,15 +852,17 @@ get_time_ref_count(TimeRef) ->
 -ifdef(EQC).
 
 prop_memory_backend() ->
-    ?SETUP(fun() ->
-                Path = riak_kv_test_util:get_test_dir("memory-backend"),
-                application:load(sasl),
-                application:set_env(sasl, sasl_error_logger, {file, Path ++ "riak_kv_memory_backend_eqc_sasl.log"}),
-                error_logger:tty(false),
-                error_logger:logfile({open, Path ++ "riak_kv_memory_backend_eqc.log"}),
-                fun() ->  os:cmd("rm -rf " ++ Path ++ "/*") end
-           end,
-           backend_eqc:prop_backend(?MODULE, true)).
+    TestDir = riak_core_test_util:get_test_dir("memory-backend", true),
+    SetupFun =
+        fun() ->
+            riak_core_test_util:logger_redirect(
+                "memory-backend",
+                ?MODULE_STRING ++ "_eqc.log"
+            ),
+            fun() ->  os:cmd("rm -rf " ++ TestDir ++ "/*") end
+        end,
+    ?SETUP(SetupFun, backend_eqc:prop_backend(?MODULE, true)).
+
 -endif. % EQC
 
 -endif. % TEST

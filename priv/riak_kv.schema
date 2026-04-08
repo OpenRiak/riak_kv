@@ -82,6 +82,12 @@
   {datatype, directory}
 ]}.
 
+%% @doc A path under which the query result queues will be stored.
+{mapping, "query_dataroot", "riak_kv.query_dataroot", [
+  {default, "$(platform_data_dir)/kv_query"},
+  {datatype, directory}
+]}.
+
 %% @doc The maximum size of the overflow queue for the eraser.  If the queue
 %% goes beyond this point, new additions will be discarded.
 %% To update this at run-time, the configuration item can be changed via
@@ -687,7 +693,7 @@
 %% Legacy version is v0.
 %% Version v1 has improved performance, but all nodes in cluster will need
 %% to support version 1 before this can be enabled.  v1 is introduced with
-%% Riak 3.4
+%% Riak 3.4.0 - but should not be enabled prior to Riak 3.4.1
 %% From Riak 4.0 option will be removed, and all metadata will use v1.
 {mapping, "metadata.format", "riak_kv.metadata_version", [
   {default, v0},

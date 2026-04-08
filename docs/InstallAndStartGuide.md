@@ -63,15 +63,15 @@ To create a local release, run `make rel`.  This will build a release of Riak in
 
 #### Local cluster
 
-To create a local cluster, which is ideal for experimenting with Riak run `make devclean; make devrel`.  This will clean and rebuild a group of 8 Riak instances in the `dev/dev<n>` folder within the repository clone.
+To create a local development cluster, which is ideal for experimenting with Riak, run `make devclean; make devrel`.  This will clean and rebuild a group of 8 Riak instances in the `dev/dev<n>` folder within the repository clone.
 
 #### Generating a package
 
-To generate a package, the run `make package` which will build a package for the current local platform.  This can then be deployed to another server of that type using the standard package management tool (e.g. `dpkg` on debian systems).
+To generate a package, running `make package` will build a package for the current local platform.  This can then be deployed to another server of that type using the standard package management tool (e.g. `dpkg` on debian systems).
 
 - Running `make package` will require the local machine to have appropriate build tools installed;
 - The `make package` process will output WARNING level errors during the `make package` process;
-- The underlying information used as part of `make package` can be in the [`pkg` section](https://github.com/OpenRiak/riak/tree/openriak-3.4/rel/pkg) of the Riak repo.
+- The underlying information used as part of `make package` can be in the [`pkg` section](https://github.com/OpenRiak/riak/tree/openriak-3.4/rel/pkg) of the Riak repository.
 
 ### Using pre-built packages
 
@@ -82,9 +82,13 @@ Organisations within the OpenRiak community do offer pre-built packages as part 
 
 ## Starting Riak
 
-Riak is deployed using [a modified version of the relx release generator](https://github.com/erlware/relx), and inherits its control commands.
+### Starting Riak by Make Method
 
-For locally deployed instances (i.e. via `make rel` or `make devrel`), can be controlled using the `bin/riak` script:
+Starting Riak changes depending on how Riak was made - a [local release](#local-release) or [local development cluster](#local-cluster), or through [package deployment](#package-deployment).  In all cases Riak is released using [the relx release generator](https://rebar3.org/docs/deployment/releases/), and inherits the control commands from the `relx` extended start script; but the location and method for accessing that script will vary.
+
+#### Local Release or Cluster
+
+For locally deployed instances (i.e. via `make rel` for a single node or `make devrel` for a development cluster), nodes can be controlled using the `bin/riak` script:
 
 ```console
 bin/riak daemon
@@ -92,8 +96,15 @@ bin/riak ping
 bin/riak stop
 ``` 
 
+The location of the `bin` directory will depend on whether `make rel` or `make devrel` has been used to create the Riak release.  By default `make rel` will copy the release into the `rel/riak` folder in the base folder to which Riak was cloned - so the control script can be found at `rel/riak/bin/riak`.  For clusters generated with `make devrel`, the make process will create `n` multiple nodes under `dev/dev{n}/riak` in the base folder.  Those nodes are independent until [they are joined into a cluster](./BuildAndScaleClusterGuide.md#forming-and-expanding-a-riak-cluster).
+
 {: .note }
-> The `bin/riak start` command is now deprecated, use `daemon` or `foreground` as appropriate.
+> Under `riak`, there should be `bin`, `data`, `log` and `etc` folders.  The location of the `data` and `log` folders can be changed using the `platform.data_dir` and `platform.log_dir` in `etc/riak.conf`.
+
+{: .warning }
+> The `bin/riak start` command which was used in Riak 3.0 and earlier releases is now deprecated.
+>
+> From Riak 3.2.0 use `daemon` to start Riak, or `foreground` to start with output redirected to `stdout`.
 
 Help for further console activities can be found via:
 
@@ -103,6 +114,8 @@ bin/riak admin --help
 bin/riak admin cluster --help
 ``` 
 
+#### Package Deployment
+
 For instances deployed through packages, startup and shutdown should be controlled using `systemd` e.g.:
 
 ```console
@@ -111,16 +124,21 @@ service riak ping
 service riak stop
 ```
 
-Help for further console activities can be found by using the standard `riak` script e.g. `sudo riak admin --help`
+Help for further console activities can be found by using the standard `riak` script e.g. `sudo riak admin --help`.
+
+{: .note }
+> The default location of `bin`, `data`, `log` and `etc` folders following package deployment, should follow standard conventions for that operating system.  For example, on Ubuntu the configuration can be found in `/etc/riak/riak.conf`, and other paths are described within that file.
+
+#### Setting ulimit
 
 {: .warning }
 > Running Riak may require a much higher `ulimit` than the default set by the Operating System.
 
-A `ulimit` of 100000 will be acceptable for small-scale non-production systems, but larger limits will be needed for full-scale production systems.  When Riak is installed as a package, then the default limit is increased using the `LimitNOFILE` file option within the systemd service definition.
+A `ulimit` of 100000 will be acceptable for small-scale non-production systems, but larger limits will be needed for full-scale production systems.  When Riak is installed as a package, then the default limit is increased using the `LimitNOFILE` file option within the systemd service definition.  For local deployments, the ulimit should be modified for the user starting the riak application.
 
 ### Configuration of Riak - key riak.conf changes
 
-Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in [the `cuttlfish` section of the `riak/rebar.config` file](https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37).
+Almost all configuration of Riak can be done through the `etc/riak.conf` file.  Each public configuration option should be described in that file, but there are additional `hidden` options supported for expert-advised changes.  The `riak.conf` file is built from individual schema files, and the repositories which contribute towards those schema files are listed in [the `cuttlefish` section of the `riak/rebar.config` file](https://github.com/OpenRiak/riak/blob/fd27c6933391ece65b31760cccb87b671a80f310/rebar.config#L23-L37).
 
 Each individual schema component can be found in the `priv` folder for that repository, e.g [priv/riak_kv.schema for the riak_kv schema](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/priv/riak_kv.schema).
 
@@ -141,8 +159,6 @@ In a `riak.conf` file, the last setting of any configuration item is the actual 
 
 ### Configuration of Riak - leveled backend
 
-There are a number of configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
-
 Compression, decompression and compaction have a potentially significant impact on performance within leveled,  and so configuration items of notable importance are:
 
 - <span>Available from Riak 3.2.3</span>{: .label .label-green }`leveled.compression_method`; should be set to `zstd`, unless objects are sent to Riak compressed, in which case the compression method should be configured as `none`.
@@ -152,24 +168,26 @@ Compression, decompression and compaction have a potentially significant impact 
   - it is recommended to use some form of compression on the ledger, even when all values are pre-compressed.  The ledger blocks are generally highly compressible, even when the values are not. 
 - `leveled.compaction_runs_perday`; refer to the [operations guide](./OperationsAndTroubleshootingGuide.md#leveled-compaction-highlow-hour) for more on leveled compaction.
 
+There are further configurable options within the leveled backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the leveled schema file](https://github.com/OpenRiak/leveled/blob/openriak-3.4/priv/leveled.schema).
+
 The leveled logs are relatively verbose, when compared to log activity across Riak as a whole.  These logs can be tuned using:
 
 - `leveled.log_level`; the info-level logs are useful for monitoring as well as troubleshooting, so careful consideration is required before moving to an alternate log level.
 
 ### Configuration of Riak - bitcask backend
 
-There are a number of configurable options within the bitcask backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
-
-Configuration items of notable importance are:
+For the bitcask backend, the configuration items of notable importance are:
 
 - `bitcask.merge_policy`; refer to the [operations guide](./OperationsAndTroubleshootingGuide.md#bitcask-merge-window) for more on bitcask compaction.
 - `bitcask.io_mode`; should be set to `erlang`, careful consideration is required before moving to `nif`.
+
+There are further configurable options within the bitcask backend, that can be changed within `riak.conf`.  For a comprehensive view, [refer to the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.4/priv/bitcask.schema).
 
 ### Configuration of Riak - Delete Mode
 
 There are three supported [delete modes in Riak](./InitialDesignDecisions.md#deleting-data): `keep`, an interval or `immediate`.
 
-If delete_mode is set to `keep`, every delete will leave a permanent tombstone, that will need to be reaped at a later date (i.e. once tombstones have been securely replicated around connected clusters).  This will minimise the chance that values are resurrected through anti-entropy processes.  An interval will automate the reap process, and can be set to the number of milliseconds after the writing of the tombstone; which should be kept to less than 5 minutes.  Setting the delete mode to `immediate` will bypass the tombstone process, and delete directly without first writing a tombstone.
+If delete_mode is set to `keep`, every delete will be an update to a permanent tombstone that will need to be reaped at a later date (i.e. once tombstones have been securely replicated around connected clusters).  This will minimise the chance that values are resurrected through anti-entropy processes.  An interval will automate the reap process, and can be set to the number of milliseconds after the writing of the tombstone; which should be kept to less than 5 minutes.  Setting the delete mode to `immediate` will bypass the tombstone process, and delete directly without first writing a tombstone.
 
 ### Configuration of Riak - Bucket Properties
 
@@ -181,7 +199,7 @@ For help in enabling properties on typed buckets see:
 rel/riak/bin/riak admin bucket-type --help
 ```
 
-A number of "defaults" for bucket properties are configurable via `riak.conf` e.g.
+The majority of defaults for bucket properties are configurable via `riak.conf`, for example:
 
 - `buckets.default.n_val = 3`
 - `buckets.default.merge_strategy = 2`
@@ -250,7 +268,7 @@ Setting distinct `n_val`s on a per-bucket basis is not recommended, it is prefer
 
 - related configuration settings `target_n_val` and `target_location_n_val` are cluster-wide and not bucket-specific;
 - the scope of the anti-entropy system grows with every unique n_val;
-- nextgenrepl full-sync configuration is specific to each n_val, having multiple n_vals requires different nodes in the cluster to reconcile for different n_vals.
+- nextgenrepl full-sync configuration is specific to each n_val, having multiple nvals requires different nodes in the cluster to reconcile for different nvals.
 
 The value of `1` is sometimes used in read-only clusters, to reduce storage costs in clusters used only for backups or offline-reporting.  The value of `5` may sometimes be used in very large clusters in terms of node count; either as the probability of concurrent failures requires higher redundancy, or because there is a need to improve the efficiency of secondary index queries.
 
@@ -288,7 +306,7 @@ If replicating between clusters and `one` is used as the `sync_on_write` bucket 
 Available from Riak 3.4.0
 {: .label .label-purple }
 
-The `aae_tree_exclude` bucket property has a default value of `false` and allows for some flexibility when reconciling between clusters using nextgenrepl full-sync.  In general with Riak nextgenrepl it is assumed that clusters aim to contain the same data.  It is possible to replicate specific buckets between specific sources, and also possible to reconcile only individual buckets between clusters - but per-bucket reconciliation is not as efficient as full-cluster reconciliation.  The efficiency of full cluster reconciliation is based on the use of cached and mergeable [AAE (active anti-entropy) merkle trees](./RiakTheoryGuide.md#anti-entropy) that represent all the data in the store.
+The `aae_tree_exclude` bucket property has a default value of `false` and allows for flexibility when reconciling between clusters using nextgenrepl full-sync.  In general with Riak nextgenrepl it is assumed that clusters aim to contain the same data.  It is possible to replicate specific buckets between specific sources, and also possible to reconcile only individual buckets between clusters - but per-bucket reconciliation is not as efficient as full-cluster reconciliation.  The efficiency of full cluster reconciliation is based on the use of cached and mergeable [AAE (active anti-entropy) merkle trees](./RiakTheoryGuide.md#anti-entropy) that represent all the data in the store.
 
 The purpose of `aae_tree_exclude` is to not include the bucket in the cached tree, so that the bucket isn't considered in any all-data reconciliation jobs.  For example, this may help when:
 
@@ -303,7 +321,7 @@ The `aae_tree_exclude` bucket property may be cached by processes within a clust
 
 #### Property - small_vclock
 
-The `small_vclock` bucket property has a default value of `50`, and that sets the size of version vectors before pruning will take place. Version vectors will initially tend to be the size of the total of all n_vals in all clusters accepting writes for that value (two clusters with n_val of 3 will lead to version vectors of size 6 if objects are subject to sufficient updates).  However, when nodes are replaced, and when clusters are expanded or contracted, new potential vnodes are generated which may lead to the version vector expanding.
+The `small_vclock` bucket property has a default value of `50`, and that sets the size of version vectors before pruning will take place. Version vectors will initially tend to be the size of the total of all nvals in all clusters accepting writes for that value (two clusters with n_val of 3 will lead to version vectors of size 6 if objects are subject to sufficient updates).  However, when nodes are replaced, and when clusters are expanded or contracted, new potential vnodes are generated which may lead to the version vector expanding.
 
 It is not recommended to change the `small_vclock`, unless specific problems are seen with objects reaching the pruning limit - and in this case increasing the size may be used as a workaround to those issues.  Any change must be reflected in all connected clusters.
 
@@ -330,10 +348,10 @@ As a consequence though, in the case where there are at least three node failure
 
 #### Property - backend
 
-If using the mutli-backend, the bucket property `backend` can be used to map bucket types to different backends.
+If using the multi-backend, the bucket property `backend` can be used to map bucket types to different backends.
 
 #### Property - General read/write parameters
 
-There are a number of configurable read/write parameters - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  In general, read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
+There are read and write parameters that can be used to control the balance between consistency, performance and availability - `r`, `w`, `dw`, `rw`, `basic_quorum`, `sloppy_quorum`.  Read and write parameters default to quorum, and maintaining this default is preferred.  Any attempt to re-configure to improve speed of response to clients, will increase the risk of overloading vnode mailboxes and causing unnecessary failures.
 
-There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the root cause of these deltas between vnode busyness should be addressed.
+There may be rare circumstances where a cluster is repeatedly suffering `vnode mailbox overload` error responses, because individual vnodes are developing backlog queues larger than their peers in the preflist.  Setting `r` and `w` values to the configured `n_val` can be used as a workaround to temporarily alleviate these scenarios, by slowing the application down to the pace of the slowest vnode.  However, in the long term, the preferred solution to overload scenarios is to address the root cause of these deltas between vnode busyness.

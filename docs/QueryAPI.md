@@ -16,6 +16,8 @@ Through this combination of querying ranges and filtering on projected attribute
 
 The result sets for queries are not limited to returning lists of object keys, there is also support in the Query API for different accumulation options.  As well as returning object keys, accumulation options can be used to efficiently count results, and group both results and counts by specific projected attributes.
 
+Queries are by default synchronous with the full result-set sent directly back to the requesting process on completion of the query.  Queries may be asynchronous, with results queued on-disk (to control memory use) to be consumed in batches by one or more external processes, with results available for consumption prior to the completion of the query.
+
 As well as single queries the API can also handle combination queries.  In combination queries, multiple queries are run as part of the same request and the results of each query are combined using a set operation before results are accumulated to construct the response.  Those set operations are also distributed across the cluster for efficiency; the application of a set operation happens at the scale of the vnode, not the scale of the cluster.  All combination queries are run on a single snapshot per vnode; so the results should always be consistent from the perspective of each potential key in the result set.
 
 For further detail on the Query API:
@@ -42,7 +44,7 @@ Indexes are added using [the Object API](./ObjectAPI.md#index-entries).
 
 There is no direct support for schema management within Riak, as Riak is designed to act independently of the format and the content of the application-provided object body.  It is expected that for an application to make use of secondary indexes within Riak, the object-handling logic within the application will require an extension; where that extension will examine the object body, and calculate the required index entries before completing a PUT.  As the schema is managed externally to Riak, schema changes are also required to be managed within the application.  Consideration of how to make such schema changes is the responsibility of the application designer e.g. versioning, rolling updates, querying-planning during transition etc.
 
-The design of secondary indexes in Riak make them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by a number of factors](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries to be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
+The design of secondary indexes in Riak make them best suited to environments where the query demands are relatively predictable in advance, and also the approximate cardinality of the data elements.  The [expected performance of queries is governed by the factors highlighted in the performance section](#performance-and-efficiency), and consideration of those factors is required when defining the indexes and planning the queries to be used.  Riak contains no query planning logic; the optimal path to resolve a query needs to be determined by the application.
 
 Index entries can be made up of simple sort keys:
 
@@ -63,7 +65,7 @@ The Query API is intended to provide flexible and performant functionality in th
 {: .highlight }
 > The aim of Riak development is to provide a database that performs efficient, scalable and predictable CRUD operations, and is just-queryable-enough to avoid the need of third party database integration in most use cases.
 
-Riak does support via [an external replication API](./NextGenReplGuide.md), the ability to manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.  The automation of such integration is outside of the current functional scope of Riak.
+Riak does support via [an external replication API](./ReplicationGuide.md#replication-api), the ability to manage replication and reconciliation to third party query engines (e.g. OpenSearch), should more complex query support be required.  The automation of such integration is outside of the current functional scope of Riak.
 
 ### Querying - Functional Summary
 
@@ -150,7 +152,7 @@ To find all the people with a given date of birth, a simple range query could be
     }
 ```
 
-This is the equivalent to finding all those born on "19650501" in "YYYMMDD" format.  As all index entries have additional information appended, the `end_term` "19650502" is lexicographically before any of the index entries for those born on "19650502" e.g. `"19650502" < "19650502|...."`.  As no `accumulation_option` has been set, this will return a list of keys for those people born on that day.
+This is the equivalent to finding all those born on "19650501" in "YYYYMMDD" format.  As all index entries have additional information appended, the `end_term` "19650502" is lexicographically before any of the index entries for those born on "19650502" e.g. `"19650502" < "19650502|...."`.  As no `accumulation_option` has been set, this will return a list of keys for those people born on that day.
 
 ### Example (1) - Finding an Exact Match
 
@@ -266,7 +268,7 @@ Alternative approaches would be possible:
 
 ### Example (1) - Inexact Match of Given Name
 
-The evaluation expression language supports a number of different comparisons on exact terms, but when a term has been broken into a sub-list (as with the Given Names in the above example), it is only possible to look for an exact match within the sub-list.
+The evaluation expression language supports flexible comparisons on exact terms; but when a term has been broken into a sub-list (as with the Given Names in the above example), it is only possible to look for an exact match within the sub-list.
 
 There are three possible alternatives should a more complex match be required on such a sub-list:
 
@@ -469,6 +471,31 @@ In using report-style queries, counting results or grouping counts by a projecte
 
 ## Query - Definition
 
+### API Endpoint - THe URI
+
+All query requests must be sent to the query endpoint for the Bucket (and Bucket Type where typed-buckets are used).
+
+```console
+POST /types/BucketType/buckets/Bucket/query
+```
+
+For legacy (untyped) buckets:
+
+```console
+POST /buckets/Bucket/query
+```
+
+For query requests the `POST` method should be used.
+
+If the accumulation options `queue_raw_keys` or `queue_raw_terms` are used then an opaque reference will be returned as the `result_queue` in the JSON response to the query request.  Results may be fetched from the same URI, using the `GET` method with the reference to the `result_queue` passed as a query parameter.  There is also an optional query parameter `max_results` which puts an upper limit on the number of results sent back in the batch:  For example:
+
+```console
+GET types/BucketType/buckets/Bucket/query?result_queue=g2gDdw5kZXYxQDEyNy4wLjAuMVh3DmRldjFAMTI3LjAuMC4xAAAMdwAAAABpPGQWbQAAAARkjfJI?max_results=1000
+```
+
+{: .note }
+> The `result_queue` reference can be decoded by any node in the cluster.  The result requests for queued batches can be distributed across the cluster.
+
 ### Query JSON - Definition
 
 The query should be posted as the HTTP body, to the query API for the relevant bucket, where there are the following JSON keys at the root of the document
@@ -482,8 +509,10 @@ The query should be posted as the HTTP body, to the query API for the relevant b
 - There are multiple options for accumulating the results from a single query:
   - `keys`; return a list of keys that matched in the query, where the keys have been deduplicated and sorted.
   - `raw_keys`; return a list of keys that matched in the query, but in no specific order and where multiple matches for the same key will result in that key appearing multiple times within the results.
+  - `queue_raw_keys` <span>Available from Riak 3.4.1</span>{: .label .label-purple }; return a reference to a queue, where the results will be streamed to be consumed in batches of keys from any node by one of more external processes.  The results will be as in `raw_keys`, the only difference is the method of returning the results.
   - `terms`; return a list of term/key pairs, ordered by term.
   - `raw_terms`; return a list of term/key pairs, unsorted.
+  - `queue_raw_keys` <span>Available from Riak 3.4.1</span>{: .label .label-purple }; return a reference to a queue, where the results will be streamed to be consumed in batches of term/key pairs from any node by one of more external processes.  The results will be as in `raw_terms`, the only difference is the method of returning the results.
   - `count`; return a count of unique keys that matched the query.
   - `raw_count`; return a count of matches against the query (i.e. unlike `count` if an object key appears against multiple terms matched within the query, with `raw_count` that key will be counted multiple times).
   - `term_with_count`; return a count of unique key matches by term (where term is specified by the `accumulation_term`) in no specific order.
@@ -523,6 +552,14 @@ An array of key/value pairs that are referred to in filter or evaluation express
 The timeout in seconds to wait for the query to complete, before a timeout error is returned.
 
 - This is the timeout used by the server, other HTTP timeouts may exist on the path to Riak, in particular in the Riak client.
+
+#### `inactivity_timeout` (optional)
+
+Relevant only  in `queue_raw_keys` and `queue_raw_terms` queries, where the results are queued on disk to be available for fetch requests.  If no requests are made to fetch from that specific queue within the inactivity timeout (in seconds), the process managing the queue will expire and the disk footprint of the queue will be removed.
+
+There is no API call to close or delete the queue when all the results have been consumed.  Garbage collection is dependent on the inactivity timeout.
+
+The location of the queues on disk is set using the `query_dataroot` option in riak.conf.  Performance of queries with queued result sets may be impacted by the read and write latency to that disk partition, but all reading and writing is batched for efficiency and so the overhead of query queues on disk utilisation should be limited.
 
 #### `query_list` (required)
 
@@ -646,6 +683,33 @@ function ::=
     | contains (key, substr)
 ```
 
+### Query Responses
+
+The responses to all query requests, including fetches from query result queues, are JSON objects.  For synchronous queries (i.e. requests with an `accumulation_option` other than `queue_raw_keys` or `queue_raw_terms`), the results will be sent under a single JSON key within the JSON object - with that key set to be the `accumulation_option` for the request e.g.
+
+```json
+{ 
+    "keys" : [ "990011234", "990011235" ]
+}
+```
+
+If the `accumulation_option` is `terms` or `raw_keys`, and a `max_results` constraint has been added to the query, then a `continuation` header (`X-Riak-Continuation`) may be added to the response to be used as the `continuation` in a subsequent request (to see the next batch of results).
+
+For queries using an `accumulation_option` of `queue_raw_keys` or `queue_raw_terms` the response is a JSON object containing only a `result_queue` key with its associated value (to be used in subsequent fetch requests).  Fetch requests from the result queue, will return a JSON object with four keys:
+
+- `raw_keys`/`raw_terms`; a batch of results, no bigger than `max_results`.
+- `returned_count`; an integer count of results that have been returned via this API for this query (including the results in this response);
+- `queued_count`; an integer count of results that have been queued so far in response to the query (including any results already returned);
+- `query_complete`; a boolean value which will be `true` when the query has been complete and there will be no more results to be queued.
+
+When the `queued_count` is equal to the `returned_count` and also `query_complete` is true - then there are no more results to be fetched, and all subsequent requests will contain an empty list of `raw_keys` or `raw_terms`, and unchanged results for `returned_count`, `queued_count` and `query_complete`.
+
+e.g.
+
+```json
+[{<<"query_complete">>,true},{<<"raw_keys">>,[ "990011234", "990011235" ]},{<<"received_count">>,1000},{<<"responses_count">>,0}]
+```
+
 ## Performance and Efficiency
 
 There are multiple stages to producing a query result:
@@ -689,7 +753,7 @@ The scanning stage of the query is in parallel with the filtering, buffering and
 {: .highlight }
 > In general a query should be able to scan, merge and select index entries at between **500K and 1M entries per CPU-core per second**.
 
-Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfillment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
+Assuming there are multiple vnodes per CPU core in the cluster, all CPU cores may be potentially used in the fulfilment of the query.  Fair use of CPU cores is controlled by the Erlang scheduler not through the use of queues within the database.  In most mid-size clusters, 10M to 100M index entries can be scanned per second - however frequent use of queries which scan more than 1M index entries per second may have an impact on overall cluster performance.
 
 Index entries are stored in blocks of around 30 entries, so there is minimal difference between scanning 1 entry per vnode, and scanning 100.  Each block must be decompressed and deserialised every time the block is scanned, there is no caching of deserialised index entries.  The only caching between queries is of a small amount of block metadata and natural promotion of blocks to the file system page cache.
 
@@ -783,7 +847,10 @@ Riak supports the `allow_mult = true` state, whereby the history of changes to a
 
 ### Unicode support
 
-Testing is currently only undertaken on ascii-based index terms, although filter and evaluation expressions have been designed to support unicode.  There are a number of potential issues with unicode support, not least with support for unicode in HTTP headers, so end-to-end tested Unicode support is currently deferred to a future release.
+Testing is only undertaken on ascii-based index terms in Riak 3.4, although filter and evaluation expressions have been designed to support unicode.
+
+{: .note }
+There are potential issues with unicode support, not least with support for unicode in HTTP headers, so significant additional work may be required to provide a comprehensive and well-tested solution with Unicode support in a future Riak release.
 
 ### Consistency
 
@@ -793,4 +860,4 @@ In failure and recovery scenarios, false negatives are possible (i.e. results ma
 
 ### Further Improvements
 
-Improving the functionality of the Query API is an active goal of the OpenRiak devleopment team.  Notifications on planned improvements will be added to the [OpenRiak dsicsssions board](https://github.com/orgs/OpenRiak/discussions).
+Improving the functionality of the Query API is an active goal of the OpenRiak community.  Notifications on planned improvements will be added to the [OpenRiak discussions board](https://github.com/orgs/OpenRiak/discussions).

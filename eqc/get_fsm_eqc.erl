@@ -1,3 +1,24 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+%%
 %% Description
 %%
 %% The test is based on a fixed set of generated objects. These objects are
@@ -12,15 +33,15 @@
 %% TODO:
 %% The test does not use dotted values at present, or HEAD responses
 %%
-
 -module(get_fsm_eqc).
 
 -ifdef(EQC).
+-compile([export_all, nowarn_export_all]).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("include/riak_kv_vnode.hrl").
 
--compile([export_all, nowarn_export_all]).
 -define(DEFAULT_BUCKET_PROPS,
         [{allow_mult, false},
          {chash_keyfun, {riak_core_util, chash_std_keyfun}},
@@ -57,12 +78,8 @@
 
 setup() ->
     %% Shut logging up - too noisy.
-    Path = riak_kv_test_util:get_test_dir("get_fsm_eqc"),
-    application:load(sasl),
-    application:set_env(sasl, sasl_error_logger, {file, Path ++ "/get_fsm_eqc_sasl.log"}),
+    riak_core_test_util:logger_redirect(?MODULE),
     application:set_env(riak_kv, fsm_trace_enabled, true),
-    error_logger:tty(false),
-    error_logger:logfile({open, Path ++ "/get_fsm_eqc.log"}),
 
     %% Start up mock servers and dependencies
     fsm_eqc_util:start_mock_servers(),
@@ -83,7 +100,7 @@ cleanup() ->
     fsm_eqc_util:cleanup_mock_servers(),
     meck:unload(sidejob_resource_stats),
     meck:unload(riak_core_bucket),
-    ok.
+    riak_core_test_util:logger_restore().
 
 %% Call unused callback functions to clear them in the coverage
 %% checker so the real code stands out.
@@ -470,8 +487,8 @@ check_delete(Objects, RepairH, H, PerfectPreflist) ->
             fun(RL, Acc) -> fsm_eqc_util:merge(RL, Acc) end,
             undefined,
             RetLins),
-    
-    Expected = 
+
+    Expected =
         case PerfectPreflist andalso
             length(RetLins) == length(H) andalso
             length(URetLins) >= 1 andalso

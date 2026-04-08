@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_client: object used for access into the riak system
@@ -19,9 +20,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
 %% @doc object used for access into the riak system
-
+%%
 -module(riak_client).
 
 -include_lib("kernel/include/logger.hrl").
@@ -39,7 +40,7 @@
 -export([stream_list_buckets/1,stream_list_buckets/2,
          stream_list_buckets/3,stream_list_buckets/4, stream_list_buckets/5]).
 -export([get_index/4,get_index/3]).
--export([query/2]).
+-export([query/2, query_result_request/2]).
 -export([aae_fold/1, aae_fold/2]).
 -export([ttaaefs_fullsync/1, ttaaefs_fullsync/2, ttaaefs_fullsync/3]).
 -export([hotbackup/4]).
@@ -791,7 +792,8 @@ aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
     end.
 
 
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem) ->
     ttaaefs_fullsync(WorkItem, 900).
 
@@ -803,7 +805,8 @@ ttaaefs_fullsync(WorkItem) ->
 %% - day_check (sync over past day, only allowed if bucket-based sync)
 %% - range_check (sync over a range if one has been discovered by a previour sync)
 %% - auto_check (sync over range if one is present, otherwise use all if within window, otherwise day)
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer()) -> ok.
+-spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(
@@ -813,8 +816,9 @@ ttaaefs_fullsync(WorkItem, SecsTimeout) ->
 %% @doc
 %% Intended for tests only
 %% Allows for the view of now to be altered during a test.
--spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer(),
-                                                    erlang:timestamp()) -> ok.
+-spec ttaaefs_fullsync(
+    riak_kv_ttaaefs_manager:work_item(), integer(), erlang:timestamp())
+        -> ok | {error, term()}.
 ttaaefs_fullsync(WorkItem, SecsTimeout, Now) ->
     ReqId = mk_reqid(),
     riak_kv_ttaaefs_manager:process_workitem(WorkItem, ReqId, Now),
@@ -889,7 +893,9 @@ hotbackup(BackupPath, DefaultNVal, PlanNVal, {?MODULE, [Node, _ClientId]}) ->
 
 -spec query(
     riak_kv_query:complex_query_definition(), riak_client()) ->
-        {query_result(), none|{{binary(), riak_object:key()}}} |
+        {query_result(), none|
+        {{binary(), riak_object:key()}}} |
+        {result_queue, binary()} |
         {error, timeout} |
         {error, term()}.
 query(Query, {?MODULE, [Node, _ClientId]}) ->
@@ -899,6 +905,26 @@ query(Query, {?MODULE, [Node, _ClientId]}) ->
     ?LOG_DEBUG("Query started with worker ~w request ~0p", [Pid, ReqId]),
     wait_for_reqid(ReqId, TimeoutSecs * 1000).
 
+-type result_request_map()
+    ::
+        #{
+            bucket => riak_object:bucket(),
+            encoded_queue_reference => binary(),
+            max_results => non_neg_integer()
+        }.
+
+-spec query_result_request(
+    result_request_map(),
+    riak_client()
+) -> 
+    {ok, riak_kv_query_server:partial_result_map()} |
+    {error, term()}.
+query_result_request(ReqMap, _Client) ->
+    riak_kv_query_filebuffer:return_results(
+        maps:get(encoded_queue_reference, ReqMap),
+        maps:get(max_results, ReqMap),
+        maps:get(bucket, ReqMap)
+    ).
 
 %% @spec get_index(Bucket :: binary(),
 %%                 Query :: riak_index:query_def(),

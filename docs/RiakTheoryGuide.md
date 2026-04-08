@@ -6,7 +6,7 @@ layout : default
 
 # Riak KV - Theory Guide
 
-This guide is a work in progress, and provides insight into the underlying theories and processes which underpin the function of a Riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
+This guide provides insight into the underlying theories and processes which underpin the function of a Riak cluster.  Understanding this theory will be helpful to understand the design, setup and operation of a Riak cluster.
 
 - [The ring and how data is distributed in Riak](#the-ring---the-distribution-of-vnodes)
 - [Eventual consistency](#eventual-consistency)
@@ -51,7 +51,7 @@ It should be noted that Riak offers the same guarantees of zero-intervention eve
 
 Care may be taken by the Riak user to avoid conflict; but inevitably there will be some object values that eventually end-up in conflict.  When in a conflicted state, an object may have two values where the database cannot determine which is the most current, often as updates were made concurrently by two different application instances.
 
-Not being eventually consistent in a database, is likely to increase the operational processes required during failure scenarios: e.g. static failovers between primary and standby clusters, intervention to recover from replication failures between regions.  With eventual consistency: the gain in operational simplicity and reduced operational intervention, is a trade-off against the developer overhead of considering conflict.
+Not being eventually consistent in a database, is likely to increase the operational processes required during failure scenarios: e.g. static fail-overs between primary and standby clusters, intervention to recover from replication failures between regions.  With eventual consistency: the gain in operational simplicity and reduced operational intervention, is a trade-off against the developer overhead of considering conflict.
 
 {: .note }
 > Handling an object where the value is in doubt, adds cognitive load to the application developer - it is the key trade-off between the operator and the developer to accept when adopting Riak.  At small-scale, and when downtime is acceptable; it is almost always preferable to favour the application developer in the trade-off.  Riak is an answer to exceptional use cases with demanding non-functional requirements, not a general purpose data-storage solution.
@@ -109,10 +109,11 @@ Detailed information on the implementation of dotted version vectors in Riak can
 
 ## Background processes
 
-Riak has a number of background processes:
+Riak has three main categories of background processes:
 
 - The primary background process in Riak, when configured, is [Tictacaae active anti-entropy](#anti-entropy), the continuous reconciliation process used to ensure all vnodes are eventually consistent.
-- There are a [number of queue based](#disk-backed-queues) background processes, through which non-urgent activity can be deferred, to manage the impact of this activity on the performance of externally prompted requests.
+  - This exists for both intra-cluster reconciliation and inter-cluster reconciliation if required.
+- [Queue based](#disk-backed-queues) background processes, through which non-urgent activity can be deferred, to manage the impact of this activity on the performance of externally prompted requests.
 - Maintenance of the distributed knowledge of the cluster state is managed by [background processes within the riak_core application](#riak-core-cluster-management).
 
 ### Anti-Entropy
@@ -158,7 +159,7 @@ The `branch_compare` loop is an identical process to the `root_compare` loop, an
 
 If a set of leaves is discovered to be out-of-sync following `branch_compare`, the `clock_compare` process is initiated.  A `clock_compare` is a comparison between the objects in a subset of leaves to discover which objects need repair.  To compare the objects between vnodes, only the Version Vectors need to be compared.  To find the Keys and Version Vectors for a set of leaves, a fold over the whole keystore (either native or parallel) is required - however that fold is passed the segment IDs (an integer identifier for the leaves), and the store has in-built hints to filter out blocks of keys that do not contain segment IDs of interest.  This means the cost of finding Keys and Version Vectors is significant, but mitigated by the segment ID acceleration.
 
-To limit the volume of data to be compared, and improve the performance of searches for Keys and Version Vectors, the number of segment results to be compared as a result of any exchange is limited.  All anti-entropy processes will also try and gather information from previous delta discoveries to intelligently reduce the scope of future discoveries.  For example, by looking at the modified date range in which differences fall, or if they are limited to specific buckets.  With information from previous deltas, the cost of finding more deltas can be reduced.
+To limit the volume of data to be compared, and improve the performance of searches for Keys and Version Vectors, the number of segment results to be compared as a result of any exchange is limited.  All anti-entropy processes will also try to gather information from previous delta discoveries to intelligently reduce the scope of future discoveries.  For example, by looking at the modified date range in which differences fall, or if they are limited to specific buckets.  With information from previous deltas, the cost of finding more deltas can be reduced.
 
 There exists the possibility that some event might cause the tree cache to become out of sync with the vnode backend store.  There are two processes to control this should it occur:
 
@@ -173,7 +174,7 @@ The cost of resolving entropy inter-cluster is higher than with intra-cluster en
 
 ### Disk-backed Queues
 
-There are a number of internal Riak services that are built on a common queue behaviour: real-time replication, the reaper, the eraser and the reader.
+There are four internal Riak services that are built on a common queue behaviour: real-time replication, the reaper, the eraser and the reader.
 
 These queues have a small in-memory portion, but once the queues grow beyond that minimal size they are written to disk using the internal Erlang `disk_log` facility.  The use of disk for the queue is solely to control the amount of memory consumed by the queue, as Riak has no protection against the overuse of memory within a node.  When a node is restarted, the disk-based queues will be erased.  This prevents a situation where a restart due to corruption of a queue, leads to a continuous cycle of reboots as the same corruption is reprocessed.
 
@@ -181,7 +182,7 @@ Each queue has multiple priorities, and an item added to the queue is assigned a
 
 ### Riak Core cluster management
 
-The Riak KV store is built on top of a generic platform for building distributed systems called `riak_core`.  The `riak_core` system, provides a number of underlying components with which Riak is rebuilt:
+The Riak KV store is built on top of a generic platform for building distributed systems called `riak_core`.  The `riak_core` system provides the underlying components for controlling and managing a clustered application:
 
 - `riak_core_ring`
   - An implementation of [the ring](#the-ring---the-distribution-of-vnodes), the distribution function in Riak.

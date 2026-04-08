@@ -6,12 +6,16 @@ layout : default
 
 # Riak KV - Replication and Reconciliation
 
-There are a number of replication versions in Riak:
+In the evolution of Riak, there have been two generations of solutions developed to support replication and reconciliation between clusters:
 
-- Three different versions of the, now legacy, `riak_repl` replication which was the recommended replication approach prior to Riak 3.0.10;
-- The "NextGen" replication solution which is the recommended approach in Riak 3.4.
+- The now legacy, [`riak_repl` replication](#legacy-replication---riak_repl) which was the recommended replication approach prior to Riak 3.0.10.
+  - The `riak_repl` application has evolved through multiple versions of a real-time replication, that supported a push-based model to reliably deliver changes from a source cluster to a sink cluster;
+  - The replication approach is backed-up by a reconciliation approach focused on time-consuming key-by-key comparisons, running in the background between clusters on a vnode-by-vnode basis.
+- The NextGen replication solution which is the recommended approach in Riak 3.4.
+  - The real-time replication approach is by comparison a pull-based model, to allow a sink cluster to fetch results from the source;
+  - The replication approach is backed-up with reconciliation through rapid low-cost comparisons between the state of clusters using anti-entropy information, where the comparisons run reliably between clusters with different configurations (e.g. ring-size, node count or n_val).
 
-This guide covers the "NextGen" replication solution, and further information on alternatives are linked from the [legacy replication section](#legacy-replication---riak_repl).
+This guide covers the NextGen replication solution, and further information on alternatives are linked from the [legacy replication section](#legacy-replication---riak_repl).
 
 Replication is considered to have three stages:
 
@@ -96,7 +100,7 @@ The number of sink workers can be configured on the node:
   - The number of workers will constrain the pace at which events can be pulled from a source cluster, and also the PUSH workload that a sink cluster can generate for itself.
 - There is an overhead of a sink making requests on the source, so each sink worker will backoff if a request results in no replication events being discovered.
 - The sink worker pool does not auto-expand.
-  - Sufficient sink workers need to be configured to keep-up with real-time replication, though [this number can be adjusted at runtime](#changing-the-number-of-sink-workers).
+  - Sufficient sink workers need to be configured to keep-up with real-time replication, though [this number can be adjusted at runtime](#making-runtime-changes-to-the-sink).
   - There is some protection from over-provisioning but not from under-provisioning.
 
 In handling replication events, sink workers must apply the replicated change into the local cluster, and this uses a specific `PUSH` command.  The sink workers are constrained in that:
@@ -172,7 +176,7 @@ For replication, the real-time replication source must be enabled on every node 
 
 ### Enable a Real-Time Sink
 
-There are five configuration items required to set up a sink for real-time replication.  They are all set via `riak.conf`:
+There are five configuration items required to set up a sink for real-time replication: enablement, queue definition, peers, workers and peer discovery.  All elements are set via `riak.conf`:
 
 - `replrtq_enablesink = enabled`.
 - `replrtq_sinkqueue = <sink_cluster_name>`;
@@ -302,7 +306,7 @@ Reconciliation requires the scheduling of checks.  Each check will perform a ful
 - `branch_compare`;
 - `clock_compare`.
 
-The root to be compared is the root of [the merkle tree](./RiakTheoryGuide.md#handling-requests) representing the state of the whole tree in 1,024 4-byte hashes.  The roots are merged across all partitions, to provide a representation of cluster state in a single 4KB integer.
+The root to be compared is the root of [the merkle tree](./RiakTheoryGuide.md#anti-entropy) representing the state of the whole tree in 1,024 4-byte hashes.  The roots are merged across all partitions, to provide a representation of cluster state in a single 4KB integer.
 
 If these roots match between the clusters, the clusters are considered to be reconciled - `in_sync = true` is the result of the exchange, and `{root_compare, 0}` is the final state of the exchange.  If not, the `root_compare` is repeated, and on the repeated check only deltas in the same 4-byte hash as the previous compare need to be considered a potential mismatch.  The `root_compare` will be repeated until the intersection of deltas is empty (all 1,024 hashes, have a some stage in the loop, matched between roots), or there exists a stable set of branches in the root, which differ on every comparison.  An empty set of deltas will be considered an `in_sync = true` result, otherwise the next phase is required.
 
@@ -312,7 +316,7 @@ If all deltas are shown to be transient; then `in_sync = true` is the result of 
 
 In the final `clock_compare` stage, the keys and version vectors (clocks) are compared between the clusters.  The comparison behaviour will differ depending on the type of check that was requested.
 
-All the keys that hash to those segment IDs need to be compared to be certain to find the delta, and this requires a full-scan of the keystore - and such a scan is a `ttaaefs_allcheck`.  This scan is accelerated by skipping over blocks of keys on disk, that do not have any keys with a matching segment ID (using a hash-based filter cached with the block inside the leveled keystore).  Even with acceleration, the scan has a non-trivial cost in large stores.
+All the keys that hash to those segment IDs need to be compared to be certain to find the delta, and this requires a full-scan of the keystore - and such a scan is a `ttaaefs_allcheck`.  This scan is accelerated by skipping over blocks of keys on disk that do not have any keys with a matching segment ID (using a hash-based filter cached with the block inside the leveled keystore).  Even with acceleration, the scan has a non-trivial cost in large stores.
 
 If it can be determined from the results of previous checks, that all deltas are likely to be within a given time range (by object last_modified_date), or in a specific bucket; then this information can be used to narrow the scope of the scan in `clock_compare`.  A comparison reduced in scope this way is a `ttaaefs_rangecheck`, and can be substantially quicker than a `ttaaefs_allcheck`.
 
@@ -500,7 +504,7 @@ The mismatched_segments is an estimate of the scope of damage to the tree.  Even
 
 ### Statistics available via Riak stats
 
-The [Riak status statisitcs](./OperationsAndTroubleshootingGuide.md#riak-stats) set includes stats relevant to monitoring replication:
+The [Riak status statistics](./OperationsAndTroubleshootingGuide.md#riak-stats) set includes stats relevant to monitoring replication:
 
 The following counters track activity on real-time replication sources:
 
@@ -674,7 +678,7 @@ Some notes on `riak_repl` and the comparison to NextGen replication in Riak:
 - `riak_repl` has an anti-entropy based method of full-sync reconciliation, using the legacy active anti-entropy service.
   - The AAE-based full-sync in `riak_repl` is faster at resolving deltas, but will fail to complete during tree rebuilds;
   - Users of full-sync have needed to use manually prompted rebuild windows to address this problem (i.e. a period where full-sync is suspended, and rebuilds are completed in parallel).
-  - As clusters scale, rebuild windows may become unreliable and unmanageable.
+  - As clusters scale, the AAE rebuild windows will be an ongoing management overhead, and clusters may scale to the point that rebuilds cannot complete in the available window.
 - `riak_repl` has a keylisting form of full-sync which will do a full key and clock comparison on a vnode-by-vnode basis.
   - A keylisting full-sync can be resource intensive and will take a significant amount of time to complete on clusters of non-trivial scale.
 

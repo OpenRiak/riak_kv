@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_get_fsm: coordination of Riak GET requests
@@ -19,19 +20,14 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% riak_get_fsm: coordination of Riak GET requests
+%%
 -module(riak_kv_get_fsm).
 -behaviour(gen_fsm).
--include_lib("riak_kv_vnode.hrl").
--include_lib("kernel/include/logger.hrl").
--include("riak_kv_capability.hrl").
 
 -compile([nowarn_deprecated_callback]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--export([test_link/7, test_link/5]).
--endif.
 -export([start/6, start_link/6, start/4, start_link/4]).
 -export([init/1, handle_event/3, handle_sync_event/4,
          handle_info/3, terminate/3, code_change/4]).
@@ -41,6 +37,16 @@
             execute/2,
             waiting_vnode_r/2,
             waiting_read_repair/2]).
+
+-export_type([options/0, option/0]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-export([test_link/7, test_link/5]).
+-endif.
+-include_lib("kernel/include/logger.hrl").
+-include_lib("riak_kv_vnode.hrl").
+-include("riak_kv_capability.hrl").
 
 -type detail() :: timing |
                   vnodes.
@@ -67,8 +73,6 @@
 -type options() :: [option()].
 -type req_id() :: non_neg_integer().
 -type request_type() :: head | get | update.
-
--export_type([options/0, option/0]).
 
 -record(state, {from :: {raw, req_id(), pid()},
                 options=[] :: options(),

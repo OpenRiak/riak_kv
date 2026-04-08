@@ -1,18 +1,33 @@
-%%% @author Russell Brown <russelldb@basho.com>
-%%% @copyright (C) 2014, Russell Brown
-%%% @doc
-%%%
-%%% @end
-%%% Created : 14 Nov 2014 by Russell Brown <russelldb@basho.com>
-
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2014 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+%%
 -module(kv_vnode_status_mgr_eqc).
 
 -ifdef(EQC).
+
+-compile([export_all, nowarn_export_all]).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--compile([export_all, nowarn_export_all]).
 
 -record(state,{}).
 
@@ -78,7 +93,7 @@ prop_monotonic() ->
             begin
                 ets:new(vnode_status, [named_table, set]),
                 ets:new(vnodeids, [named_table, set]),
-                TestPath = riak_kv_test_util:get_test_dir("status_mgr_eqc"),
+                TestPath = riak_core_test_util:get_test_dir("status_mgr_eqc"),
                 {ok, Pid} = riak_kv_vnode_status_mgr:test_link(self(), 1, true, TestPath),
                 {ok, {ID, _Counter, _Lease}} = riak_kv_vnode_status_mgr:get_vnodeid_and_counter(Pid, 1),
                 true =  ets:insert(vnode_status, {status, 1, 1, Pid}),

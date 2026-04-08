@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_kv_bitcask_backend: Bitcask Driver for Riak
@@ -19,7 +20,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% @doc Bitcask Driver for Riak
+%%
 -module(riak_kv_bitcask_backend).
 -behavior(riak_kv_backend).
 
@@ -897,22 +900,17 @@ finalize_upgrade(Dir) ->
 -ifdef(TEST).
 
 simple_test_() ->
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     application:set_env(bitcask, data_root, ""),
-    backend_test_util:standard_test_gen(?MODULE,
-                                        [{data_root, Path}]).
+    backend_test_util:standard_test_gen(?MODULE, [{data_root, Path}]).
 
 custom_config_test_() ->
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     application:set_env(bitcask, data_root, ""),
-    backend_test_util:standard_test_gen(?MODULE,
-                                        [{data_root, Path}]).
+    backend_test_util:standard_test_gen(?MODULE, [{data_root, Path}]).
 
 startup_data_dir_test() ->
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     Config = [{data_root, Path}],
     %% Start the backend
     {ok, State} = start(42, Config),
@@ -924,8 +922,7 @@ startup_data_dir_test() ->
     ?assertEqual(["42"], DataDirs).
 
 drop_test() ->
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     Config = [{data_root, Path}],
     %% Start the backend
     {ok, State} = start(42, Config),
@@ -941,8 +938,7 @@ drop_test() ->
 
 get_data_dir_test() ->
     %% Cleanup
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     %% Create a set of timestamped partition directories
     %% plus some base directories for other partitions
     TSPartitionDirs =
@@ -960,8 +956,7 @@ key_version_test() ->
                 [{Bucket, Key} | Acc]
         end,
 
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("bitcask-backend", true),
     application:set_env(bitcask, data_root, Path),
     application:set_env(bitcask, small_keys, true),
     {ok, S} = ?MODULE:start(42, []),
@@ -1000,23 +995,18 @@ key_version_test() ->
 -ifdef(EQC).
 
 prop_bitcask_backend() ->
-    Path = riak_kv_test_util:get_test_dir("bitcask-backend"),
-    ?SETUP(fun() ->
-                   application:load(sasl),
-                   application:set_env(sasl,
-                                        sasl_error_logger,
-                                       {file, Path ++ "/riak_kv_bitcask_backend_eqc_sasl.log"}),
-                   error_logger:tty(false),
-                   error_logger:logfile({open,
-                                        Path ++ "/riak_kv_bitcask_backend_eqc.log"}),
-
-                   application:load(bitcask),
-                   application:set_env(bitcask, merge_window, never),
-                   fun() ->  ?assertCmd("rm -rf " ++ Path ++ "/*") end
-           end,
-           backend_eqc:prop_backend(?MODULE,
-                                    false,
-                                    [{data_root, Path}])).
+    TestDir = riak_core_test_util:get_test_dir("bitcask-backend", true),
+    SetupFun =
+        fun() ->
+            riak_core_test_util:logger_redirect(
+                "bitcask-backend",
+                ?MODULE_STRING ++ "_eqc.log"
+            ),
+            application:load(bitcask),
+            application:set_env(bitcask, merge_window, never),
+            fun() ->  ?assertCmd("rm -rf " ++ TestDir ++ "/*") end
+        end,
+    ?SETUP(SetupFun, backend_eqc:prop_backend(?MODULE, false, [{data_root, TestDir}])).
 -endif. % EQC
 
 -endif.

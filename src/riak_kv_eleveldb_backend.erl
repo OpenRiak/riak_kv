@@ -1,3 +1,4 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
 %% riak_kv_eleveldb_backend: Backend Driver for LevelDB
@@ -19,7 +20,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
+%%
+%% @doc Backend Driver for LevelDB
+%%
 -module(riak_kv_eleveldb_backend).
 -behavior(riak_kv_backend).
 
@@ -56,17 +59,16 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--include("riak_kv_index.hrl").
-
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_eleveldb_backend/0]).
 -endif.
 
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-include("riak_kv_index.hrl").
 
 -define(API_VERSION, 1).
 -define(CAPABILITIES,
@@ -993,14 +995,12 @@ to_md_key(Key) ->
 
 
 simple_test_() ->
-    Path = riak_kv_test_util:get_test_dir("eleveldb-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("eleveldb-backend", true),
     application:set_env(eleveldb, data_root, Path),
     backend_test_util:standard_test_gen(?MODULE, []).
 
 custom_config_test_() ->
-    Path = riak_kv_test_util:get_test_dir("eleveldb-backend"),
-    ?assertCmd("rm -rf " ++ Path ++ "/*"),
+    Path = riak_core_test_util:get_test_dir("eleveldb-backend", true),
     application:set_env(eleveldb, data_root, Path),
     backend_test_util:standard_test_gen(?MODULE, [{data_root, Path}]).
 
@@ -1008,7 +1008,7 @@ retry_test_() ->
     {spawn, [fun retry/0, fun retry_fail/0]}.
 
 retry() ->
-    Root = riak_kv_test_util:get_test_dir("eleveldb_retry_test"),
+    Root = riak_core_test_util:get_test_dir("eleveldb_retry_test"),
     try
         {ok, State1} = start(42, [{data_root, Root}]),
         Me = self(),
@@ -1059,7 +1059,7 @@ retry() ->
     end.
 
 retry_fail() ->
-    Root = riak_kv_test_util:get_test_dir("eleveldb_fail_retry_test"),
+    Root = riak_core_test_util:get_test_dir("eleveldb_fail_retry_test"),
     try
         application:set_env(riak_kv, eleveldb_open_retries, 3), % 3 times, 1ms a time
         application:set_env(riak_kv, eleveldb_open_retry_delay, 1),
@@ -1102,18 +1102,19 @@ retry_fail() ->
 
 
 -ifdef(EQC).
-prop_eleveldb_backend() ->
-    Path = riak_kv_test_util:get_test_dir("eleveldb-backend"),
-    ?SETUP(fun() ->
-                   application:load(sasl),
-                   application:set_env(sasl, sasl_error_logger, {file, Path ++ "/riak_kv_eleveldb_backend_eqc_sasl.log"}),
-                   error_logger:tty(false),
-                   error_logger:logfile({open, Path ++ "/riak_kv_eleveldb_backend_eqc.log"}),
-                   fun() -> ?_assertCmd("rm -rf " ++ Path ++ "/*") end
-           end,
-           backend_eqc:prop_backend(?MODULE, false, [{data_root, Path}])).
 
+prop_eleveldb_backend() ->
+    TestDir = riak_core_test_util:get_test_dir("eleveldb-backend", true),
+    SetupFun =
+        fun() ->
+            riak_core_test_util:logger_redirect(
+                "eleveldb-backend",
+                ?MODULE_STRING ++ "_eqc.log"
+            ),
+            fun() -> ?_assertCmd("rm -rf " ++ TestDir ++ "/*") end
+        end,
+    ?SETUP(SetupFun, backend_eqc:prop_backend(?MODULE, false, [{data_root, TestDir}])).
 
 -endif. % EQC
 
--endif.
+-endif. % TEST

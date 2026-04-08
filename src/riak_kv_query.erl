@@ -24,13 +24,14 @@
 
 -export(
     [
-        new/3,
+        new/4,
         finalise_request/1,
         get_query_definition/1,
         get_bucket/1,
         get_maxresults/1,
         get_r/1,
         get_timeout_secs/1,
+        get_inactivity_timeout_secs/1,
         get_accumulator/1,
         get_querytype/1,
         get_returnterms/1,
@@ -58,9 +59,9 @@
 -type aggregation_function()
     :: fun((list(sets:set(riak_object:key()))) -> sets:set(riak_object:key())).
 -type smpl_accumulator()
-    :: keys|raw_keys|count|raw_count.
+    :: keys|raw_keys|count|raw_count|queue_raw_keys.
 -type term_accumulator()
-    :: raw_terms|terms|term_with_rawcount|term_with_count.
+    :: raw_terms|terms|term_with_rawcount|term_with_count|queue_raw_terms.
 -type accumulation_option()
     :: smpl_accumulator()|term_accumulator().
 -type query_index_name()
@@ -126,7 +127,7 @@
     {aggregation_function(), list({aggregation_tag(), evaluated_query()})}.
 -type validation_stage() ::
     aggregation_expression|accumulation_option|accumulation_term|
-        max_results|query_evaluation|apply_continuation.
+        max_results|query_evaluation|apply_continuation|init.
 -type validation_error() ::
     {error, validation_stage(), binary()}.
 -type encoding_fun() ::
@@ -139,6 +140,8 @@
         type = single_query
             :: single_query | combo_query,
         timeout_secs
+            :: pos_integer(),
+        inactivity_timeout_secs
             :: pos_integer(),
         aggregation_expression = single_query
             :: single_query|aggregation_function(),
@@ -186,19 +189,24 @@
     ]
 ).
 
--spec new(riak_object:bucket(), query_type(), pos_integer()) -> complex_query_definition().
-new(Bucket, single_query, Timeout) ->
+-spec new(
+    riak_object:bucket(), query_type(), pos_integer(), pos_integer()
+) ->
+    complex_query_definition().
+new(Bucket, single_query, Timeout, InactivityTimeout) ->
     #riak_kv_query{
         bucket = Bucket,
         type = single_query,
         timeout_secs = Timeout,
+        inactivity_timeout_secs = InactivityTimeout,
         aggregation_expression = single_query
     };
-new(Bucket, combo_query, Timeout) ->
+new(Bucket, combo_query, Timeout, InactivityTimeout) ->
     #riak_kv_query{
         bucket = Bucket,
         type = combo_query,
-        timeout_secs = Timeout
+        timeout_secs = Timeout,
+        inactivity_timeout_secs = InactivityTimeout
     }.
 
 -spec finalise_request(
@@ -230,6 +238,10 @@ get_bucket(Query) -> Query#riak_kv_query.bucket.
 -spec get_timeout_secs(complex_query_definition()) -> pos_integer().
 get_timeout_secs(Query) -> Query#riak_kv_query.timeout_secs.
 
+-spec get_inactivity_timeout_secs(complex_query_definition()) -> pos_integer().
+get_inactivity_timeout_secs(Query) ->
+    Query#riak_kv_query.inactivity_timeout_secs.
+
 -spec get_reqid(complex_query_definition()) -> non_neg_integer().
 get_reqid(#riak_kv_query{client_reqid = ReqID}) when ReqID =/= undefined ->
     ReqID.
@@ -257,7 +269,8 @@ get_returnterms(
                 KeyOnly == keys;
                 KeyOnly == raw_keys;
                 KeyOnly == count;
-                KeyOnly == raw_count ->
+                KeyOnly == raw_count;
+                KeyOnly == queue_raw_keys ->
             false;
         _ ->
             case AT of
@@ -321,7 +334,8 @@ add_accumulation_option(
             (
                 AccumulationOption == <<"keys">> orelse
                 AccumulationOption == <<"raw_keys">> orelse
-                AccumulationOption == <<"raw_count">>
+                AccumulationOption == <<"raw_count">> orelse
+                AccumulationOption == <<"queue_raw_keys">>
             ) ->
     {
         ok,
@@ -337,10 +351,12 @@ add_accumulation_option(
             AccumulationOption == <<"raw_keys">>;
             AccumulationOption == <<"count">>;
             AccumulationOption == <<"raw_count">>;
+            AccumulationOption == <<"queue_raw_keys">>;
             AccumulationOption == <<"terms">>;
             AccumulationOption == <<"raw_terms">>;
             AccumulationOption == <<"term_with_rawcount">>;
-            AccumulationOption == <<"term_with_count">> ->
+            AccumulationOption == <<"term_with_count">>;
+            AccumulationOption == <<"queue_raw_terms">> ->
     case Type of
         single_query ->
             {
@@ -637,10 +653,12 @@ decode_option(<<"keys">>) -> keys;
 decode_option(<<"raw_keys">>) -> raw_keys;
 decode_option(<<"count">>) -> count;
 decode_option(<<"raw_count">>) -> raw_count;
+decode_option(<<"queue_raw_keys">>) -> queue_raw_keys;
 decode_option(<<"terms">>) -> terms;
 decode_option(<<"raw_terms">>) -> raw_terms;
 decode_option(<<"term_with_rawcount">>) -> term_with_rawcount;
-decode_option(<<"term_with_count">>) -> term_with_count.
+decode_option(<<"term_with_count">>) -> term_with_count;
+decode_option(<<"queue_raw_terms">>) -> queue_raw_terms.
 
 -spec get_reqid() -> non_neg_integer().
 get_reqid() ->
@@ -657,7 +675,7 @@ is_query(Query) -> is_record(Query, riak_kv_query).
 
 -include_lib("eunit/include/eunit.hrl").
 
-new(Bucket, Type) -> new(Bucket, Type, 60).
+new(Bucket, Type) -> new(Bucket, Type, 60, 120).
 
 bad_aggregation_expression_test() ->
     QS = new({<<"Type">>, <<"Bucket">>}, single_query),

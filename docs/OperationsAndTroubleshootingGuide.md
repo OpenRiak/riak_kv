@@ -24,7 +24,7 @@ The following sections provide guidance when operating or troubleshooting a Riak
 
 ## Replace, Repair and Recover
 
-There are several potential repair and recovery processes for handling different scenarios:
+There are seven potential repair and recovery processes for handling different scenarios:
 
 - [Proactive replacement](#proactive-replacement)
 - [Reactive replacement](#reactive-replacement)
@@ -178,7 +178,7 @@ The following upgrade path has been specifically tested:
 More direct upgrade paths skipping steps may be possible.  New features are added using either a negotiation of capability within the cluster, or with the feature disabled by default in configuration.  Once a capability is mature, after at least two steps in the path, the negotiation may be retired and replaced with a static assumption of capability.
 
 {: .warning }
-> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  Double-check the release notes for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
+> When using the eleveldb backend with `snappy` compression (which is the default compression method when eleveldb is used in multi-backend setups), there are potentially multiple broken upgrade paths, even with minor release changes.  The release notes should be checked for issues before progressing with an update, and specific pre-live testing of any upgrade path is essential when using `snappy` compression.
 
 It is not possible via rolling restart to upgrade from an OTP version 22 or prior, to an upgrade with an OTP version of 25 or higher.  For example, direct upgrades from `3.0.n` to `3.4.n` are not supported unless `3.0.n` is built with OTP 22, and `3.4.n` is built with OTP 24.
 
@@ -193,7 +193,18 @@ As with other rolling operations, the operations can be accelerated through the 
 
 ## Remote Console
 
-Advanced information and debugging tools are available via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for a number of purposes.
+Advanced information and debugging tools are available from the command line via `riak remote_console`.  This will attach a remote shell to the running node.  With this shell Erlang functions can be called as if on the local node, and this can be used for: [accessing objects](#accessing-objects), [running AAE folds](#running-aae-folds), [access to specific administration commands](#riak_client-remote_console-commands) as well as [advanced debugging and troubleshooting](#advanced---troubleshoot-via-the-erlang-vm).
+
+{: .warning }
+If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core.
+
+It is good practice to monitor for the presence of long-lived hanging sessions, if `remote_console` is used.  Remote console sessions are distinguished with `ps -ef` by the `-progname` switch: Riak applications will have ``--progname <PATH>/bin/riak``; whereas `remote_console` sessions will have ``progname <path>/bin/erl``.
+
+All single commands run from riak remote_console can be scripted from the command line using `riak eval`.  For example, to run the riak_client:repair_node() function from a script:
+
+```console
+riak eval "riak_client:repair_node()."
+```
 
 ### Accessing objects
 
@@ -215,25 +226,11 @@ Refer to the [API guide for AAE Fold](./OtherAPI.md#aae-fold-api) for informatio
 
 ### riak_client remote_console commands
 
-There are a number of administration commands that are available [via the riak_client module](https://github.com/OpenRiak/riak_kv/blob/openriak-3.4/src/riak_client.erl).  These include:
+The `riak_client` is an Erlang module within Riak that provides the internal API functions used by the external user-facing API.  The `riak_client` module also includes administration functions:
 
 - `participate_in_coverage/1`, `remove_node_from_coverage/0`, `reset_node_for_coverage/0` - used to change the `participate_in_coverage` status of the node.  When a node is known to have a potential data issue (i.e. it is being recovered from a failure), it can be removed from coverage, and reset back into coverage once the data has been proven to be fully populated.
 - `replrtq_reset_all_peers/1` - used to force all active and available nodes in the cluster to reset their peer discovery (used in real-time repl), to be used after adding a new node to a remote cluster.
 - `replrtq_reset_all_workercounts/2` - used to force all active and available nodes to change their worker counts and per-peer limits, which may be required when a sink cluster cannot keep up fetching the remote replication traffic and so requires more sink workers (or sink workers per peer).
-
-### Hanging console sessions
-
-Remote console sessions are distinguished with `ps -ef` by the `-progname` switch.  Riak applications will have ``--progname <PATH>/bin/riak``; whereas remote_console sessions will have ``progname <path>/bin/erl``.
-
-If an active remote_console session is detached in an unexpected way e.g. due to the network timeout of a SSH session over which the remote_console was run; "hanging" console process may be left running.  After a long period, a passive hanging console process may enter a loop and consume an entire CPU core, so it is wise to monitor for the presence of such long-lived hanging sessions.
-
-### Using `riak eval`
-
-All single commands run from riak remote_console should be scriptable from the command line using `riak eval`:
-
-```console
-riak eval "riak_client:repair_node()."
-```
 
 ## Extending configuration
 
@@ -285,7 +282,7 @@ Note that the result of `describe` request is the current schema documentation o
 All components of Riak use the kernel logger for logging.  The logger can be configured via `riak.conf`, and there are five parts of the configuration:
 
 - Set the log level (`logger.level`);
-- Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required depends on the configuration of `additional_handlers`.
+- Set the file path and file name for each of the log files that are to be used (`logger.file`, `logger.error_file` etc).  The paths required are dependent on the configuration of `additional_handlers`.
 - Set the log format (`logger.format`).
   - See the [erlang logger guide](https://www.erlang.org/doc/apps/kernel/logger.html) for metadata available to add to logs e.g. `mfa`, `pid`, `file`, `line`, `domain`, `msg`. 
 - <span>Available from Riak 3.4.0</span>{: .label .label-purple }Set the logs to be filtered from the default (console) log file (`logger.default_filters`).
@@ -317,6 +314,16 @@ All timings are internal timings, and not necessarily fully representative of ex
 
 The stats represent the statistics on the node from which they were requested.  The stats are not cluster-wide, they are always node aggregates e.g. the vnode stats are accumulated over every vnode on the node.
 
+### Vnode Status
+{: .d-inline-block }
+
+Available from Riak 3.4.1
+{: .label .label-purple }
+
+A significant proportion of the work within Riak takes places within the vnode.  To see the status of each vnode in the cluster, and see available statistics from the backend:  `riak admin vnode-status | sed -n 1p | json_pp`
+
+To look at the statistics from specific nodes or partitions see: `riak admin vnode-status --help`.
+
 ## Monitoring Operational Services
 
 ### Monitoring Anti-Entropy
@@ -329,7 +336,7 @@ The Tictac anti-entropy system can be monitored either through the command line,
 Available from Riak 3.4.0
 {: .label .label-purple }
 
-A number of monitoring and control functions are available through the command line interface - `riak admin tictacaae --help`.
+Monitoring and control functions for Tictac AAE are available through the command line interface - `riak admin tictacaae --help`.
 
 ```console
 riak admin tictacaae rebuildtick|exchangetick|maxresults|rangeboost [-n NODE] [VAL]
@@ -346,7 +353,7 @@ Configuration control commands `rebuildtick`, `exchangetick`, `maxresults`, and 
 - The `exchangetick` alters the frequency of AAE activity, each vnode runs a tick, and each tick prompts an exchange.
 - The `rebuildtick` alters the frequency with which a vnode will check to see if a rebuild is due;
   - The tick does not alter the actual frequency of rebuilds.
-- Changes to `rebuiltick` and `exchangetick` will take effect on the next tick, impacting the size of the next-but-one tick.
+- Changes to `rebuildtick` and `exchangetick` will take effect on the next tick, impacting the size of the next-but-one tick.
   - Both the `rebuildtick` and `exchangetick` are set in milliseconds.
 - The `maxresults` limit controls the scope of repairs per exchange (a limit on [the segment IDs covered by an exchange](./RiakTheoryGuide.md#anti-entropy)).
   - This is multiplied by the `rangeboost` if the exchange has been seeded with range information auto-discovered in previous exchanges.  For example if all deltas are in a certain modified date range.
@@ -438,7 +445,7 @@ riak eval "application:set_env(riak_kv, log_readrepair, true)"
 
 ### Monitoring inter-cluster reconciliation
 
-For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](./NextGenReplGuide.md#monitoring-and-run-time-changes).
+For information on monitoring inter-cluster reconciliation and repair [refer to the NextGen Repl guide](./ReplicationGuide.md#monitoring-and-runtime-changes).
 
 ### Monitoring node worker pools
 
@@ -549,7 +556,7 @@ This would permit access from the whole of the network `192.168.8.0/24` (this ma
 {: .note }
 > In this case, this is functionally equivalent to requiring TLS mutual authentication on the PB API, but it is not the security equal of that measure.  A connection would still be accepted from any IP address, and an unauthenticated TLS negotiation allowed; at this stage the PB API will only accept an authentication request, and this will now only work if the IP address is valid and the certificate matches.
 
-There are a number of options around the configuration of security sources in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
+Further information on the configuration of security sources can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/managing-sources/index.html).
 
 {: .warning }
 > The use of PAM-based authentication is deprecated and may be removed in a future release.
@@ -576,7 +583,7 @@ For all other API endpoints, only `source` protection is applied.
 {: .note }
 > With the PB API, authentication is provided at the start of a connection, and grants are assessed and cached for that connection to be used against each request.  On the HTTP API, each request on a connection is authenticated and has grant checks made independently on a per-request basis.
 
-There are a number of options for the granting of permissions in Riak, and further information can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
+Further information on the granting of permissions can be found in the [legacy documentation](https://docs.riak.com/riak/kv/latest/using/security/basics/index.html).
 
 ## Garbage Collection - Reap, Erase and Scheduled Compaction
 
@@ -596,7 +603,7 @@ When queueing large volumes of changes, note that:
 
 - The number of vnodes per node on which the fold is run will be restricted by the size of the `AF4_QUEUE` if the `dscp` worker strategy is used.  This will lead to a situation where items on the queue will be grouped by vnode, and dequeued in batches containing objects within the same preflist.
 - The pace of which items are dequeued and processed is limited by the `tombstone_pause` configuration.  The pause should be increased if the rate of reaps or erases cause pressure within the cluster, or any clusters receiving replicas of the reap/erase events.  The pause can be adjusted at run-time by changing the underlying environment variable.
-- In multi-data centre configurations reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
+- In multi-data centre configurations, reap events must be specifically configured to be replicated - this is controlled through the `repl_reap` configuration setting.  Otherwise reap jobs must be run separately on each cluster (with reconciliation suspended until the reaps complete).
 - Each queue on each node has a limit to the size of reaps or erases it can hold - this is controlled through the `eraser_overflow_limit` and the `reaper_overflow_limit`.  The queue, except for a small number, is held on disk; and so increasing this limit can be achieved without hitting memory constraints.
 - As of Riak 3.4, if a reap is dequeued, but the primaries are not all available, then the reap will be acted on all available primaries and an item will be queued to act on the remaining primaries once they are available.
 - Large reap jobs should not be queued while cluster change operations are planned on the cluster, or any cluster linked by replication.
@@ -616,7 +623,7 @@ If storing mutable objects in bitcask, then it is important to configure merge w
 
 When testing the potential throughput of a bitcask-backed Riak database it is important to test with appropriate levels of mutation, and a realistic configuration of the bitcask merge window.
 
-For information on configuring bitcask merge see the `bitbask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema).
+For information on configuring bitcask merge see the `bitcask.merge` sections [within the bitcask schema file](https://github.com/OpenRiak/bitcask/blob/openriak-3.2/priv/bitcask.schema).
 
 ### leveled compaction high/low hour
 
@@ -644,9 +651,11 @@ A backlog of compaction work within the ledger can be monitored by tracking leve
 
 ### Garbage collecting `.bak` files in leveled
 
-The leveled backend will in some cases store work in progress during compaction, and then find that work in progress orphaned if it is interrupted by a restart before the change can be applied.  At the next restart, within the leveled ledger, such orphaned files will be renamed as `*.bak` files.  Clearing up the history of these orphaned files is a manual process.  It is always safe to delete `*.bak` files, but for extra security some users may prefer to only delete those files unmodified since before the previous start.
+The leveled backend will in some cases persist to disk work in progress during compaction, and then find that work in progress orphaned if it is interrupted by a restart before the change can be applied - there is space consumed on disk by files not referred to in the manifest for the store.  At the next restart, within the leveled ledger, such orphaned files will be renamed as `*.bak` files.
 
-The journal may also orphan files, but in Riak 3.4 there is no automated process for detecting such files and renaming them.  They can though be [detected and renamed through operator intervention](https://github.com/martinsumner/leveled/issues/444).
+<span>Available from Riak 3.4.1</span>{: .label .label-purple }As well as examining the ledger, the journal will also be checked on startup, to detect journal files present on disk but not in the manifest.  These orphaned journal files will, as with the orphaned ledger files, be renamed with a `*.bak` extension.  On releases prior to Riak 3.4.1, [detecting such files in the journal is a manual process](https://github.com/martinsumner/leveled/issues/444).
+
+Clearing up the history of these orphaned files is a manual process.  It is always safe to delete `*.bak` files, but for extra caution one may choose to only delete those files unmodified since before the previous start of Riak.
 
 ## Data inspection
 
@@ -693,7 +702,7 @@ Before considering backups, it is worth noting that as a distributed database th
 
 Production users of Riak commonly have relatively lightweight backup and recovery strategies when compared to traditional database management systems; eventual consistency allows the global recovery of state without the need to focus on recovering state first back to a point in time.  In general, greater effort is placed into building the resilience of the system, and also the management of change within the application i.e. ensuring the application adopts lazy migration strategies for schema changes that don't require large point-in-time migration events.
 
-If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use [the `repair` process](#reactive-replace) to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
+If an individual node fails, do not restore an individual node from backup.  It is generally much more efficient and reliable to use [the `repair` process](#reactive-replacement) to recover data on a node.  It is not normal practice to keep backups simply for the purpose of restoring individual nodes, even where those nodes may rely on ephemeral disks.
 
 Note that in cloud environments, if an inefficient backup method is chosen (e.g. snapshots of block-service file-system volumes), then backup costs may consume a dominant proportion of overall Riak infrastructure costs.
 
@@ -715,7 +724,7 @@ There are four inputs to the function required:
 
 - A backup path; all nodes will be required to support the same path, the path cannot be to the current folder in which leveled is running, but the path must be on the same volume as the current data path (e.g. you could use `<PLATFORM_DATA_DIR>/backup` as a backup to `<PLATFORM_DATA_DIR>/leveled`).
 - The `n_val` of the cluster.
-- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is, though, easier to understand and reason about the result of the backup if the cluster uses the same `n_val` for all bucketsm, and the coverage plan `n_val` is set to that `n_val`.
+- The coverage plan `n_val` of the cluster; to prompt a backup on all vnodes concurrently these two results should match.  It is possible to backup only one copy of the data i.e. by setting the `n_val` to 3 and the coverage `n_val` to 1. It is, though, easier to understand and reason about the result of the backup if the cluster uses the same `n_val` for all buckets, and the coverage plan `n_val` is set to that `n_val`.
 - A client; e.g. a `C` where `{ok, C} = riak:local_client()`.
 
 The backup at each vnode backend will first:
@@ -774,7 +783,11 @@ Monitoring of activity related to these issues is important.  Further, it is vit
   - Memory used by the Riak process,
     - Low thresholds for memory should be used because of the value in over-provisioning memory, and the possibility for large requests to trigger volatile changes in memory demand.
   - Open file descriptors.
-- Utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
+- Limits on the Erlang Virtual Machine should be monitored
+  - <span>Available from Riak 3.4.1</span>{: .label .label-purple }The [Riak stats endpoint](#riak-stats) directly reports the percentage utilisation of key virtual machine statistics.
+    - `vm_proc_percent` - controlled via the hidden configuration option `erlang.process_limit` in `riak.conf`. The underlying numbers are reported in `vm_proc_count` and `vm_proc_limit`.  The number of processes will expand with the size of the store in keys per-node - in particular when using the leveled backend - so the limit may require reconfiguration as nodes vertically scale.
+    - Also tracked are the hard limits on ports (`vm_port_percent`) and atoms (`vm_atom_percent`), and the soft limit on ETS tables (`vm_ets_percent`).  These numbers should not normally increase significantly as the key count expands.
+- Infrastructure utilisation limits should be monitored for trends that cluster expansion is required, due to repeated breaches of thresholds in:
   - Interface bandwidth.
   - CPU utilisation.
   - Disk I/O operations (especially when I/O is limited by cloud providers).

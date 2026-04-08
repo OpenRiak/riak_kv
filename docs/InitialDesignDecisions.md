@@ -6,9 +6,7 @@ layout : default
 
 # Riak KV - Initial Design Decisions
 
-When starting with Riak a number of initial design decisions need to be made at the outset of the project.  This is a summary of those decisions, and the factors relevant to making each choice.
-
-The initial design decisions are split into the following categories:
+There are six initial design decisions that need to be considered at the outset of a Riak KV  project.  The priority design choices are:
 
 - [Database backend](#database-backend)
 - [Ring size](#ring-size)
@@ -17,10 +15,10 @@ The initial design decisions are split into the following categories:
 - [Deleting data](#deleting-data)
 - [Mapping data to objects](#mapping-data-to-objects)
 
-It is not always possible to get all decisions correct first-time in the design phase.  Each choice has supporting guidance and how to transition to an alternative configuration.
+It is not always possible to get all decisions correct first-time in the design phase.  Within this page, as well as supporting information for making the choice, there is also guidance and how to transition to an alternative configuration.
 
 {: .highlight }
-> Riak clusters commonly run for decades, dealing with significant functional and non-functional changes in applications during their lifespan.
+> Riak clusters commonly run for decades, dealing with significant functional and non-functional changes in applications during their lifespan.  Making good decisions up-front is helpful, but not critical.
 
 ## Database backend
 
@@ -51,7 +49,7 @@ Sometimes, even in those situations, the leveled backend may be more efficient a
 {: .note }
 > The bitcask backend is the preferred long-term solution for immutable, unsorted, data storage in Riak.
 
-Use of multi-backend should generally be avoided, unless as a mulit-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
+Use of multi-backend should generally be avoided, unless as a multi-bitcask backend (e.g. for tiered storage).  It may also be used to manage multiple expiry schedules across multiple bitcask backends through the backend TTL support; but not if anti-entropy requirements exist beyond read-repair or if inter-cluster reconciliation is required.  In these cases managing expiry [through the use of the eraser process is preferred](#deleting-data).
 
 #### Leveled
 
@@ -123,7 +121,7 @@ Testing of Riak is focused on single-backend solutions, but multi-backend (bitca
 The database backend configuration is local to a node.  Migrating the database backend will require a [rolling replacement](./OperationsAndTroubleshootingGuide.md#rolling-replacement) of one or more nodes at a time.  For example, a multi-backend configuration with bitcask and in-memory backends and parallel-mode Tictac AAE, can be upgraded to a single leveled backend with native Tictac AAE (assuming the TTL capability requirement is not being utilised).
 
 {: .note }
-> A rolling replacement is a safe and reliable process even when a cluster is under application load; although it would be normal to schedule the process over a number of days in a large-scale production Riak cluster
+> A rolling replacement is a safe and reliable process even when a cluster is under application load; although it would be normal in a large-scale production Riak cluster for a complete rolling replacement to take days and not hours.
 
 Where different backends support different cluster-wide features (e.g. support of the [Riak Query API](./QueryAPI.md)), then the feature will only be usable when all nodes have updated.
 
@@ -131,7 +129,7 @@ Where different backends support different cluster-wide features (e.g. support o
 
 ### Ring size - making a choice
 
-A Riak cluster distributes data across a number of individual databases (known as vnodes), and those databases are then distributed across the physical nodes and locations of the cluster.  The distribution of data within Riak is referred to as [the ring](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes). The number of vnodes in the databases is required to be a factor of 2, and bigger than the total number of nodes in the database cluster.  This number is known as the ring size.
+A Riak cluster distributes data across individual databases (known as vnodes), and those databases are then distributed across the physical nodes and locations of the cluster.  The distribution of data within Riak is referred to as [the ring](./RiakTheoryGuide.md#the-ring---the-distribution-of-vnodes). The number of vnodes in the databases is required to be a factor of 2, and bigger than the total number of nodes in the database cluster.  This number is known as the ring size.
 
 Starting with a large ring size is helpful as:
 
@@ -190,7 +188,10 @@ To discover what combinations may be supported given a cluster (given a count of
 
 #### Proactive reconciliation
 
-Riak has support for reactive management of data: as part of every GET request a read repair process may be triggered if all vnodes are not up-to-date; as part of failure management a handoff process will merge data captured on temporary fallback vnodes back into primary vnodes.  It can also support proactive reconciliation - known as [active anti-entropy (AAE)](./RiakTheoryGuide.md#anti-entropy).  Configuring AAE will trigger a background process that will continually verify that the most recent version of each object is correctly stored in all required locations, and prompt repairs should the verification process highlight discrepancies.
+Riak has support for proactive reconciliation within a cluster; known as [active anti-entropy (AAE)](./RiakTheoryGuide.md#anti-entropy).  Configuring AAE will trigger a background process that will continually verify that the most recent version of each object is correctly stored in all required locations, and prompt repairs should the verification process highlight discrepancies.  This is in addition to reactive management which is always enabled within Riak: as part of every GET request a read repair process may be triggered if all vnodes are not up-to-date; as part of failure management a handoff process will merge data captured on temporary fallback vnodes back into primary vnodes.
+
+{: .highlight }
+Proactive reconciliation provides continuous assurance that data is correctly secured across multiple devices within a cluster: it is verification as well as correction.  It is of particular use where data may be stored for long periods without being read, nullifying the trigger for reactive management via read repair.
 
 There are two forms of proactive intra-cluster reconciliation in Riak:
 
@@ -206,11 +207,14 @@ There are two forms of proactive intra-cluster reconciliation in Riak:
   - Requires a separate keystore for all backends.
   - More aggressive than Tictac AAE at resolving discovered discrepancies.
 
-If neither reconciliation method is configured there are long-term risks of data loss, when Riak is used to store _cold_ data that is very rarely read.
+{: .warning }
+> If Tictac AAE is not enabled, there is an increased risk of data loss when Riak is used to store _cold_ data that is very rarely read.
+
+Enabling Tictac AAE also adds to the cluster support for the operator-functionality associated with [AAE Folds](./OtherAPI.md#aae-fold-api).
 
 ### Intra-cluster data resilience - changing the choice
 
-The `n_val` is in theory configurable by bucket, which allows for multiple n_vals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
+The `n_val` is in theory configurable by bucket, which allows for multiple nvals to be used within the cluster.  However, each unique n_val will increase the overhead of running anti-entropy (anti-entropy comparisons are per n_val, and separate caches are required for each n_val), and the complexity of configuring inter-cluster reconciliation.  Once a `n_val` has been set on a bucket, there is no tested way of reducing it and converging on a clean state - other than replicating to a new cluster and transitioning between clusters.  Increasing the `n_val` should eventually converge into an expected state.
 
 The `target_n_val` and `target_location_n_val` configuration is used each time a cluster change is planned (i.e. adding or removing a node).  So using a new value will take effect once the next change is made within a cluster.
 
@@ -283,7 +287,7 @@ Changing the delete mode is possible, with a restart, but needs to be a coordina
 
 The most important design decision is how to map the data requirements in an application into the format of objects in a Key-Value store.  Getting this correct tends to be specific to the application, and is inter-dependent on other initial design decisions; but there is some general guidance that tends to be helpful in most cases:
 
-- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is to fetch multiple objects to fulfill a single data-demand from the application. Where possible, make the most common read requests fulfilled via a single object read request.
+- Optimise the model for reading not writing, by storing information that is likely required to be fetched together in the same object.  It is normally easier to fetch a single object and strip unnecessary information, than it is to fetch multiple objects to fulfil a single data-demand from the application. Where possible, make the most common read requests fulfilled via a single object read request.
 - By default when using mutable objects, always use `allow_mult = true`, and ensure all updates pass the context of a recent read.  The optimisation gains from using `allow_mult = false` or `lww = true` are small, and the actual behaviour in this mode is often misunderstood.  The setting `allow_mult = false` should be preferred to `lww = true`, unless immutability is guaranteed - i.e. all objects are create-once, update-never.
 - Eventually parallel writes will occur, and siblings will exist.  Siblings can be minimised using conditional PUTs, if sibling resolution is complex or requires manual intervention.  Use aae_folds feeding operator dashboards to track the generation of siblings.  To auto-resolve siblings CRDTs (conflict-free replicated data types) can be used, and third-party client-side libraries are generally a better long-term option than using Riak's internal CRDTs.
 - Values can be large, especially when using the leveled backend.  Individual objects significantly in excess of 1MB are not in themselves likely to cause a direct performance issue.  Values are compressed before being persisted to disk (unless compression is disabled), when using the leveled-backend, so pre-compression is not necessary unless network bandwidth is a significant factor.
