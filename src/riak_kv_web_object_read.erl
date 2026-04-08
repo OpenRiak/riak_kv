@@ -42,6 +42,12 @@
     ]
 ).
 
+-export(
+    [
+        produce_response/1
+    ]
+).
+
 -define(GET_DEFAULTS, #{
     r => default,
     pr => default,
@@ -51,6 +57,7 @@
     deletedvclock => true,
     basic_quorum => default,
     sloppy_quorum => default,
+    return_body => true,
     timeout => undefined
 }).
 
@@ -70,6 +77,7 @@
         deletedvclock => true,
         basic_quorum => boolean() | default,
         sloppy_quorum => boolean() | default,
+        return_body => boolean(),
         timeout => pos_integer() | undefined
     }.
 
@@ -84,7 +92,8 @@
     | timeout.
 
 -record(context, {
-    client = get_client() :: riak_client:riak_client() | test,
+    client = riak_kv_web_common:get_client() ::
+        riak_client:riak_client() | dummy,
     method :: 'GET' | 'HEAD',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -95,6 +104,8 @@
 }).
 
 -type context() :: #context{}.
+
+-export_type([get_options/0]).
 
 %% ===================================================================
 %% Callback functions
@@ -107,7 +118,7 @@
 ) ->
     no_match
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
-    | {ok, context(), riak_api_web_handler:limits()}.
+    | {ok, riak_api_web_handler:limits(), context()}.
 match_route(
     Method,
     _Path,
@@ -121,7 +132,7 @@ match_route(
                     bucket = riak_kv_web_common:set_bucket(BucketType, Bucket),
                     key = Key
                 },
-            {ok, Context, size_limits()};
+            {ok, size_limits(), Context};
         Method when Method == 'PUT'; Method == 'POST'; Method == 'DELETE' ->
             no_match;
         _OtherMethod ->
@@ -377,6 +388,21 @@ validate_booleans(Params, Context) ->
 %% ===================================================================
 %% Produce Response
 %% ===================================================================
+
+-spec produce_response(
+    riak_object:riak_object()
+) ->
+    {200 | 300 | 400 | 406, riak_api_web_headers:header_list(), binary()}.
+produce_response(Object) ->
+    produce_response(
+        Object,
+        #context{
+            client = dummy,
+            method = 'GET',
+            bucket = riak_object:bucket(Object),
+            key = riak_object:key(Object)
+        }
+    ).
 
 -spec produce_response(
     riak_object:riak_object(),
@@ -767,10 +793,6 @@ set_option(Option, Value, Context) ->
         get_options = maps:put(Option, Value, Context#context.get_options)
     }.
 
-get_client() ->
-    {ok, C} = riak:local_client(),
-    C.
-
 size_limits() ->
     {
         1024,
@@ -803,7 +825,7 @@ accept_filter_test() ->
     Headers1 = riak_api_web_headers:make(Accept1),
     DummyCtx =
         #context{
-            client = test,
+            client = dummy,
             bucket = {<<"Type">>, <<"B">>},
             key = <<"K">>,
             method = 'GET'
@@ -887,7 +909,7 @@ metadata_format_test() ->
     O2 = riak_object:apply_updates(O1),
     Ctx =
         #context{
-            client = test,
+            client = dummy,
             method = 'GET',
             bucket = {<<"BT">>, <<"B">>},
             key = <<"K">>
@@ -956,7 +978,7 @@ metadata_format_test() ->
 validate_timeout_test() ->
     Ctx =
         #context{
-            client = test,
+            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -984,7 +1006,7 @@ validate_timeout_test() ->
 validate_counts_test() ->
     Ctx =
         #context{
-            client = test,
+            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1017,7 +1039,7 @@ validate_counts_test() ->
 validate_bools_test() ->
     Ctx =
         #context{
-            client = test,
+            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1084,7 +1106,7 @@ singleton_response() ->
     OM1 = riak_object:syntactic_merge(O0, O1),
     Ctx =
         #context{
-            client = test,
+            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1125,7 +1147,7 @@ singleton_response() ->
     ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList3)),
     CtxHead =
         #context{
-            client = test,
+            client = dummy,
             method = 'HEAD',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>

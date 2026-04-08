@@ -30,7 +30,8 @@
         check_type_exists/1,
         count_fold/3,
         boolean_fold/3,
-        confirm_empty_body/1
+        confirm_empty_body/1,
+        get_client/0
     ]
 ).
 
@@ -182,7 +183,9 @@ normalise_rw_param(V) when is_binary(V) ->
 normalise_rw_param(_) ->
     bad_param.
 
-normalise_boolean_param(V) ->
+normalise_boolean_param(true) ->
+    true;
+normalise_boolean_param(V) when is_binary(V) ->
     case string:casefold(V) of
         <<"true">> ->
             true;
@@ -193,3 +196,7 @@ normalise_boolean_param(V) ->
         _ ->
             bad_param
     end.
+
+get_client() ->
+    {ok, C} = riak:local_client(),
+    C.

@@ -21,7 +21,13 @@
 
 -define(TXT_HEADER, {'Content-Type', <<"text/plain">>}).
 
--define(HEAD_VCLOCK,          <<"X-Riak-Vclock">>).
+-define(HEAD_VCLOCK, <<"X-Riak-Vclock">>).
 -define(HEAD_USERMETA_PREFIX, <<"X-Riak-Meta-">>).
--define(HEAD_INDEX_PREFIX,    <<"X-Riak-Index-">>).
--define(HEAD_DELETED,         <<"X-Riak-Deleted">>).
+-define(HEAD_INDEX_PREFIX, <<"X-Riak-Index-">>).
+-define(HEAD_DELETED, <<"X-Riak-Deleted">>).
+
+%% Case-folded headers to be used in lookups
+-define(HEAD_VLOCK_CASEFOLD, <<"x-riak-vclock">>).
+-define(HEAD_IFNOTMOD_CASEFOLD, <<"x-riak-if-not-modified">>).
+-define(HEAD_USERMETA_CASEFOLD, <<"x-riak-meta-">>).
+-define(HEAD_INDEX_CASEFOLD, <<"x-riak-index-">>).
