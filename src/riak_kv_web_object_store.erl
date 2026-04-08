@@ -67,9 +67,9 @@
 
 -type put_options() ::
     #{
-        w => pos_integer() | default | quorum |all,
-        dw => non_neg_integer() | default | quorum |all,
-        pw => non_neg_integer() | default | quorum |all,
+        w => pos_integer() | default | quorum | all,
+        dw => non_neg_integer() | default | quorum | all,
+        pw => non_neg_integer() | default | quorum | all,
         node_confirms => non_neg_integer() | default | quorum | all,
         sync_on_write => default | backend | one | all,
         n_val => pos_integer() | default,
@@ -79,8 +79,8 @@
     }.
 
 -record(context, {
-    client = riak_kv_web_common:get_client()
-        :: riak_client:riak_client() | test,
+    client = riak_kv_web_common:get_client() ::
+        riak_client:riak_client() | test,
     method :: 'PUT' | 'POST',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -255,7 +255,7 @@ process_request(RqBdy, Context) ->
         {error, content_too_large} ->
             {halt, 413, [], <<>>, []};
         {ObjBody, UpdRqBody} when is_binary(ObjBody) ->
-            PutRsp = 
+            PutRsp =
                 do_put(
                     riak_object:update_value(Context#context.object, ObjBody),
                     Context
@@ -342,7 +342,6 @@ validate_booleans(Params, Context) ->
             HaltResponse
     end.
 
-
 -spec validate_synconwrite(
     riak_api_web_handler:query_params(),
     context()
@@ -356,7 +355,8 @@ validate_synconwrite(QueryParams, Context) ->
             Valid == <<"default">>;
             Valid == <<"backend">>;
             Valid == <<"one">>;
-            Valid == <<"all">> ->
+            Valid == <<"all">>
+        ->
             {ok, set_option(sync_on_write, binary_to_atom(Valid), Context)};
         _Invalid ->
             ErrorText =
@@ -373,8 +373,8 @@ validate_synconwrite(QueryParams, Context) ->
 -spec validate_conditional_request(
     riak_api_web_headers:headers(),
     context()
-) -> 
-    {ok, context()}|riak_api_web_acceptor:halt_response().
+) ->
+    {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_conditional_request(ReqHeaders, Ctx) ->
     Ctx0 =
         case riak_api_web_headers:get_value('If-None-Match', ReqHeaders) of
@@ -540,7 +540,7 @@ set_content_type_and_encoding(ReqHeaders, MD) ->
                 []
             };
         ContentType when is_binary(ContentType) ->
-            [CType|RawParams] = string:lexemes(ContentType, "; "),
+            [CType | RawParams] = string:lexemes(ContentType, "; "),
             case take_first_encoding(RawParams) of
                 undefined ->
                     {ok, riak_object:metadata_store(?MD_CTYPE, CType, MD1)};
@@ -550,7 +550,7 @@ set_content_type_and_encoding(ReqHeaders, MD) ->
                         riak_object:metadata_store(
                             ?MD_CTYPE,
                             binary_to_list(CType),
-                                % list for backwards compatibility
+                            % list for backwards compatibility
                             riak_object:metadata_store(
                                 ?MD_CHARSET,
                                 binary_to_list(Charset),
@@ -563,7 +563,7 @@ set_content_type_and_encoding(ReqHeaders, MD) ->
 
 take_first_encoding([]) ->
     undefined;
-take_first_encoding([Param|Rest]) ->
+take_first_encoding([Param | Rest]) ->
     case string:split(Param, "=") of
         [<<"charset">>, Charset] ->
             Charset;
@@ -574,17 +574,19 @@ take_first_encoding([Param|Rest]) ->
 -spec do_put(
     riak_object:riak_object(),
     context()
-) -> 
+) ->
     ok | {ok, riak_object:riak_object()} | {error, term()}.
 do_put(Object, Ctx) ->
     CondPutMode =
         application:get_env(riak_kv, conditional_put_mode, api_only),
     {CondPutOptions, SessionToken} =
-        case {
+        case
+            {
                 Ctx#context.if_not_modified,
                 Ctx#context.if_none_match,
                 CondPutMode =/= api_only
-            } of
+            }
+        of
             {undefined, false, _} ->
                 {[], none};
             {NotMod, NoneMatch, true} ->
@@ -648,7 +650,7 @@ do_put(Object, Ctx) ->
 
 -spec handle_error(term(), context()) -> riak_api_web_acceptor:halt_response().
 handle_error(precommit_fail, Ctx) ->
-    Msg = 
+    Msg =
         iolist_to_binary(
             io_lib:format(
                 <<"~w aborted by pre-commit hook.">>,
@@ -691,12 +693,12 @@ handle_error("modified", _Ctx) ->
 handle_error(OtherError, _Ctx) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p">>, [OtherError]}.
 
--spec decode_clock(unicode:chardata()) -> vclock:vclock()|error.
+-spec decode_clock(unicode:chardata()) -> vclock:vclock() | error.
 decode_clock(EncodedClock) ->
     try
         riak_object:decode_vclock(base64:decode(EncodedClock))
     catch
-        _ : Error ->
+        _:Error ->
             ?LOG_WARNING(
                 "Unexpected error decoding clock ~0p",
                 [Error]
@@ -857,7 +859,7 @@ headers_clock_error2_test() ->
     ?assertMatch(
         <<"Error decoding vector clock in x-riak-if-not-modified header">>,
         Msg
-    ).  
+    ).
 
 headers_single_encoding_test() ->
     VcE = vclock:increment('node1@127.0.0.1', vclock:fresh()),
@@ -973,7 +975,7 @@ headers_multiple_value_error2_test() ->
         Msg
     ),
     ?assertMatch(
-        [{'Content-Type',<<"text/plain">>}, {<<"Accept-Post">>,<<"*/*">>}],
+        [{'Content-Type', <<"text/plain">>}, {<<"Accept-Post">>, <<"*/*">>}],
         lists:sort(Hdrs)
     ),
     MissingHeader =
@@ -1015,7 +1017,7 @@ query_params_positive_test() ->
     ?assertMatch(true, maps:get(returnbody, PutOpts)),
     ?assertMatch(true, maps:get(basic_quorum, PutOpts)),
     ?assertMatch(10, maps:get(timeout, PutOpts)).
-    
+
 extract_params(URI) ->
     uri_string:dissect_query(
         maps:get(
