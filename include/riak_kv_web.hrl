@@ -27,7 +27,7 @@
 -define(HEAD_DELETED, <<"X-Riak-Deleted">>).
 
 %% Case-folded headers to be used in lookups
--define(HEAD_VLOCK_CASEFOLD, <<"x-riak-vclock">>).
+-define(HEAD_VCLOCK_CASEFOLD, <<"x-riak-vclock">>).
 -define(HEAD_IFNOTMOD_CASEFOLD, <<"x-riak-if-not-modified">>).
 -define(HEAD_USERMETA_CASEFOLD, <<"x-riak-meta-">>).
 -define(HEAD_INDEX_CASEFOLD, <<"x-riak-index-">>).

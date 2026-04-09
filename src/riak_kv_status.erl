@@ -151,6 +151,18 @@ get_exometer_values(Entry, DPmap) ->
     end.
 
 expand_disk_stats([{disk, Stats}]) ->
-    [{disk, [{struct, [{id, list_to_binary(Id)}, {size, Size}, {used, Used}]}
-             || {Id, Size, Used} <- Stats]}].
-
+    [    
+        {
+            disk,
+            lists:map(
+                fun({Id, Size, Used}) ->
+                    #{
+                        id => list_to_binary(Id),
+                        size => Size,
+                        used => Used
+                    }
+                end,
+                Stats
+            )
+        }
+    ].

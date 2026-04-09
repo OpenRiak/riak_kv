@@ -21,6 +21,7 @@
 
 -module(riak_kv_web_common).
 
+-include_lib("kernel/include/logger.hrl").
 -include("riak_kv_web.hrl").
 
 -export(
@@ -31,7 +32,8 @@
         count_fold/3,
         boolean_fold/3,
         confirm_empty_body/1,
-        get_client/0
+        get_client/0,
+        decode_clock/1
     ]
 ).
 
@@ -62,7 +64,7 @@ confirm_empty_body(ReqBody) ->
     riak_api_web_headers:headers(),
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
-    riak_object:bucket(),
+    riak_object:bucket() | undefined,
     atom()
 ) ->
     true | riak_api_web_acceptor:halt_response().
@@ -76,6 +78,8 @@ check_permissions(ReqHeaders, Scheme, Peer, Bucket, PermissionRequired) ->
         ),
     case Authorised of
         {ok, undefined} ->
+            true;
+        {ok, _SecContext} when PermissionRequired == undefined ->
             true;
         {ok, SecContext} ->
             PermissionGranted =
@@ -165,7 +169,7 @@ boolean_fold([{PK, PV} | Rest], BoolKeys, Opts) when is_map(Opts) ->
 normalise_rw_param(<<"default">>) ->
     default;
 normalise_rw_param(<<"one">>) ->
-    one;
+    1;
 normalise_rw_param(<<"quorum">>) ->
     quorum;
 normalise_rw_param(<<"all">>) ->
@@ -200,3 +204,16 @@ normalise_boolean_param(V) when is_binary(V) ->
 get_client() ->
     {ok, C} = riak:local_client(),
     C.
+
+-spec decode_clock(unicode:chardata()) -> vclock:vclock() | error.
+decode_clock(EncodedClock) ->
+    try
+        riak_object:decode_vclock(base64:decode(EncodedClock))
+    catch
+        _:Error ->
+            ?LOG_WARNING(
+                "Unexpected error decoding clock ~0p",
+                [Error]
+            ),
+            error
+    end.

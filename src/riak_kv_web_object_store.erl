@@ -21,7 +21,6 @@
 %% requests)
 
 -module(riak_kv_web_object_store).
--include_lib("kernel/include/logger.hrl").
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
 
@@ -389,7 +388,7 @@ validate_conditional_request(ReqHeaders, Ctx) ->
         undefined ->
             {ok, Ctx0};
         {_OrigKey, [EncodedClock]} ->
-            case decode_clock(EncodedClock) of
+            case riak_kv_web_common:decode_clock(EncodedClock) of
                 error ->
                     ErrorRsp =
                         <<
@@ -420,12 +419,12 @@ validate_conditional_request(ReqHeaders, Ctx) ->
     {ok, riak_object:riak_object()} | riak_api_web_acceptor:halt_response().
 set_version_vector(ReqHeaders, Obj) ->
     ClockHeader =
-        riak_api_web_headers:lookup(?HEAD_VLOCK_CASEFOLD, ReqHeaders, true),
+        riak_api_web_headers:lookup(?HEAD_VCLOCK_CASEFOLD, ReqHeaders, true),
     case ClockHeader of
         undefined ->
             {ok, Obj};
         {_OrigKey, [EncodedClock]} ->
-            case decode_clock(EncodedClock) of
+            case riak_kv_web_common:decode_clock(EncodedClock) of
                 error ->
                     ErrorRsp =
                         <<
@@ -692,19 +691,6 @@ handle_error("modified", _Ctx) ->
     {halt, 409, [], <<>>, []};
 handle_error(OtherError, _Ctx) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p">>, [OtherError]}.
-
--spec decode_clock(unicode:chardata()) -> vclock:vclock() | error.
-decode_clock(EncodedClock) ->
-    try
-        riak_object:decode_vclock(base64:decode(EncodedClock))
-    catch
-        _:Error ->
-            ?LOG_WARNING(
-                "Unexpected error decoding clock ~0p",
-                [Error]
-            ),
-            error
-    end.
 
 -spec set_option(
     put_option_key(),
