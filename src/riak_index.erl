@@ -38,7 +38,8 @@
          upgrade_query/1,
          object_key_in_range/3,
          index_key_in_range/3,
-         add_timeout_opt/2
+         add_timeout_opt/2,
+         decode_continuation/1
         ]).
 
 -include_lib("kernel/include/logger.hrl").

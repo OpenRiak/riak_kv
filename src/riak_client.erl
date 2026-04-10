@@ -954,16 +954,25 @@ get_index(Bucket, Query, Opts, {?MODULE, [Node, _ClientId]}) ->
     wait_for_query_results(ReqId, Timeout).
 
 %% @doc Run the provided index query, return a stream handle.
--spec stream_get_index(Bucket :: binary(), Query :: riak_index:query_def(),
-                       riak_client()) ->
-    {ok, ReqId :: term(), FSMPid :: pid()} | {error, Reason :: term()}.
+-spec stream_get_index(
+    Bucket :: riak_object:bucket(),
+    Query :: riak_index:query_def(),
+    riak_client()
+) ->
+    {ok, ReqId :: non_neg_integer(), FSMPid :: pid()}
+    | {error, Reason :: term()}.
 stream_get_index(Bucket, Query, {?MODULE, [_Node, _ClientId]}=THIS) ->
     stream_get_index(Bucket, Query, [{timeout, ?DEFAULT_TIMEOUT}], THIS).
 
 %% @doc Run the provided index query, return a stream handle.
--spec stream_get_index(Bucket :: binary(), Query :: riak_index:query_def(),
-                       Opts :: proplists:proplist(), riak_client()) ->
-    {ok, ReqId :: term(), FSMPid :: pid()} | {error, Reason :: term()}.
+-spec stream_get_index(
+    Bucket :: riak_object:bucket(),
+    Query :: riak_index:query_def(),
+    Opts :: proplists:proplist(),
+    riak_client()
+) ->
+    {ok, ReqId :: non_neg_integer(), FSMPid :: pid()}
+    | {error, Reason :: term()}.
 stream_get_index(Bucket, Query, Opts, {?MODULE, [Node, _ClientId]}) ->
     Timeout = proplists:get_value(timeout, Opts, ?DEFAULT_TIMEOUT),
     MaxResults = proplists:get_value(max_results, Opts, all),

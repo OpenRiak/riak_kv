@@ -295,25 +295,6 @@ record_request(_Timings, _Completion, _Ctx) ->
 %% Validation functions
 %% ===================================================================
 
--spec halt_error({error, term()}) -> riak_api_web_acceptor:halt_response().
-halt_error({error, timeout}) ->
-    {halt, 503, [?TXT_HEADER], <<"request timed out">>, []};
-halt_error({error, {n_val_violation, N}}) ->
-    Msg =
-        <<
-            "Specified w/dw/pw/node_confirms values invalid"
-            " for bucket n value of ~0p"
-        >>,
-    {halt, 400, [?TXT_HEADER], Msg, [N]};
-halt_error({error, {r_val_unsatisfied, Requested, Returned}}) ->
-    Msg = <<"R-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
-halt_error({error, {pr_val_unsatisfied, Requested, Returned}}) ->
-    Msg = <<"PR-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
-halt_error({error, UnexpectedError}) ->
-    {halt, 500, [?TXT_HEADER], <<"Error:~n~p~n">>, [UnexpectedError]}.
-
 -spec maybe_set_vtag(
     riak_api_web_handler:query_params(),
     context()
@@ -343,7 +324,8 @@ validate_timeout(Params, Ctx) ->
                 {ok, set_option(timeout, IntTO, Ctx)}
             catch
                 _:_ ->
-                    {halt, 401, [], <<"Bad timeout value ~0p">>, [TO]}
+                    ErrMsg = <<"Bad timeout value ~0p">>,
+                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
             end
     end.
 
@@ -388,6 +370,25 @@ validate_booleans(Params, Context) ->
 %% ===================================================================
 %% Produce Response
 %% ===================================================================
+
+-spec halt_error({error, term()}) -> riak_api_web_acceptor:halt_response().
+halt_error({error, timeout}) ->
+    {halt, 503, [?TXT_HEADER], <<"request timed out">>, []};
+halt_error({error, {n_val_violation, N}}) ->
+    Msg =
+        <<
+            "Specified w/dw/pw/node_confirms values invalid"
+            " for bucket n value of ~0p"
+        >>,
+    {halt, 400, [?TXT_HEADER], Msg, [N]};
+halt_error({error, {r_val_unsatisfied, Requested, Returned}}) ->
+    Msg = <<"R-value unsatisfied: ~p/~p">>,
+    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
+halt_error({error, {pr_val_unsatisfied, Requested, Returned}}) ->
+    Msg = <<"PR-value unsatisfied: ~p/~p">>,
+    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
+halt_error({error, UnexpectedError}) ->
+    {halt, 500, [?TXT_HEADER], <<"Error:~n~p~n">>, [UnexpectedError]}.
 
 -spec produce_response(
     riak_object:riak_object()
@@ -988,12 +989,12 @@ validate_timeout_test() ->
     ?assertMatch(10, maps:get(timeout, Ctx1#context.get_options)),
     QP2 = extract_params(<<"types/T/buckets/B/keys/K?timeout=-2">>),
     ?assertMatch(
-        {halt, 401, [], <<"Bad timeout value ~0p">>, [<<"-2">>]},
+        {halt, 400, [?TXT_HEADER], <<"Bad timeout value ~0p">>, [<<"-2">>]},
         validate_timeout(QP2, Ctx)
     ),
     QP3 = extract_params(<<"types/T/buckets/B/keys/K?timeout=XC">>),
     ?assertMatch(
-        {halt, 401, [], <<"Bad timeout value ~0p">>, [<<"XC">>]},
+        {halt, 400, [?TXT_HEADER], <<"Bad timeout value ~0p">>, [<<"XC">>]},
         validate_timeout(QP3, Ctx)
     ),
     QP4 = extract_params(<<"types/T/buckets/B/keys/K?timoeut=100">>),
@@ -1032,7 +1033,7 @@ validate_counts_test() ->
         extract_params(
             <<"types/T/buckets/B/keys/K?r=-1&pr=2&node_confirms=1">>
         ),
-    {halt, 401, _, _, [<<"r">>]} = validate_counts(QP3, Ctx),
+    {halt, 400, _, _, [<<"r">>]} = validate_counts(QP3, Ctx),
     {ok, Ctx3} = parse_query_params(QP2, Ctx),
     ?assertMatch(Ctx2, Ctx3).
 
@@ -1055,7 +1056,7 @@ validate_bools_test() ->
         extract_params(
             <<"types/T/buckets/B/keys/K?basic_quorum=true&notfound_ok=flase">>
         ),
-    {halt, 401, _, _, [<<"notfound_ok">>]} = validate_booleans(QP2, Ctx),
+    {halt, 400, _, _, [<<"notfound_ok">>]} = validate_booleans(QP2, Ctx),
     QP3 =
         extract_params(
             <<"types/T/buckets/B/keys/K?basic_quorum=true&notfoundok=false">>

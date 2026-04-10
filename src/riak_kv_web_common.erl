@@ -33,7 +33,8 @@
         boolean_fold/3,
         confirm_empty_body/1,
         get_client/0,
-        decode_clock/1
+        decode_clock/1,
+        normalise_boolean_param/1
     ]
 ).
 
@@ -131,7 +132,7 @@ count_fold([{PK, PV} | Rest], CountKeys, Opts) when is_map(Opts) ->
         true ->
             case normalise_rw_param(PV) of
                 bad_param ->
-                    {halt, 401, [?TXT_HEADER], ?BAD_COUNT_PARAM_TEXT, [PK]};
+                    {halt, 400, [?TXT_HEADER], ?BAD_COUNT_PARAM_TEXT, [PK]};
                 V ->
                     count_fold(
                         Rest,
@@ -156,7 +157,7 @@ boolean_fold([{PK, PV} | Rest], BoolKeys, Opts) when is_map(Opts) ->
         true ->
             case normalise_boolean_param(PV) of
                 bad_param ->
-                    {halt, 401, [?TXT_HEADER], ?BAD_BOOLEAN_PARAM_TEXT, [PK]};
+                    {halt, 400, [?TXT_HEADER], ?BAD_BOOLEAN_PARAM_TEXT, [PK]};
                 V ->
                     boolean_fold(
                         Rest,

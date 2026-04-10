@@ -119,7 +119,8 @@ parse_query_params(Params, Ctx) ->
                 {ok, Ctx#context{timeout = IntTO}}
             catch
                 _:_ ->
-                    {halt, 401, [], <<"Bad timeout value ~0p">>, [TO]}
+                    ErrMsg = <<"Bad timeout value ~0p">>,
+                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
             end
     end.
 
@@ -131,18 +132,25 @@ parse_query_params(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-        <<"application/json">> ->
+        JS when JS == <<"application/json">>; JS == <<"application/*">> ->
             {ok, Ctx#context{content_type = json}};
-        <<"text/plain">> ->
+        TP when TP == <<"text/plain">>; TP == <<"text/plain">> ->
             {ok, Ctx#context{content_type = plain}};
         <<"*/*">> ->
             {ok, Ctx#context{content_type = json}};
         CTL when is_list(CTL) ->
-            case lists:member(<<"application/json">>, CTL) of
+            IsJS =
+                lists:member(<<"application/json">>, CTL) orelse
+                    lists:member(<<"application/*">>, CTL) orelse
+                        lists:member(<<"*/*">>, CTL),
+            IsTP =
+                lists:member(<<"text/plain">>, CTL) orelse
+                    lists:member(<<"text/*">>, CTL),
+            case IsJS of
                 true ->
                     {ok, Ctx#context{content_type = json}};
                 false ->
-                    case lists:member(<<"text/plain">>, CTL) of
+                    case IsTP of
                         true ->
                             {ok, Ctx#context{content_type = plain}};
                         false ->
@@ -233,8 +241,8 @@ produce_response(Stats, plain) ->
 
 size_limits() ->
     {
+        32,
         1024,
-        2048,
         0
     }.
 
@@ -246,14 +254,14 @@ size_limits() ->
 
 -include_lib("eunit/include/eunit.hrl").
 
-delete_test_() ->
-    %% Execute the test cases
-    {foreach,
-      setup(),
-      cleanup(),
-      [
-          fun check_stats_not_crash/0
-      ]
+stats_test_() ->
+    {
+        foreach,
+        setup(),
+        cleanup(),
+        [
+            fun check_stats_not_crash/0
+        ]
   }.
 
 check_stats_not_crash() ->
@@ -278,5 +286,53 @@ configure(load) ->
     application:set_env(riak_core, default_bucket_props, []),
     application:set_env(riak_kv, storage_backend, riak_kv_memory_backend);
 configure(_) -> ok.
+
+accept_header_test() ->
+    InitCtx = #context{},
+    Hdr1 = riak_api_web_headers:make([{'Accept', <<"application/json">>}]),
+    {ok, Ctx1} = parse_request_headers(Hdr1, InitCtx),
+    ?assertMatch(json, Ctx1#context.content_type),
+    Hdr2 = riak_api_web_headers:make([{'Accept', <<"application/*">>}]),
+    {ok, Ctx2} = parse_request_headers(Hdr2, InitCtx),
+    ?assertMatch(json, Ctx2#context.content_type),
+    Hdr3 =
+        riak_api_web_headers:make(
+            [
+                {'Accept', <<"text/plain, application/*">>}
+            ]
+        ),
+    {ok, Ctx3} = parse_request_headers(Hdr3, InitCtx),
+    ?assertMatch(json, Ctx3#context.content_type),
+    Hdr4 =
+        riak_api_web_headers:make(
+            [
+                {'Accept', <<"text/*, application/octet-stream">>}
+            ]
+        ),
+    {ok, Ctx4} = parse_request_headers(Hdr4, InitCtx),
+    ?assertMatch(plain, Ctx4#context.content_type),
+    Hdr5 =
+        riak_api_web_headers:make(
+            [
+                {'Accept', <<"*/*, application/octet-stream">>}
+            ]
+        ),
+    {ok, Ctx5} = parse_request_headers(Hdr5, InitCtx),
+    ?assertMatch(json, Ctx5#context.content_type),
+    Hdr6 =
+        riak_api_web_headers:make([
+                {'Accept', <<"application/octet-stream">>}
+            ]
+        ),
+    ?assertMatch(halt, element(1, parse_request_headers(Hdr6, InitCtx))),
+    Hdr7 =
+        riak_api_web_headers:make([
+                {'Accept', <<"application/octet-stream, text/html">>}
+            ]
+        ),
+    ?assertMatch(halt, element(1, parse_request_headers(Hdr7, InitCtx))),
+    Hdr8 = riak_api_web_headers:make([]),
+    {ok, Ctx8} = parse_request_headers(Hdr8, InitCtx),
+    ?assertMatch(json, Ctx8#context.content_type).
 
 -endif.

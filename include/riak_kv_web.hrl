@@ -31,3 +31,7 @@
 -define(HEAD_IFNOTMOD_CASEFOLD, <<"x-riak-if-not-modified">>).
 -define(HEAD_USERMETA_CASEFOLD, <<"x-riak-meta-">>).
 -define(HEAD_INDEX_CASEFOLD, <<"x-riak-index-">>).
+
+-define(Q_2I_CONTINUATION_BIN, <<"continuation">>).
+-define(Q_RESULTS_BIN, <<"results">>).
+-define(Q_KEYS_BIN, <<"keys">>).

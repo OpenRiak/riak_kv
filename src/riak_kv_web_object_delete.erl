@@ -20,8 +20,6 @@
 %% @doc Handler for HTTP API requests to 'DELETE' an object
 
 -module(riak_kv_web_object_delete).
--include_lib("kernel/include/logger.hrl").
--include("riak_object.hrl").
 -include("riak_kv_web.hrl").
 
 -if(?OTP_RELEASE == 26).
@@ -79,7 +77,7 @@
 
 -record(context, {
     client = riak_kv_web_common:get_client() ::
-        riak_client:riak_client() | test,
+        riak_client:riak_client() | dummy,
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
     del_options = ?DEL_DEFAULTS :: del_options(),
@@ -297,7 +295,8 @@ validate_timeout(Params, Ctx) ->
                 {ok, set_option(timeout, IntTO, Ctx)}
             catch
                 _:_ ->
-                    {halt, 401, [], <<"Bad timeout value ~0p">>, [TO]}
+                    ErrMsg = <<"Bad timeout value ~0p">>,
+                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
             end
     end.
 

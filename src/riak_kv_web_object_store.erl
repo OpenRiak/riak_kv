@@ -79,7 +79,7 @@
 
 -record(context, {
     client = riak_kv_web_common:get_client() ::
-        riak_client:riak_client() | test,
+        riak_client:riak_client() | dummy,
     method :: 'PUT' | 'POST',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -299,7 +299,8 @@ validate_timeout(Params, Ctx) ->
                 {ok, set_option(timeout, IntTO, Ctx)}
             catch
                 _:_ ->
-                    {halt, 401, [], <<"Bad timeout value ~0p">>, [TO]}
+                    ErrMsg = <<"Bad timeout value ~0p">>,
+                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
             end
     end.
 
