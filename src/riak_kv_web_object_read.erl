@@ -313,19 +313,13 @@ maybe_set_vtag(QueryParams, Context) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case lists:keyfind(<<"timeout">>, 1, Params) of
-        false ->
+    case riak_kv_web_common:get_timeout(Params) of
+        {ok, none} ->
             {ok, Ctx};
-        {<<"timeout">>, TO} when is_binary(TO) ->
-            try
-                IntTO = binary_to_integer(TO),
-                true = IntTO >= 0,
-                {ok, set_option(timeout, IntTO, Ctx)}
-            catch
-                _:_ ->
-                    ErrMsg = <<"Bad timeout value ~0p">>,
-                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
-            end
+        {ok, Timeout} ->
+            {ok, set_option(timeout, Timeout, Ctx)};
+        HaltResponse ->
+            HaltResponse
     end.
 
 -spec validate_counts(

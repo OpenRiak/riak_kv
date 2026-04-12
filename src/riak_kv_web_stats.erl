@@ -109,19 +109,13 @@ parse_query_params([], Ctx) ->
     % Typically we expect no options - so shortcut the validation in this case
     {ok, Ctx};
 parse_query_params(Params, Ctx) ->
-    case lists:keyfind(<<"timeout">>, 1, Params) of
-        false ->
+    case riak_kv_web_common:get_timeout(Params) of
+        {ok, none} ->
             {ok, Ctx};
-        {<<"timeout">>, TO} when is_binary(TO) ->
-            try
-                IntTO = binary_to_integer(TO),
-                true = IntTO >= 0,
-                {ok, Ctx#context{timeout = IntTO}}
-            catch
-                _:_ ->
-                    ErrMsg = <<"Bad timeout value ~0p">>,
-                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
-            end
+        {ok, Timeout} ->
+            {ok, Ctx#context{timeout = Timeout}};
+        HaltResponse ->
+            HaltResponse
     end.
 
 %% @doc parse and validate the request headers
@@ -248,6 +242,36 @@ size_limits() ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
+
+extract_params(URI) ->
+    uri_string:dissect_query(
+        maps:get(
+            query,
+            uri_string:normalize(URI, [return_map])
+        )
+    ).
+
+parameter_validation_test() ->
+    {ok, Ctx1} =
+        parse_query_params(
+            extract_params(<<"/stats?timeout=10">>),
+            #context{}
+        ),
+    ?assertMatch(10, Ctx1#context.timeout),
+    {ok, Ctx2} =
+        parse_query_params(
+            extract_params(<<"/stats?undefined_param">>),
+            #context{}
+        ),
+    ?assertMatch(30000, Ctx2#context.timeout),
+    ?assertMatch(
+        {halt, 400, _, _, _},
+            parse_query_params(
+                extract_params(<<"/stats?timeout=B">>),
+                #context{}
+        )
+    ).
 
 stats_test_() ->
     {

@@ -292,19 +292,13 @@ record_request(_Timings, _Completion, _Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case lists:keyfind(<<"timeout">>, 1, Params) of
-        false ->
+    case riak_kv_web_common:get_timeout(Params) of
+        {ok, none} ->
             {ok, Ctx};
-        {<<"timeout">>, TO} when is_binary(TO) ->
-            try
-                IntTO = binary_to_integer(TO),
-                true = IntTO >= 0,
-                {ok, set_option(timeout, IntTO, Ctx)}
-            catch
-                _:_ ->
-                    ErrMsg = <<"Bad timeout value ~0p">>,
-                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
-            end
+        {ok, Timeout} ->
+            {ok, set_option(timeout, Timeout, Ctx)};
+        HaltResponse ->
+            HaltResponse
     end.
 
 -spec validate_counts(
@@ -422,29 +416,13 @@ validate_conditional_request(ReqHeaders, Ctx) ->
 ) ->
     {ok, riak_object:riak_object()} | riak_api_web_acceptor:halt_response().
 set_version_vector(ReqHeaders, Obj) ->
-    ClockHeader =
-        riak_api_web_headers:lookup(?HEAD_VCLOCK_CASEFOLD, ReqHeaders, true),
-    case ClockHeader of
-        undefined ->
+    case riak_kv_web_common:get_version_vector(ReqHeaders) of
+        {ok, none} ->
             {ok, Obj};
-        {_OrigKey, [EncodedClock]} ->
-            case riak_kv_web_common:decode_clock(EncodedClock) of
-                error ->
-                    ErrorRsp =
-                        <<
-                            "Error decoding vector clock in "
-                            "x-riak-vclock header"
-                        >>,
-                    {halt, 400, [?TXT_HEADER], ErrorRsp, []};
-                DecodedClock ->
-                    {ok, riak_object:set_vclock(Obj, DecodedClock)}
-            end;
-        {_OrigKey, _MultipleClocks} ->
-            ErrorRsp =
-                <<
-                    "Only one x-riak-vclock may be specified"
-                >>,
-            {halt, 400, [?TXT_HEADER], ErrorRsp, []}
+        {ok, DecodedClock} ->
+            {ok, riak_object:set_vclock(Obj, DecodedClock)};
+        HaltResponse ->
+            HaltResponse
     end.
 
 -spec set_index_specs(
@@ -721,7 +699,6 @@ size_limits() ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 request_headers_test() ->
     Vc =
@@ -746,8 +723,7 @@ request_headers_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {ok, CtxOut} = parse_request_headers(TestHeaderObj, InitCtx),
@@ -804,8 +780,7 @@ headers_clock_error1_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {halt, 400, [?TXT_HEADER], Msg, _Subs} =
@@ -840,8 +815,7 @@ headers_clock_error2_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {halt, 400, [?TXT_HEADER], Msg, _Subs} =
@@ -865,8 +839,7 @@ headers_single_encoding_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {ok, CtxOut} = parse_request_headers(TestHeaderObj, InitCtx),
@@ -901,8 +874,7 @@ headers_multiple_value_error1_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {halt, 400, [?TXT_HEADER], Msg, []} =
@@ -954,8 +926,7 @@ headers_multiple_value_error2_test() ->
         #context{
             method = 'PUT',
             bucket = {<<"T">>, <<"B">>},
-            key = <<"K">>,
-            client = dummy
+            key = <<"K">>
         },
     TestHeaderObj = riak_api_web_headers:make(TestHeaders),
     {halt, 415, Hdrs, Msg, []} =
@@ -986,7 +957,6 @@ headers_multiple_value_error2_test() ->
 query_params_positive_test() ->
     Ctx =
         #context{
-            client = dummy,
             method = 'POST',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1014,6 +984,57 @@ extract_params(URI) ->
             query,
             uri_string:normalize(URI, [return_map])
         )
+    ).
+
+query_params_error_test() ->
+    InitCtx =
+        #context{
+            method = 'POST',
+            bucket = {<<"T">>, <<"B">>},
+            key = <<"K">>
+        },
+    URI1 =
+        <<
+            "types/T/buckets/B/keys/K?timeout=A"
+            "&asis&returnbody=true&basic_quorum=true"
+            "&dw=0&pw=1"
+            "&sync_on_write=one"
+        >>,
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(extract_params(URI1), InitCtx)
+    ),
+    URI2 =
+        <<
+            "types/T/buckets/B/keys/K?timeout=10"
+            "&asis&returnbody=true&basic_quorum=1"
+            "&dw=0&pw=1"
+        >>,
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(extract_params(URI2), InitCtx)
+    ),
+    URI3 =
+        <<
+            "types/T/buckets/B/keys/K?timeout=10"
+            "&asis&returnbody=true&basic_quorum=true"
+            "&dw=0&pw=true"
+            "&sync_on_write=one"
+        >>,
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(extract_params(URI3), InitCtx)
+    ),
+    URI4 =
+        <<
+            "types/T/buckets/B/keys/K?"
+            "&asis&returnbody=true&basic_quorum=true"
+            "&dw=0&pw=1"
+            "&sync_on_write=false"
+        >>,
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(extract_params(URI4), InitCtx)
     ).
 
 -endif.

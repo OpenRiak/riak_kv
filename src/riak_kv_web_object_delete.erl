@@ -284,19 +284,13 @@ record_request(_Timings, _Completion, _Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case lists:keyfind(<<"timeout">>, 1, Params) of
-        false ->
+    case riak_kv_web_common:get_timeout(Params) of
+        {ok, none} ->
             {ok, Ctx};
-        {<<"timeout">>, TO} when is_binary(TO) ->
-            try
-                IntTO = binary_to_integer(TO),
-                true = IntTO >= 0,
-                {ok, set_option(timeout, IntTO, Ctx)}
-            catch
-                _:_ ->
-                    ErrMsg = <<"Bad timeout value ~0p">>,
-                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
-            end
+        {ok, Timeout} ->
+            {ok, set_option(timeout, Timeout, Ctx)};
+        HaltResponse ->
+            HaltResponse
     end.
 
 -spec validate_counts(
@@ -351,29 +345,13 @@ validate_booleans(Params, Context) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 set_version_vector(ReqHeaders, Ctx) ->
-    ClockHeader =
-        riak_api_web_headers:lookup(?HEAD_VCLOCK_CASEFOLD, ReqHeaders, true),
-    case ClockHeader of
-        undefined ->
+    case riak_kv_web_common:get_version_vector(ReqHeaders) of
+        {ok, none} ->
             {ok, Ctx};
-        {_OrigKey, [EncodedClock]} ->
-            case riak_kv_web_common:decode_clock(EncodedClock) of
-                error ->
-                    ErrorRsp =
-                        <<
-                            "Error decoding vector clock in "
-                            "x-riak-vclock header"
-                        >>,
-                    {halt, 400, [?TXT_HEADER], ErrorRsp, []};
-                DecodedClock ->
-                    {ok, Ctx#context{vclock = DecodedClock}}
-            end;
-        {_OrigKey, _MultipleClocks} ->
-            ErrorRsp =
-                <<
-                    "Only one x-riak-vclock may be specified"
-                >>,
-            {halt, 400, [?TXT_HEADER], ErrorRsp, []}
+        {ok, DecodedClock} ->
+            {ok, Ctx#context{vclock = DecodedClock}};
+        HaltResponse ->
+            HaltResponse
     end.
 
 -spec handle_error(term(), context()) -> riak_api_web_acceptor:halt_response().
@@ -432,5 +410,88 @@ size_limits() ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+
+extract_params(URI) ->
+    uri_string:dissect_query(
+        maps:get(
+            query,
+            uri_string:normalize(URI, [return_map])
+        )
+    ).
+
+parameter_validation_test() ->
+    InitCtx = #context{bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
+    {ok, Ctx1} =
+        parse_query_params(
+            extract_params(
+                <<"/types/T/buckets/B/keys/K?timeout=10">>
+            ),
+            InitCtx
+        ),
+    ?assertMatch(10, maps:get(timeout, Ctx1#context.del_options)),
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(
+            extract_params(<<"/types/T/buckets/B/keys/K?timeout=*">>),
+            InitCtx
+        )
+    ),
+    {ok, Ctx2} =
+        parse_query_params(
+            extract_params(
+                <<"/types/T/buckets/B/keys/K?w=1&rw=1&sloppy_quorum=true">>
+            ),
+            InitCtx
+        ),
+    ?assertMatch(1, maps:get(w, Ctx2#context.del_options)),
+    ?assertMatch(1, maps:get(rw, Ctx2#context.del_options)),
+    ?assertMatch(true, maps:get(sloppy_quorum, Ctx2#context.del_options)),
+
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(
+            extract_params(
+                <<"/types/T/buckets/B/keys/K?w=A&rw=1&sloppy_quorum=true">>
+            ),
+            InitCtx
+        )
+    ),
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_query_params(
+            extract_params(
+                <<"/types/T/buckets/B/keys/K?w=1&rw=1&sloppy_quorum=1">>
+            ),
+            InitCtx
+        )
+    ).
+
+header_validation_test() ->
+    Vc0 = vclock:increment('node1@127.0.0.1', vclock:fresh()),
+    Vc1 = vclock:increment('node1@127.0.0.1', Vc0),
+    Hdr0 =
+        {
+            <<"X-Riak-vclock">>,
+            base64:encode(riak_object:encode_vclock(Vc0))
+        },
+    Hdr1 =
+        {
+            <<"X-Riak-vclock">>,
+            base64:encode(riak_object:encode_vclock(Vc1))
+        },
+    InitCtx = #context{bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
+    {ok, Ctx1} =
+        parse_request_headers(
+            riak_api_web_headers:make([Hdr1]),
+            InitCtx
+        ),
+    ?assertMatch(Vc1, Ctx1#context.vclock),
+    ?assertMatch(
+        {halt, 400, _, _, _},
+        parse_request_headers(
+            riak_api_web_headers:make([Hdr0, Hdr1]),
+            InitCtx
+        )
+    ).
 
 -endif.

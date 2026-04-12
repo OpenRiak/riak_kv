@@ -35,7 +35,9 @@
         decode_clock/1,
         normalise_boolean_param/1,
         type_match/2,
-        add_routes/0
+        add_routes/0,
+        get_version_vector/1,
+        get_timeout/1
     ]
 ).
 
@@ -48,8 +50,7 @@
     "~0p query parameter must be true or false"
 >>).
 
-
--spec add_routes() ->ok.
+-spec add_routes() -> ok.
 add_routes() ->
     Routes =
         [
@@ -243,17 +244,17 @@ type_match(ContentType, AcceptedTypes) ->
         true ->
             {true, ContentType};
         false ->
-        case split_type(ContentType) of
-            {Type, SubType} ->
-                type_match(Type, SubType, ContentType, AcceptedTypes);
-            error ->
-                type_match(
-                    <<"application">>,
-                    <<"octet-stream">>,
-                    <<"application/octet-stream">>,
-                    AcceptedTypes
-                )
-        end
+            case split_type(ContentType) of
+                {Type, SubType} ->
+                    type_match(Type, SubType, ContentType, AcceptedTypes);
+                error ->
+                    type_match(
+                        <<"application">>,
+                        <<"octet-stream">>,
+                        <<"application/octet-stream">>,
+                        AcceptedTypes
+                    )
+            end
     end.
 
 type_match(_Type, _SubType, BinType, []) ->
@@ -278,6 +279,57 @@ split_type(BinType) ->
             error
     end.
 
+-spec get_version_vector(
+    riak_api_web_headers:headers()
+) ->
+    {ok, vclock:vclock()} | {ok, none} | riak_api_web_acceptor:halt_response().
+get_version_vector(ReqHeaders) ->
+    ClockHeader =
+        riak_api_web_headers:lookup(?HEAD_VCLOCK_CASEFOLD, ReqHeaders, true),
+    case ClockHeader of
+        undefined ->
+            {ok, none};
+        {_OrigKey, [EncodedClock]} ->
+            case riak_kv_web_common:decode_clock(EncodedClock) of
+                error ->
+                    ErrorRsp =
+                        <<
+                            "Error decoding vector clock in "
+                            "x-riak-vclock header"
+                        >>,
+                    {halt, 400, [?TXT_HEADER], ErrorRsp, []};
+                DecodedClock ->
+                    {ok, DecodedClock}
+            end;
+        {_OrigKey, _MultipleClocks} ->
+            ErrorRsp =
+                <<
+                    "Only one x-riak-vclock may be specified"
+                >>,
+            {halt, 400, [?TXT_HEADER], ErrorRsp, []}
+    end.
+
+-spec get_timeout(
+    riak_api_web_handler:query_params()
+) ->
+    {ok, non_neg_integer()}
+    | {ok, none}
+    | riak_api_web_acceptor:halt_response().
+get_timeout(Params) ->
+    case lists:keyfind(<<"timeout">>, 1, Params) of
+        false ->
+            {ok, none};
+        {<<"timeout">>, TO} when is_binary(TO) ->
+            try
+                IntTO = binary_to_integer(TO),
+                true = IntTO >= 0,
+                {ok, IntTO}
+            catch
+                _:_ ->
+                    ErrMsg = <<"Bad timeout value ~0p">>,
+                    {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
+            end
+    end.
 
 %% ===================================================================
 %% EUnit tests
