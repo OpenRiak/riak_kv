@@ -55,7 +55,7 @@
     unicode:chardata(),
     list(unicode:chardata())
 ) ->
-    no_match
+    nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route(Method, _Path, [StatsPath]) ->
@@ -67,7 +67,7 @@ match_route(Method, _Path, [StatsPath]) ->
         {ExpectedStatsPath, _OtherMethod} ->
             {method_not_allowed, ['GET']};
         {_OtherPath, _} ->
-            no_match
+            nomatch
     end.
 
 %% @doc check_permissions for using this module or route
@@ -132,35 +132,30 @@ parse_query_params(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-        JS when JS == <<"application/json">>; JS == <<"application/*">> ->
+        undefined ->
             {ok, Ctx#context{content_type = json}};
-        TP when TP == <<"text/plain">>; TP == <<"text/plain">> ->
-            {ok, Ctx#context{content_type = plain}};
-        <<"*/*">> ->
-            {ok, Ctx#context{content_type = json}};
-        CTL when is_list(CTL) ->
-            IsJS =
-                lists:member(<<"application/json">>, CTL) orelse
-                    lists:member(<<"application/*">>, CTL) orelse
-                        lists:member(<<"*/*">>, CTL),
-            IsTP =
-                lists:member(<<"text/plain">>, CTL) orelse
-                    lists:member(<<"text/*">>, CTL),
-            case IsJS of
-                true ->
+        AcceptedTypes ->
+            JsonOK =
+                riak_kv_web_common:type_match(
+                    <<"application/json">>,
+                    AcceptedTypes
+                ),
+            case JsonOK of
+                {true, _} ->
                     {ok, Ctx#context{content_type = json}};
-                false ->
-                    case IsTP of
-                        true ->
+                _ ->
+                    PlainOK =
+                        riak_kv_web_common:type_match(
+                            <<"text/plain">>,
+                            AcceptedTypes
+                        ),
+                    case PlainOK of
+                        {true, _} ->
                             {ok, Ctx#context{content_type = plain}};
-                        false ->
+                        _ ->
                             {halt, 406, [], <<>>, []}
                     end
-            end;
-        undefined ->
-            {ok, Ctx#context{content_type = json}};               
-        CT when is_binary(CT) ->
-            {halt, 406, [], <<>>, []}
+            end
     end.
 
 %% @doc Process the request and produce a response

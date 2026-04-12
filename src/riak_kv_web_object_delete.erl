@@ -76,8 +76,7 @@
     }.
 
 -record(context, {
-    client = riak_kv_web_common:get_client() ::
-        riak_client:riak_client() | dummy,
+    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
     del_options = ?DEL_DEFAULTS :: del_options(),
@@ -95,7 +94,7 @@
     unicode:chardata(),
     list(unicode:chardata())
 ) ->
-    no_match
+    nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route(
@@ -117,7 +116,7 @@ match_route(
             Method == 'PUT';
             Method == 'POST'
         ->
-            no_match;
+            nomatch;
         _OtherMethod ->
             {method_not_allowed, ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']}
     end;
@@ -143,7 +142,7 @@ match_route(
         [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>, K]
     );
 match_route(_Method, _Path, _SplitPath) ->
-    no_match.
+    nomatch.
 
 %% @doc check_permissions for using this module or route
 -spec check_permissions(

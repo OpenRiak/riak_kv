@@ -32,9 +32,10 @@
         count_fold/3,
         boolean_fold/3,
         confirm_empty_body/1,
-        get_client/0,
         decode_clock/1,
-        normalise_boolean_param/1
+        normalise_boolean_param/1,
+        type_match/2,
+        add_routes/0
     ]
 ).
 
@@ -46,6 +47,19 @@
 -define(BAD_BOOLEAN_PARAM_TEXT, <<
     "~0p query parameter must be true or false"
 >>).
+
+
+-spec add_routes() ->ok.
+add_routes() ->
+    Routes =
+        [
+            {5, riak_kv_web_object_read},
+            {10, riak_kv_web_object_store},
+            {15, riak_kv_web_object_delete},
+            {30, riak_kv_web_index},
+            {80, riak_kv_web_stats}
+        ],
+    riak_api_web:add_routes(Routes).
 
 -spec confirm_empty_body(
     riak_api_web_body:req_body()
@@ -202,10 +216,6 @@ normalise_boolean_param(V) when is_binary(V) ->
             bad_param
     end.
 
-get_client() ->
-    {ok, C} = riak:local_client(),
-    C.
-
 -spec decode_clock(unicode:chardata()) -> vclock:vclock() | error.
 decode_clock(EncodedClock) ->
     try
@@ -218,3 +228,167 @@ decode_clock(EncodedClock) ->
             ),
             error
     end.
+
+-spec type_match(
+    binary(),
+    list(binary()) | binary() | all
+) ->
+    {boolean(), binary()}.
+type_match(ContentType, all) ->
+    {true, ContentType};
+type_match(ContentType, AcceptedType) when is_binary(AcceptedType) ->
+    type_match(ContentType, [AcceptedType]);
+type_match(ContentType, AcceptedTypes) ->
+    case lists:member(<<"*/*">>, AcceptedTypes) of
+        true ->
+            {true, ContentType};
+        false ->
+        case split_type(ContentType) of
+            {Type, SubType} ->
+                type_match(Type, SubType, ContentType, AcceptedTypes);
+            error ->
+                type_match(
+                    <<"application">>,
+                    <<"octet-stream">>,
+                    <<"application/octet-stream">>,
+                    AcceptedTypes
+                )
+        end
+    end.
+
+type_match(_Type, _SubType, BinType, []) ->
+    {false, BinType};
+type_match(Type, SubType, BinType, [AcceptedType | Rest]) ->
+    case split_type(AcceptedType) of
+        {Type, SubType} ->
+            {true, BinType};
+        {Type, <<"*">>} ->
+            {true, BinType};
+        _ ->
+            type_match(Type, SubType, BinType, Rest)
+    end.
+
+-spec split_type(binary()) -> {binary(), binary()} | error.
+split_type(BinType) ->
+    [PrimaryTypeInfo | _Rest] = string:split(BinType, <<";">>, leading),
+    case string:split(PrimaryTypeInfo, <<"/">>, leading) of
+        [Type, SubType] when is_binary(Type), is_binary(SubType) ->
+            {Type, SubType};
+        _NotSplitAsExpected ->
+            error
+    end.
+
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
+split_path(RequestLine) ->
+    {ok, {http_request, Method, {abs_path, Path}, _Version}, _Rest} =
+        erlang:decode_packet(http_bin, RequestLine, []),
+    URIMap = uri_string:normalize(Path, [return_map]),
+    NormalisedPath = maps:get(path, URIMap, <<"">>),
+    case string:split(NormalisedPath, <<"/">>, all) of
+        [<<>> | Rest] ->
+            {ok, Method, Rest, NormalisedPath};
+        PathList when is_list(PathList) ->
+            {ok, Method, PathList, NormalisedPath}
+    end.
+
+check_path(RequestLine) ->
+    {ok, Method, SplitPath, AbsPath} = split_path(RequestLine),
+    io:format("~0p ~0p~n", [SplitPath, AbsPath]),
+    riak_api_web:get_route(Method, AbsPath, SplitPath).
+
+routing_test() ->
+    add_routes(),
+    ?assertMatch(
+        {ok, riak_kv_web_object_read, _, _},
+        check_path(<<"GET /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_read, _, _},
+        check_path(<<"HEAD /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_read, _, _},
+        check_path(<<"GET /buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', _}], <<>>, []},
+        check_path(<<"OPTIONS /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_store, _, _},
+        check_path(<<"POST /types/T/buckets/B/keys HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', _}], <<>>, []},
+        check_path(<<"PUT /types/T/buckets/B/keys HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_store, _, _},
+        check_path(<<"POST /buckets/B/keys HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_delete, _, _},
+        check_path(<<"DELETE /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_object_delete, _, _},
+        check_path(<<"DELETE /buckets/B/keys/K HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_index, _, _},
+        check_path(
+            <<"GET /types/T/buckets/B/index/field1_bin/exact HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_index, _, _},
+        check_path(
+            <<"GET /types/T/buckets/B/index/field1_bin/s/e HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_index, _, _},
+        check_path(
+            <<"GET /buckets/B/index/field1_bin/exact HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_index, _, _},
+        check_path(
+            <<"GET /buckets/B/index/field1_bin/s/e HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_index, _, _},
+        check_path(
+            <<"GET /buckets/B/index/field1_int/1/10 HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET">>}], <<>>, []},
+        check_path(
+            <<"HEAD /types/T/buckets/B/index/field1_bin/s/e HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_stats, _, _},
+        check_path(
+            <<"GET /stats HTTP/1.1\r\n">>
+        )
+    ),
+    ?assertMatch(
+        {halt, 404, [], <<>>, []},
+        check_path(
+            <<"GET /other HTTP/1.1\r\n">>
+        )
+    ).
+
+-endif.

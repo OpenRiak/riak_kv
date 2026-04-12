@@ -92,8 +92,7 @@
     | timeout.
 
 -record(context, {
-    client = riak_kv_web_common:get_client() ::
-        riak_client:riak_client() | dummy,
+    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
     method :: 'GET' | 'HEAD',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -116,7 +115,7 @@
     unicode:chardata(),
     list(unicode:chardata())
 ) ->
-    no_match
+    nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route(
@@ -134,7 +133,7 @@ match_route(
                 },
             {ok, size_limits(), Context};
         Method when Method == 'PUT'; Method == 'POST'; Method == 'DELETE' ->
-            no_match;
+            nomatch;
         _OtherMethod ->
             {method_not_allowed, ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']}
     end;
@@ -149,7 +148,7 @@ match_route(
         [<<"types">>, <<"default">>, <<"buckets">>, Bucket, <<"keys">>, Key]
     );
 match_route(_Method, _Path, _SplitPath) ->
-    no_match.
+    nomatch.
 
 %% @doc check_permissions for using this module or route
 -spec check_permissions(
@@ -398,7 +397,6 @@ produce_response(Object) ->
     produce_response(
         Object,
         #context{
-            client = dummy,
             method = 'GET',
             bucket = riak_object:bucket(Object),
             key = riak_object:key(Object)
@@ -623,7 +621,12 @@ produce_boundary() ->
     | {200 | 300 | 406, riak_api_web_headers:header_list(), binary()}.
 produce_response_headers(MD, Hdrs, type, Context) ->
     ContentType = get_ctype(MD),
-    case type_match(ContentType, Context#context.accepted_types) of
+    TypeMatch =
+        riak_kv_web_common:type_match(
+            ContentType,
+            Context#context.accepted_types
+        ),
+    case TypeMatch of
         {true, CType} ->
             ExtendedCType =
                 case riak_object:metadata_find(?MD_CHARSET, MD) of
@@ -699,48 +702,6 @@ get_ctype(MD) ->
             <<"application/octet-stream">>
     end.
 
--spec type_match(
-    binary(),
-    list(binary()) | all
-) ->
-    {boolean(), binary()}.
-type_match(ContentType, all) ->
-    {true, ContentType};
-type_match(ContentType, AcceptedTypes) ->
-    case split_type(ContentType) of
-        {Type, SubType} ->
-            type_match(Type, SubType, ContentType, AcceptedTypes);
-        error ->
-            type_match(
-                <<"application">>,
-                <<"octet-stream">>,
-                <<"application/octet-stream">>,
-                AcceptedTypes
-            )
-    end.
-
-type_match(_Type, _SubType, BinType, []) ->
-    {false, BinType};
-type_match(Type, SubType, BinType, [AcceptedType | Rest]) ->
-    case split_type(AcceptedType) of
-        {Type, SubType} ->
-            {true, BinType};
-        {Type, <<"*">>} ->
-            {true, BinType};
-        _ ->
-            type_match(Type, SubType, BinType, Rest)
-    end.
-
--spec split_type(binary()) -> {binary(), binary()} | error.
-split_type(BinType) ->
-    [PrimaryTypeInfo | _Rest] = string:split(BinType, <<";">>, leading),
-    case string:split(PrimaryTypeInfo, <<"/">>, leading) of
-        [Type, SubType] when is_binary(Type), is_binary(SubType) ->
-            {Type, SubType};
-        _NotSplitAsExpected ->
-            error
-    end.
-
 -spec ensure_binary(atom() | binary() | list()) -> binary().
 ensure_binary(B) when is_binary(B) ->
     B;
@@ -810,6 +771,9 @@ size_limits() ->
 
 -include_lib("eunit/include/eunit.hrl").
 
+type_match(Type, AcceptedTypes) ->
+    riak_kv_web_common:type_match(Type, AcceptedTypes).
+
 accept_filter_test() ->
     Accept1 =
         [
@@ -826,7 +790,6 @@ accept_filter_test() ->
     Headers1 = riak_api_web_headers:make(Accept1),
     DummyCtx =
         #context{
-            client = dummy,
             bucket = {<<"Type">>, <<"B">>},
             key = <<"K">>,
             method = 'GET'
@@ -910,7 +873,6 @@ metadata_format_test() ->
     O2 = riak_object:apply_updates(O1),
     Ctx =
         #context{
-            client = dummy,
             method = 'GET',
             bucket = {<<"BT">>, <<"B">>},
             key = <<"K">>
@@ -979,7 +941,6 @@ metadata_format_test() ->
 validate_timeout_test() ->
     Ctx =
         #context{
-            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1007,7 +968,6 @@ validate_timeout_test() ->
 validate_counts_test() ->
     Ctx =
         #context{
-            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1040,7 +1000,6 @@ validate_counts_test() ->
 validate_bools_test() ->
     Ctx =
         #context{
-            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1107,7 +1066,6 @@ singleton_response() ->
     OM1 = riak_object:syntactic_merge(O0, O1),
     Ctx =
         #context{
-            client = dummy,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>
@@ -1148,7 +1106,6 @@ singleton_response() ->
     ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList3)),
     CtxHead =
         #context{
-            client = dummy,
             method = 'HEAD',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>

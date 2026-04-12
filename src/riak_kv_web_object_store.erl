@@ -78,8 +78,7 @@
     }.
 
 -record(context, {
-    client = riak_kv_web_common:get_client() ::
-        riak_client:riak_client() | dummy,
+    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
     method :: 'PUT' | 'POST',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -100,7 +99,7 @@
     unicode:chardata(),
     list(unicode:chardata())
 ) ->
-    no_match
+    nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route(
@@ -118,7 +117,7 @@ match_route(
                 },
             {ok, size_limits(), Context};
         Method when Method == 'GET'; Method == 'HEAD'; Method == 'DELETE' ->
-            no_match;
+            nomatch;
         _OtherMethod ->
             {method_not_allowed, ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']}
     end;
@@ -135,27 +134,31 @@ match_route(
 match_route(
     Method,
     Path,
-    [<<"buckets">>, Bucket, <<"keys">>]
-) when Method == 'POST' ->
-    K = iolist_to_binary(riak_core_util:unique_id_62()),
-    match_route(
-        Method,
-        Path,
-        [<<"types">>, <<"default">>, <<"buckets">>, Bucket, <<"keys">>, K]
-    );
+    [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>]
+) ->
+    case Method of
+        'POST' ->
+            K = iolist_to_binary(riak_core_util:unique_id_62()),
+            match_route(
+                Method,
+                Path,
+                [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>, K]
+            );
+        _ ->
+            {method_not_allowed, ['POST']}
+    end;
 match_route(
     Method,
     Path,
-    [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>]
-) when Method == 'POST' ->
-    K = iolist_to_binary(riak_core_util:unique_id_62()),
+    [<<"buckets">>, Bucket, <<"keys">>]
+) ->
     match_route(
         Method,
         Path,
-        [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>, K]
+        [<<"types">>, <<"default">>, <<"buckets">>, Bucket, <<"keys">>]
     );
 match_route(_Method, _Path, _SplitPath) ->
-    no_match.
+    nomatch.
 
 %% @doc check_permissions for using this module or route
 -spec check_permissions(

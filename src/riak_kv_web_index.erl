@@ -38,8 +38,7 @@
 
 -record(context,
     {
-        client = riak_kv_web_common:get_client() ::
-            riak_client:riak_client() | dummy,
+        client = riak_client:new(node(), self()) :: riak_client:riak_client(),
         bucket :: riak_object:bucket(),
         field :: binary(),
         field_type = bin :: bin|int,
@@ -66,7 +65,7 @@
     unicode:chardata(),
     list(unicode:chardata())
 ) ->
-    no_match
+    nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route(
@@ -118,7 +117,7 @@ match_route(
         [<<"types">>, <<"default">>] ++ SplitPath ++ [T]
     );
 match_route(_Method, _Path, _SP) ->
-    no_match.
+    nomatch.
 
 
 %% @doc check_permissions for using this module or route
@@ -182,26 +181,21 @@ parse_query_params(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-        JS when JS == <<"application/json">>; JS == <<"application/*">> ->
+        undefined ->
             {ok, Ctx};
-        Any when Any == <<"*/*">> ->
-            {ok, Ctx};
-        CTL when is_list(CTL) ->
-            IsJS =
-                lists:member(<<"application/json">>, CTL) orelse
-                    lists:member(<<"application/*">>, CTL) orelse
-                        lists:member(<<"*/*">>, CTL),
-            case IsJS of
+        AcceptType ->
+            {Match, _} =
+                riak_kv_web_common:type_match(
+                    <<"application/json">>,
+                    AcceptType
+                ),
+            case Match of
                 true ->
                     {ok, Ctx};
                 false ->
-                    {halt, 406, [], <<>>, []}
-            end;
-        undefined ->
-            {ok, Ctx};               
-        CT when is_binary(CT) ->
-            ErrMsg = <<"application/json must be accepted">>,
-            {halt, 406, [?TXT_HEADER], ErrMsg, []}
+                    ErrMsg = <<"application/json must be accepted">>,
+                    {halt, 406, [?TXT_HEADER], ErrMsg, []}
+            end
     end.
 
 %% @doc Process the request and produce a response
@@ -813,7 +807,6 @@ test_uri(URI) ->
 validation_test() ->
     InitCtx =
         #context{
-            client = dummy,
             bucket = {<<"T">>, <<"B">>},
             field = <<"index_bin">>,
             start_term = <<"aStart">>,
@@ -925,7 +918,6 @@ validation_test() ->
 accept_header_test() ->
     InitCtx =
         #context{
-            client = dummy,
             bucket = {<<"T">>, <<"B">>},
             field = <<"index_bin">>,
             start_term = <<"aStart">>,

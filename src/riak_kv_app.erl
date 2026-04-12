@@ -241,8 +241,7 @@ start(_Type, _StartArgs) ->
             ok = riak_kv_cli_registry:register_cli(),
 
             %% Add routes for web API
-            %% TODO
-            
+            ok = riak_kv_web_common:add_routes(),
 
             {ok, Pid};
         {error, Reason} ->
