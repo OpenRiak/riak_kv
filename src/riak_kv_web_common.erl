@@ -353,7 +353,6 @@ split_path(RequestLine) ->
 
 check_path(RequestLine) ->
     {ok, Method, SplitPath, AbsPath} = split_path(RequestLine),
-    io:format("~0p ~0p~n", [SplitPath, AbsPath]),
     riak_api_web:get_route(Method, AbsPath, SplitPath).
 
 routing_test() ->

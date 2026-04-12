@@ -29,7 +29,7 @@
   {mod, {riak_kv_app, []}},
   {env, [
          %% Endpoint for system stats HTTP provider
-         {stats_urlpath, "stats"},
+         {stats_urlpath, "/stats"},
 
          %% Secondary code paths
          {add_paths, []},

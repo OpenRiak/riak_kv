@@ -58,10 +58,12 @@
     nomatch
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
-match_route(Method, _Path, [StatsPath]) ->
+match_route(Method, Path, _) ->
     ExpectedStatsPath =
-        iolist_to_binary(application:get_env(riak_kv, stats_urlpath, "stats")),
-    case {StatsPath, Method} of
+        iolist_to_binary(
+            application:get_env(riak_kv, stats_urlpath, "/stats")
+        ),
+    case {Path, Method} of
         {ExpectedStatsPath, 'GET'} ->
             {ok, size_limits(), #context{}};
         {ExpectedStatsPath, _OtherMethod} ->
