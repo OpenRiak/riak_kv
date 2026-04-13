@@ -21,14 +21,13 @@
 
 -module(riak_kv_web_index).
 
--include("riak_kv_web.hrl").
-
--behaviour(riak_api_web_handler).
-
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
 -endif.
 
+-include("riak_kv_web.hrl").
+
+-behaviour(riak_api_web_handler).
 
 -export(
     [
