@@ -25,6 +25,11 @@
 
 -behaviour(riak_api_web_handler).
 
+-if(?OTP_RELEASE == 26).
+-feature(maybe_expr, enable).
+-endif.
+
+
 -export(
     [
         match_route/3,
