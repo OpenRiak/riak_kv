@@ -477,8 +477,10 @@ delete(Bucket,Key,RW,Timeout,THIS) ->
 normal_delete(Bucket, Key, Options, Timeout, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, Options, Timeout,
-                                           Me, ClientId]),
+    riak_kv_delete_sup:start_delete(
+        Node,
+        [ReqId, Bucket, Key, Options, Timeout, Me, ClientId]
+    ),
     RTimeout = recv_timeout(Options),
     wait_for_reqid(ReqId, erlang:min(Timeout, RTimeout)).
 
@@ -554,8 +556,10 @@ delete_vclock(Bucket,Key,VClock,RW,Timeout,THIS) ->
 normal_delete_vclock(Bucket, Key, VClock, Options, Timeout, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    riak_kv_delete_sup:start_delete(Node, [ReqId, Bucket, Key, Options, Timeout,
-                                           Me, ClientId, VClock]),
+    riak_kv_delete_sup:start_delete(
+        Node,
+        [ReqId, Bucket, Key, Options, Timeout, Me, ClientId, VClock]
+    ),
     RTimeout = recv_timeout(Options),
     wait_for_reqid(ReqId, erlang:min(Timeout, RTimeout)).
 

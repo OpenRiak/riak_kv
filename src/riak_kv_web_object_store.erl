@@ -266,7 +266,7 @@ process_request(RqBdy, Context) ->
                 {error, Reason} ->
                     handle_error(Reason, Context);
                 ok ->
-                    {ok, {200, [], <<>>, false}, UpdRqBody};
+                    {ok, {204, [], <<>>, true, UpdRqBody}, Context};
                 {ok, Obj} ->
                     {ok, riak_kv_web_object_read:produce_response(Obj)}
             end
@@ -611,7 +611,9 @@ do_put(Object, Ctx) ->
         none ->
             riak_client:put(
                 Object,
-                CondPutOptions ++ maps:to_list(Ctx#context.put_options),
+                CondPutOptions
+                    ++
+                    riak_kv_web_common:filter_options(Ctx#context.put_options),
                 Ctx#context.client
             );
         _ ->
@@ -620,7 +622,11 @@ do_put(Object, Ctx) ->
                 put,
                 [
                     Object,
-                    CondPutOptions ++ maps:to_list(Ctx#context.put_options)
+                    CondPutOptions
+                        ++
+                        riak_kv_web_common:filter_options(
+                            Ctx#context.put_options
+                        )
                 ]
             )
     end.

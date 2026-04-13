@@ -37,7 +37,8 @@
         type_match/2,
         add_routes/0,
         get_version_vector/1,
-        get_timeout/1
+        get_timeout/1,
+        filter_options/1
     ]
 ).
 
@@ -49,6 +50,15 @@
 -define(BAD_BOOLEAN_PARAM_TEXT, <<
     "~0p query parameter must be true or false"
 >>).
+
+-spec filter_options(#{atom() => term()}) -> list({atom(), term()}).
+filter_options(Options) ->
+    maps:to_list(
+        maps:filter(
+            fun(_K, V) -> V =/= undefined andalso V =/= default end,
+            Options
+        )
+    ).
 
 -spec add_routes() -> ok.
 add_routes() ->

@@ -41,7 +41,7 @@
         client = riak_client:new(node(), self()) :: riak_client:riak_client(),
         bucket :: riak_object:bucket(),
         field :: binary(),
-        field_type = bin :: bin|int,
+        field_type = bin :: bin|int|dollar,
         start_term :: binary(),
         end_term :: binary(),
         max_results = all :: pos_integer() | all,
@@ -312,7 +312,16 @@ validate_maybe_true(Key, Params, Ctx) ->
                 true ->
                     case Key of
                         return_terms ->
-                            {ok, Ctx#context{return_terms = true}};
+                            KeyOnly =
+                                Ctx#context.field_type == dollar
+                                orelse
+                                Ctx#context.start_term == Ctx#context.end_term,
+                            case KeyOnly of
+                                true ->
+                                    {ok, Ctx};
+                                false ->
+                                    {ok, Ctx#context{return_terms = true}}
+                            end;
                         pagination_sort ->
                             {ok, Ctx#context{pagination_sort = true}};
                         stream ->
@@ -330,7 +339,10 @@ validate_maybe_true(Key, Params, Ctx) ->
 -spec validate_query_type(
     context()
 ) -> 
-    {ok, context()}|riak_api_web_acceptor:halt_response(). 
+    {ok, context()}|riak_api_web_acceptor:halt_response().
+validate_query_type(Ctx = #context{field = DollarI})
+        when DollarI == <<"$key">>; DollarI == <<"$bucket">> ->
+    {ok, Ctx#context{field_type = dollar}};
 validate_query_type(Ctx = #context{field = Index}) when is_binary(Index) ->
     case byte_size(Index) of
         L when L > 4  ->
@@ -360,7 +372,7 @@ validate_term_regex(Params, Ctx) ->
             {ok, Ctx};
         {<<"term_regex">>, Re} when is_binary(Re) ->
             case {re:compile(Re), Ctx#context.field_type} of
-                {{ok, _CompiledRe}, bin} ->
+                {{ok, _CompiledRe}, FT} when FT =/= int ->
                     {ok, Ctx#context{term_regex = Re}};
                 {_, int} ->
                     ErrMsg =
@@ -457,7 +469,8 @@ process_memory_query(Query, Ctx, ReqBody) ->
                     iolist_to_binary(JsonResults),
                     true,
                     ReqBody
-                }
+                },
+                Ctx
             };
         {error, timeout} ->
             ErrMsg = <<"Request timed out">>,
@@ -797,6 +810,56 @@ extract_params(URI) ->
 test_uri(URI) ->
     URIBase = <<"types/T/buckets/B/index/index_bin/aStart/zEnd">>,
     << URIBase/binary, URI/binary >>.
+
+valid_dollarkey_test() ->
+    InitCtx =
+        #context{
+            bucket = {<<"T">>, <<"B">>},
+            field = <<"$key">>,
+            start_term = <<"aStart">>,
+            end_term = <<"zEnd">>
+        },
+    {ok, Ctx1} = parse_query_params([], InitCtx),
+    ?assertMatch(dollar, Ctx1#context.field_type),
+    {ok, Ctx2} = parse_query_params([], InitCtx#context{field = <<"$bucket">>}),
+    ?assertMatch(dollar, Ctx2#context.field_type).
+
+validate_return_terms_test() ->
+    % If $bucket, $key or equality query - return_terms should be ignored
+    InitCtx =
+        #context{
+            bucket = {<<"T">>, <<"B">>},
+            field = <<"$key">>,
+            start_term = <<"aStart">>,
+            end_term = <<"zEnd">>
+        },
+    {ok, Ctx1} = parse_query_params([{<<"return_terms">>, true}], InitCtx),
+    ?assertMatch(false, Ctx1#context.return_terms),
+    {ok, Ctx2} =
+        parse_query_params(
+            [{<<"return_terms">>, true}],
+            InitCtx#context{field = <<"$bucket">>}
+        ),
+    ?assertMatch(false, Ctx2#context.return_terms),
+    {ok, Ctx3} =
+        parse_query_params(
+            [{<<"return_terms">>, true}],
+            InitCtx#context{
+                field = <<"field_bin">>,
+                start_term = <<"term">>,
+                end_term = <<"term">>
+            }
+        ),
+    ?assertMatch(false, Ctx3#context.return_terms),
+    ValidCtx =
+        #context{
+            bucket = {<<"T">>, <<"B">>},
+            field = <<"field_bin">>,
+            start_term = <<"aStart">>,
+            end_term = <<"zEnd">>
+        },
+    {ok, Ctx4} = parse_query_params([{<<"return_terms">>, true}], ValidCtx),
+    ?assertMatch(true, Ctx4#context.return_terms).
 
 validation_test() ->
     InitCtx =

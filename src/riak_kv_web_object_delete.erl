@@ -234,29 +234,31 @@ parse_request_headers(ReqHeaders, Ctx) ->
 process_request(RqBdy, Context) ->
     case riak_kv_web_common:confirm_empty_body(RqBdy) of
         {ok, UpdBody} ->
+            DelOptions =
+                riak_kv_web_common:filter_options(Context#context.del_options),
             Result =
                 case Context#context.vclock of
                     undefined ->
                         riak_client:delete(
                             Context#context.bucket,
                             Context#context.key,
-                            maps:to_list(Context#context.del_options),
+                            DelOptions,
                             Context#context.client
                         );
                     DecodedClock ->
-                        riak_client:delete(
+                        riak_client:delete_vclock(
                             Context#context.bucket,
                             Context#context.key,
                             DecodedClock,
-                            maps:to_list(Context#context.del_options),
+                            DelOptions,
                             Context#context.client
                         )
                 end,
             case Result of
                 ok ->
-                    {ok, {200, [], <<>>, true, UpdBody}};
+                    {ok, {204, [], <<>>, true, UpdBody}, Context};
                 {error, notfound} ->
-                    {ok, {200, [], <<>>, true, UpdBody}};
+                    {ok, {204, [], <<>>, true, UpdBody}, Context};
                 {error, Reason} ->
                     handle_error(Reason, Context)
             end;

@@ -212,15 +212,29 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
+    %% There is no concept of preference required - the content-type is either
+    %% accepted or not.  The default is accept all, and so try and find if
+    %% "*/*" is acceptable here, and avoid more complex matching logic when
+    %% producing the response
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
         <<"multipart/mixed">> ->
             {ok, Ctx#context{multipart_accepted = true}};
         <<"*/*">> ->
             {ok, Ctx};
         CTL when is_list(CTL) ->
-            {ok, Ctx#context{accepted_types = CTL}};
+            case lists:filter(fun maybe_all/1, CTL) of
+                [] ->
+                    {ok, Ctx#context{accepted_types = CTL}};
+                L when length(L) > 0 ->
+                    {ok, Ctx}
+            end;
         CT when is_binary(CT) ->
-            {ok, Ctx#context{accepted_types = [CT]}};
+            case maybe_all(CT) of
+                true ->
+                    {ok, Ctx};
+                false ->
+                    {ok, Ctx#context{accepted_types = [CT]}}
+            end;
         undefined ->
             {ok, Ctx}
     end.
@@ -249,7 +263,9 @@ process_request(RqBdy, Context) ->
                 riak_client:get(
                     Context#context.bucket,
                     Context#context.key,
-                    maps:to_list(Context#context.get_options),
+                    riak_kv_web_common:filter_options(
+                        Context#context.get_options
+                    ),
                     Context#context.client
                 ),
             case GetResponse of
@@ -638,7 +654,12 @@ produce_response_headers(MD, Hdrs, type, Context) ->
                 Context
             );
         {false, _} ->
-            {406, [?TXT_HEADER], <<>>}
+            ErrMsg =
+                io_lib:format(
+                    <<"Content-Type ~0p not in accepted types of ~0p">>,
+                    [ContentType, Context#context.accepted_types]
+                ),
+            {406, [?TXT_HEADER], iolist_to_binary(ErrMsg)}
     end;
 produce_response_headers(MD, Hdrs, encoding, Context) ->
     case riak_object:metadata_find(?MD_ENCODING, MD) of
@@ -757,6 +778,15 @@ size_limits() ->
         0
     }.
 
+-spec maybe_all(binary()) -> boolean().
+maybe_all(CType) ->
+    case string:split(CType, <<";">>, leading) of
+        [<<"*/*">>, _Rest] ->
+            true;
+        _ ->
+            false
+    end.
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -764,6 +794,7 @@ size_limits() ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 type_match(Type, AcceptedTypes) ->
     riak_kv_web_common:type_match(Type, AcceptedTypes).
@@ -822,7 +853,7 @@ accept_filter_test() ->
         ),
     ?assertMatch([{'Content-Type', <<"application/xml">>}], HdrList1),
     ?assertMatch(
-        {406, [?TXT_HEADER], <<>>},
+        {406, [?TXT_HEADER], _},
         produce_response_headers(
             #{<<"content-type">> => "application+badly-formatted"},
             [],
@@ -831,7 +862,7 @@ accept_filter_test() ->
         )
     ),
     ?assertMatch(
-        {406, [?TXT_HEADER], <<>>},
+        {406, [?TXT_HEADER], _},
         produce_response_headers(
             #{<<"content-type">> => "application/json"}, [], type, UpdCtx
         )
@@ -1140,7 +1171,6 @@ sibling_response() ->
     OM1 = riak_object:reconcile([O1, O2], true),
     Ctx1 =
         #context{
-            client = test,
             method = 'GET',
             bucket = {<<"T">>, <<"B">>},
             key = <<"K">>,
@@ -1303,4 +1333,38 @@ get_metadata(LastMod, ETag) ->
         ]
     ).
 
+hidden_all_accepted_test() ->
+    ReqHeaders1 =
+        riak_api_web_headers:make(
+            [{'Accept', [<<"multipart/mixed">>,<<"*/*;q=0.9">>]}]
+        ),
+    InitCtx =
+        #context{method = 'GET', bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
+    {ok, Ctx1} = parse_request_headers(ReqHeaders1, InitCtx),
+    CType = <<"application/octet-stream">>,
+    ?assertMatch(
+        {true, _},
+        riak_kv_web_common:type_match(CType, Ctx1#context.accepted_types)
+    ),
+
+    ReqHeaders2 = 
+        riak_api_web_headers:make(
+            [{'Accept', [<<"multipart/mixed">>,<<"application/*;q=0.9">>]}]
+        ),
+    {ok, Ctx2} = parse_request_headers(ReqHeaders2, InitCtx),
+    ?assertMatch(
+        {true, _},
+        riak_kv_web_common:type_match(CType, Ctx2#context.accepted_types)
+    ),
+
+    ReqHeaders3 = 
+        riak_api_web_headers:make(
+            [{'Accept', <<"*/*;q=0.9">>}]
+        ),
+    {ok, Ctx3} = parse_request_headers(ReqHeaders3, InitCtx),
+    ?assertMatch(
+        {true, _},
+        riak_kv_web_common:type_match(CType, Ctx3#context.accepted_types)
+    ).
+    
 -endif.
