@@ -25,6 +25,7 @@
 -feature(maybe_expr, enable).
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
 -include("riak_kv_web.hrl").
 
 -behaviour(riak_api_web_handler).
@@ -49,12 +50,12 @@
         start_term :: binary(),
         end_term :: binary(),
         max_results = all :: pos_integer() | all,
-        return_terms = false :: boolean(),
+        return_terms_client = false :: boolean(),
         pagination_sort = false :: boolean(),
         stream = false :: boolean(),
         term_regex :: binary() | undefined,
         continuation :: binary() | undefined,
-        timeout = 60000 :: pos_integer()
+        timeout :: pos_integer() | undefined
     }
 ).
 
@@ -222,13 +223,17 @@ parse_request_headers(ReqHeaders, Ctx) ->
 process_request(RqBdy, Ctx) ->
     case riak_kv_web_common:confirm_empty_body(RqBdy) of
         {ok, UpdBody} ->
+            KeyOnly =
+                Ctx#context.field_type == dollar
+                orelse
+                Ctx#context.start_term == Ctx#context.end_term,
             IndexQuery =
                 riak_index:to_index_query(
                     [
                         {field, Ctx#context.field},
                         {start_term, Ctx#context.start_term},
                         {end_term, Ctx#context.end_term},
-                        {return_terms, Ctx#context.return_terms},
+                        {return_terms, not KeyOnly},
                         {continuation, Ctx#context.continuation},
                         {term_regex, Ctx#context.term_regex}
                     ]
@@ -322,9 +327,19 @@ validate_maybe_true(Key, Params, Ctx) ->
                                 Ctx#context.start_term == Ctx#context.end_term,
                             case KeyOnly of
                                 true ->
-                                    {ok, Ctx};
+                                    {
+                                        ok,
+                                        Ctx#context{
+                                            return_terms_client = false
+                                        }
+                                    };
                                 false ->
-                                    {ok, Ctx#context{return_terms = true}}
+                                    {
+                                        ok,
+                                        Ctx#context{
+                                            return_terms_client = true
+                                        }
+                                    }
                             end;
                         pagination_sort ->
                             {ok, Ctx#context{pagination_sort = true}};
@@ -461,7 +476,7 @@ process_memory_query(Query, Ctx, ReqBody) ->
                 ),
             JsonResults =
                 encode_results( 
-                    Ctx#context.return_terms,
+                    Ctx#context.return_terms_client,
                     Results,
                     Continuation
                 ),
@@ -531,9 +546,15 @@ process_stream_query(Query, Ctx, ReqBody) ->
     StreamFun =
         index_stream_fun(
             {ReqID, FSMPid},
-            {Boundary, Ctx#context.return_terms, Ctx#context.max_results}, 
+            {
+                Boundary,
+                Ctx#context.return_terms_client,
+                Ctx#context.max_results
+            },
             {undefined, 0},
-            Ctx#context.timeout
+            proplists:get_value(timeout, Opts)
+                % Need to use same timeout as query, which may be different
+                % to any client timeout
         ),
     {ok, {200, [CTypeHdr], {stream, StreamFun}, true, ReqBody}, Ctx}.
 
@@ -615,11 +636,11 @@ index_stream_fun(
                         Timeout
                     )
                 };
-            {ReqID, _Error} ->
-                error
+            {ReqID, Error} ->
+                stream_error(Error, Boundary)
         after Timeout ->
             whack_index_fsm(ReqID, FSMPid),
-            error
+            stream_error({error, timeout}, Boundary)
         end
     end.
 
@@ -646,6 +667,23 @@ clear_index_fsm_msgs(ReqID) ->
         0 ->
             ok
     end.
+
+stream_error(Error, Boundary) ->
+    ?LOG_ERROR("Error in index wm: ~p", [Error]),
+    ErrorJson = encode_error(Error),
+    Body = ["\r\n--", Boundary, "\r\n",
+            "Content-Type: application/json\r\n\r\n",
+            ErrorJson,
+            "\r\n--", Boundary, "--\r\n"],
+    {iolist_to_binary(Body), fun() -> done end}.
+
+encode_error({error, E}) ->
+    encode_error(E);
+encode_error(Error) when is_atom(Error); is_binary(Error) ->
+    riak_kv_wm_json:encode(#{error => Error});
+encode_error(Error) ->
+    E = io_lib:format("~0p",[Error]),
+    riak_kv_wm_json:encode(#{error => iolist_to_binary(E)}).
 
 %% ===================================================================
 %% Internal Functions
@@ -838,13 +876,13 @@ validate_return_terms_test() ->
             end_term = <<"zEnd">>
         },
     {ok, Ctx1} = parse_query_params([{<<"return_terms">>, true}], InitCtx),
-    ?assertMatch(false, Ctx1#context.return_terms),
+    ?assertMatch(false, Ctx1#context.return_terms_client),
     {ok, Ctx2} =
         parse_query_params(
             [{<<"return_terms">>, true}],
             InitCtx#context{field = <<"$bucket">>}
         ),
-    ?assertMatch(false, Ctx2#context.return_terms),
+    ?assertMatch(false, Ctx2#context.return_terms_client),
     {ok, Ctx3} =
         parse_query_params(
             [{<<"return_terms">>, true}],
@@ -854,7 +892,7 @@ validate_return_terms_test() ->
                 end_term = <<"term">>
             }
         ),
-    ?assertMatch(false, Ctx3#context.return_terms),
+    ?assertMatch(false, Ctx3#context.return_terms_client),
     ValidCtx =
         #context{
             bucket = {<<"T">>, <<"B">>},
@@ -863,7 +901,7 @@ validate_return_terms_test() ->
             end_term = <<"zEnd">>
         },
     {ok, Ctx4} = parse_query_params([{<<"return_terms">>, true}], ValidCtx),
-    ?assertMatch(true, Ctx4#context.return_terms).
+    ?assertMatch(true, Ctx4#context.return_terms_client).
 
 validation_test() ->
     InitCtx =
@@ -901,7 +939,7 @@ validation_test() ->
     {ok, Ctx2} = parse_query_params(extract_params(URI2), InitCtx),
     ?assertMatch(10, Ctx2#context.max_results),
     ?assertMatch(C1, Ctx2#context.continuation),
-    ?assertMatch(true, Ctx2#context.return_terms),
+    ?assertMatch(true, Ctx2#context.return_terms_client),
     ?assertMatch(true, Ctx2#context.pagination_sort),
     ?assertMatch(true, Ctx2#context.stream),
     ?assertMatch(<<".*[A-Z]{1}">>, Ctx2#context.term_regex),
@@ -974,7 +1012,7 @@ validation_test() ->
 
     URI8 = test_uri(<<"?return_terms=false">>),
     {ok, Ctx8} = parse_query_params(extract_params(URI8), InitCtx),
-    ?assertMatch(false, Ctx8#context.return_terms).
+    ?assertMatch(false, Ctx8#context.return_terms_client).
 
 accept_header_test() ->
     InitCtx =
@@ -1103,5 +1141,15 @@ simple_stream_test() ->
             << Boundary:BS/binary, Rest/binary >> ->
                 decode_results(Rest, Boundary, Header, Footer, Acc)
         end.
+
+stream_error_test() ->
+    Boundary = riak_core_util:unique_id_62(),
+    {Err1, ErrFun1} = stream_error({error, timeout}, Boundary),
+    ?assert(is_binary(Err1)),
+    ?assertMatch(done, ErrFun1()),
+    {Err2, ErrFun2} = stream_error({'EXIT', timeout}, Boundary),
+    ?assert(is_binary(Err2)),
+    ?assertMatch(done, ErrFun2()).
+    
 
 -endif.

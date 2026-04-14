@@ -691,8 +691,8 @@ set_option(Option, Value, Context) ->
 
 size_limits() ->
     {
-        1024,
-        2048,
+        application:get_env(riak_kv, max_header_count, 1024),
+        application:get_env(riak_kv, max_header_size, 16384),
         application:get_env(riak_kv, max_object_size)
     }.
 
