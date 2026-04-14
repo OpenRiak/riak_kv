@@ -282,7 +282,7 @@ type_match(Type, SubType, BinType, [AcceptedType | Rest]) ->
 -spec split_type(binary()) -> {binary(), binary()} | error.
 split_type(BinType) ->
     [PrimaryTypeInfo | _Rest] = string:split(BinType, <<";">>, leading),
-    case string:split(PrimaryTypeInfo, <<"/">>, leading) of
+    case binary:split(PrimaryTypeInfo, <<"/">>, []) of
         [Type, SubType] when is_binary(Type), is_binary(SubType) ->
             {Type, SubType};
         _NotSplitAsExpected ->

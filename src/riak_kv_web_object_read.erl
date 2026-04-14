@@ -780,7 +780,7 @@ size_limits() ->
 
 -spec maybe_all(binary()) -> boolean().
 maybe_all(CType) ->
-    case string:split(CType, <<";">>, leading) of
+    case binary:split(CType, <<";">>, []) of
         [<<"*/*">>, _Rest] ->
             true;
         _ ->
@@ -1336,7 +1336,7 @@ get_metadata(LastMod, ETag) ->
 hidden_all_accepted_test() ->
     ReqHeaders1 =
         riak_api_web_headers:make(
-            [{'Accept', [<<"multipart/mixed">>,<<"*/*;q=0.9">>]}]
+            [{'Accept', [<<"multipart/mixed">>, <<"*/*;q=0.9">>]}]
         ),
     InitCtx =
         #context{method = 'GET', bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
@@ -1347,9 +1347,9 @@ hidden_all_accepted_test() ->
         riak_kv_web_common:type_match(CType, Ctx1#context.accepted_types)
     ),
 
-    ReqHeaders2 = 
+    ReqHeaders2 =
         riak_api_web_headers:make(
-            [{'Accept', [<<"multipart/mixed">>,<<"application/*;q=0.9">>]}]
+            [{'Accept', [<<"multipart/mixed">>, <<"application/*;q=0.9">>]}]
         ),
     {ok, Ctx2} = parse_request_headers(ReqHeaders2, InitCtx),
     ?assertMatch(
@@ -1357,7 +1357,7 @@ hidden_all_accepted_test() ->
         riak_kv_web_common:type_match(CType, Ctx2#context.accepted_types)
     ),
 
-    ReqHeaders3 = 
+    ReqHeaders3 =
         riak_api_web_headers:make(
             [{'Accept', <<"*/*;q=0.9">>}]
         ),
@@ -1366,5 +1366,5 @@ hidden_all_accepted_test() ->
         {true, _},
         riak_kv_web_common:type_match(CType, Ctx3#context.accepted_types)
     ).
-    
+
 -endif.

@@ -545,7 +545,7 @@ set_content_type_and_encoding(ReqHeaders, MD) ->
 take_first_encoding([]) ->
     undefined;
 take_first_encoding([Param | Rest]) ->
-    case string:split(Param, "=") of
+    case binary:split(Param, <<"=">>, []) of
         [<<"charset">>, Charset] ->
             Charset;
         _ ->
@@ -611,8 +611,7 @@ do_put(Object, Ctx) ->
         none ->
             riak_client:put(
                 Object,
-                CondPutOptions
-                    ++
+                CondPutOptions ++
                     riak_kv_web_common:filter_options(Ctx#context.put_options),
                 Ctx#context.client
             );
@@ -622,8 +621,7 @@ do_put(Object, Ctx) ->
                 put,
                 [
                     Object,
-                    CondPutOptions
-                        ++
+                    CondPutOptions ++
                         riak_kv_web_common:filter_options(
                             Ctx#context.put_options
                         )
