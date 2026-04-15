@@ -31,7 +31,6 @@
         check_type_exists/1,
         count_fold/3,
         boolean_fold/3,
-        confirm_empty_body/1,
         decode_clock/1,
         normalise_boolean_param/1,
         type_match/2,
@@ -71,20 +70,6 @@ add_routes() ->
             {80, riak_kv_web_stats}
         ],
     riak_api_web:add_routes(Routes).
-
--spec confirm_empty_body(
-    riak_api_web_body:req_body()
-) ->
-    {ok, riak_api_web_body:req_body()} | {error, content_too_large}.
-confirm_empty_body(ReqBody) ->
-    case riak_api_web_body:get_body(ReqBody, all, 10000) of
-        {done, UpdBody} ->
-            {ok, UpdBody};
-        {<<>>, UpdBody} ->
-            confirm_empty_body(UpdBody);
-        {error, content_too_large} ->
-            {error, content_too_large}
-    end.
 
 -spec check_permissions(
     riak_api_web_headers:headers(),

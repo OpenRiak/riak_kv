@@ -216,7 +216,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
 
 %% @doc Process the request and produce a response
 -spec process_request(
-    riak_api_web_body:req_body(),
+    none,
     context()
 ) ->
     {
@@ -226,44 +226,39 @@ parse_request_headers(ReqHeaders, Ctx) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_request(RqBdy, Context) ->
-    case riak_kv_web_common:confirm_empty_body(RqBdy) of
-        {ok, UpdBody} ->
-            DelOptions =
-                riak_kv_web_common:filter_options(Context#context.del_options),
-            Result =
-                case Context#context.vclock of
-                    undefined ->
-                        riak_client:delete(
-                            Context#context.bucket,
-                            Context#context.key,
-                            DelOptions,
-                            Context#context.client
-                        );
-                    DecodedClock ->
-                        riak_client:delete_vclock(
-                            Context#context.bucket,
-                            Context#context.key,
-                            DecodedClock,
-                            DelOptions,
-                            Context#context.client
-                        )
-                end,
-            case Result of
-                ok ->
-                    {ok, {204, [], <<>>, true, UpdBody}, Context};
-                {error, notfound} ->
-                    {ok, {204, [], <<>>, true, UpdBody}, Context};
-                {error, Reason} ->
-                    handle_error(Reason, Context)
-            end;
-        {error, content_too_large} ->
-            {halt, 413, [], <<>>, []}
+process_request(none, Context) ->
+    DelOptions =
+        riak_kv_web_common:filter_options(Context#context.del_options),
+    Result =
+        case Context#context.vclock of
+            undefined ->
+                riak_client:delete(
+                    Context#context.bucket,
+                    Context#context.key,
+                    DelOptions,
+                    Context#context.client
+                );
+            DecodedClock ->
+                riak_client:delete_vclock(
+                    Context#context.bucket,
+                    Context#context.key,
+                    DecodedClock,
+                    DelOptions,
+                    Context#context.client
+                )
+        end,
+    case Result of
+        ok ->
+            {ok, {204, [], <<>>, true, none}, Context};
+        {error, notfound} ->
+            {ok, {204, [], <<>>, true, none}, Context};
+        {error, Reason} ->
+            handle_error(Reason, Context)
     end.
 
 %% @doc Record the output of the interaction

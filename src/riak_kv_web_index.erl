@@ -205,7 +205,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
 
 %% @doc Process the request and produce a response
 -spec process_request(
-    riak_api_web_body:req_body(),
+    riak_api_web_body:req_body() | none,
     context()
 ) ->
     {
@@ -220,35 +220,30 @@ parse_request_headers(ReqHeaders, Ctx) ->
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_request(RqBdy, Ctx) ->
-    case riak_kv_web_common:confirm_empty_body(RqBdy) of
-        {ok, UpdBody} ->
-            KeyOnly =
-                Ctx#context.field_type == dollar
-                orelse
-                Ctx#context.start_term == Ctx#context.end_term,
-            IndexQuery =
-                riak_index:to_index_query(
-                    [
-                        {field, Ctx#context.field},
-                        {start_term, Ctx#context.start_term},
-                        {end_term, Ctx#context.end_term},
-                        {return_terms, not KeyOnly},
-                        {continuation, Ctx#context.continuation},
-                        {term_regex, Ctx#context.term_regex}
-                    ]
-                ),
-            case {IndexQuery, Ctx#context.stream} of
-                {{ok, Q}, true} ->
-                    process_stream_query(Q, Ctx, UpdBody);
-                {{ok, Q}, false} ->
-                    process_memory_query(Q, Ctx, UpdBody);
-                {{error, Error}, _} ->
-                    ErrMsg = <<"Error parsing query ~0p">>,
-                    {halt, 400, [?TXT_HEADER], ErrMsg, [Error]}
-            end;
-        {error, content_too_large} ->
-            {halt, 413, [], <<>>, []}
+process_request(none, Ctx) ->
+    KeyOnly =
+        Ctx#context.field_type == dollar
+        orelse
+        Ctx#context.start_term == Ctx#context.end_term,
+    IndexQuery =
+        riak_index:to_index_query(
+            [
+                {field, Ctx#context.field},
+                {start_term, Ctx#context.start_term},
+                {end_term, Ctx#context.end_term},
+                {return_terms, not KeyOnly},
+                {continuation, Ctx#context.continuation},
+                {term_regex, Ctx#context.term_regex}
+            ]
+        ),
+    case {IndexQuery, Ctx#context.stream} of
+        {{ok, Q}, true} ->
+            process_stream_query(Q, Ctx);
+        {{ok, Q}, false} ->
+            process_memory_query(Q, Ctx);
+        {{error, Error}, _} ->
+            ErrMsg = <<"Error parsing query ~0p">>,
+            {halt, 400, [?TXT_HEADER], ErrMsg, [Error]}
     end.
 
 %% @doc Record the output of the interaction
@@ -434,8 +429,7 @@ validate_continuation(Params, Ctx) ->
 
 -spec process_memory_query(
     any(),
-    context(),
-    riak_api_web_body:req_body()
+    context()
 ) ->
     {
         ok,
@@ -444,12 +438,12 @@ validate_continuation(Params, Ctx) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_memory_query(Query, Ctx, ReqBody) ->
+process_memory_query(Query, Ctx) ->
     Client = Ctx#context.client,
     Bucket = Ctx#context.bucket,
     InitOpts =
@@ -487,7 +481,7 @@ process_memory_query(Query, Ctx, ReqBody) ->
                     [{'Content-Type', <<"application/json">>}],
                     iolist_to_binary(JsonResults),
                     true,
-                    ReqBody
+                    none
                 },
                 Ctx
             };
@@ -501,8 +495,7 @@ process_memory_query(Query, Ctx, ReqBody) ->
 
 -spec process_stream_query(
     any(),
-    context(),
-    riak_api_web_body:req_body()
+    context()
 ) ->
     {
         ok,
@@ -511,11 +504,11 @@ process_memory_query(Query, Ctx, ReqBody) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }.
-process_stream_query(Query, Ctx, ReqBody) ->
+process_stream_query(Query, Ctx) ->
     Client = Ctx#context.client,
     Bucket = Ctx#context.bucket,
 
@@ -556,7 +549,7 @@ process_stream_query(Query, Ctx, ReqBody) ->
                 % Need to use same timeout as query, which may be different
                 % to any client timeout
         ),
-    {ok, {200, [CTypeHdr], {stream, StreamFun}, true, ReqBody}, Ctx}.
+    {ok, {200, [CTypeHdr], {stream, StreamFun}, true, none}, Ctx}.
 
 -type stream_fun() ::
     fun(() -> 

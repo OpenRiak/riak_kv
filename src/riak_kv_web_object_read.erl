@@ -61,9 +61,9 @@
     timeout => undefined
 }).
 
--define(NOT_FOUND(Headers, Body, Ctx), {
+-define(NOT_FOUND(Headers, Ctx), {
     ok,
-    {404, Headers, <<"not found">>, true, UpdBody},
+    {404, Headers, <<"not found">>, true, none},
     Context
 }).
 
@@ -241,7 +241,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
 
 %% @doc Process the request and produce a response
 -spec process_request(
-    riak_api_web_body:req_body(),
+    none,
     context()
 ) ->
     {
@@ -251,49 +251,44 @@ parse_request_headers(ReqHeaders, Ctx) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_request(RqBdy, Context) ->
-    case riak_kv_web_common:confirm_empty_body(RqBdy) of
-        {ok, UpdBody} ->
-            GetResponse =
-                riak_client:get(
-                    Context#context.bucket,
-                    Context#context.key,
-                    riak_kv_web_common:filter_options(
-                        Context#context.get_options
-                    ),
-                    Context#context.client
-                ),
-            case GetResponse of
-                {ok, RObj} ->
-                    {Code, Headers, Body} =
-                        produce_response(RObj, Context),
-                    {ok, {Code, Headers, Body, true, UpdBody}, Context};
-                {error, notfound} ->
-                    %% Not a halt response - as connection may keepalive
-                    ?NOT_FOUND([?TXT_HEADER], UpdBody, Context);
-                {error, {deleted, VClock}} ->
-                    Headers =
-                        [
-                            ?TXT_HEADER,
-                            {?HEAD_DELETED, <<"true">>},
-                            {
-                                ?HEAD_VCLOCK,
-                                base64:encode(
-                                    riak_object:encode_vclock(VClock)
-                                )
-                            }
-                        ],
-                    ?NOT_FOUND(Headers, UpdBody, Context);
-                Error ->
-                    halt_error(Error)
-            end;
-        {error, content_too_large} ->
-            {halt, 413, [], <<>>, []}
+process_request(none, Context) ->
+    GetResponse =
+        riak_client:get(
+            Context#context.bucket,
+            Context#context.key,
+            riak_kv_web_common:filter_options(
+                Context#context.get_options
+            ),
+            Context#context.client
+        ),
+    case GetResponse of
+        {ok, RObj} ->
+            {Code, Headers, Body} =
+                produce_response(RObj, Context),
+            {ok, {Code, Headers, Body, true, none}, Context};
+        {error, notfound} ->
+            %% Not a halt response - as connection may keepalive
+            ?NOT_FOUND([?TXT_HEADER], Context);
+        {error, {deleted, VClock}} ->
+            Headers =
+                [
+                    ?TXT_HEADER,
+                    {?HEAD_DELETED, <<"true">>},
+                    {
+                        ?HEAD_VCLOCK,
+                        base64:encode(
+                            riak_object:encode_vclock(VClock)
+                        )
+                    }
+                ],
+            ?NOT_FOUND(Headers, Context);
+        Error ->
+            halt_error(Error)
     end.
 
 %% @doc Record the output of the interaction

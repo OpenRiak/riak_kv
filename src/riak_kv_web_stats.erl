@@ -156,7 +156,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
 
 %% @doc Process the request and produce a response
 -spec process_request(
-    riak_api_web_body:req_body(),
+    none,
     context()
 ) ->
     {
@@ -166,26 +166,21 @@ parse_request_headers(ReqHeaders, Ctx) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_request(RqBdy, Ctx) ->
-    case riak_kv_web_common:confirm_empty_body(RqBdy) of
-        {ok, UpdBody} ->
-            try 
-                Stats = riak_kv_http_cache:get_stats(Ctx#context.timeout),
-                {Rsp, CType} =
-                    produce_response(Stats, Ctx#context.content_type),
-                {ok, {200, [{'Content-Type', CType}], Rsp, true, UpdBody}, Ctx}
-            catch
-                exit:{timeout, _} ->
-                    ErrMsg = <<"Request timed out after ~w ms">>,
-                    {halt, 503, [?TXT_HEADER], ErrMsg, Ctx#context.timeout}
-            end;
-        {error, content_too_large} ->
-            {halt, 413, [], <<>>, []}
+process_request(none, Ctx) ->
+    try
+        Stats = riak_kv_http_cache:get_stats(Ctx#context.timeout),
+        {Rsp, CType} =
+            produce_response(Stats, Ctx#context.content_type),
+        {ok, {200, [{'Content-Type', CType}], Rsp, true, none}, Ctx}
+    catch
+        exit:{timeout, _} ->
+            ErrMsg = <<"Request timed out after ~w ms">>,
+            {halt, 503, [?TXT_HEADER], ErrMsg, Ctx#context.timeout}
     end.
 
 %% @doc Record the output of the interaction
