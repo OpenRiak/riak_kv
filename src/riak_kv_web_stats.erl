@@ -36,14 +36,12 @@
     ]
 ).
 
--record(context,
-    {
-        timeout = 30000 :: pos_integer(),
-        content_type = json :: content_type()
-    }
-).
+-record(context, {
+    timeout = 30000 :: pos_integer(),
+    content_type = json :: content_type()
+}).
 
--type content_type() :: json|plain.
+-type content_type() :: json | plain.
 -type context() :: #context{}.
 
 %% ===================================================================
@@ -264,9 +262,9 @@ parameter_validation_test() ->
     ?assertMatch(30000, Ctx2#context.timeout),
     ?assertMatch(
         {halt, 400, _, _, _},
-            parse_query_params(
-                extract_params(<<"/stats?timeout=B">>),
-                #context{}
+        parse_query_params(
+            extract_params(<<"/stats?timeout=B">>),
+            #context{}
         )
     ).
 
@@ -278,7 +276,7 @@ stats_test_() ->
         [
             fun check_stats_not_crash/0
         ]
-  }.
+    }.
 
 check_stats_not_crash() ->
     Stats = riak_kv_http_cache:get_stats(30000),
@@ -301,7 +299,8 @@ cleanup() ->
 configure(load) ->
     application:set_env(riak_core, default_bucket_props, []),
     application:set_env(riak_kv, storage_backend, riak_kv_memory_backend);
-configure(_) -> ok.
+configure(_) ->
+    ok.
 
 accept_header_test() ->
     InitCtx = #context{},
@@ -337,15 +336,13 @@ accept_header_test() ->
     ?assertMatch(json, Ctx5#context.content_type),
     Hdr6 =
         riak_api_web_headers:make([
-                {'Accept', <<"application/octet-stream">>}
-            ]
-        ),
+            {'Accept', <<"application/octet-stream">>}
+        ]),
     ?assertMatch(halt, element(1, parse_request_headers(Hdr6, InitCtx))),
     Hdr7 =
         riak_api_web_headers:make([
-                {'Accept', <<"application/octet-stream, text/html">>}
-            ]
-        ),
+            {'Accept', <<"application/octet-stream, text/html">>}
+        ]),
     ?assertMatch(halt, element(1, parse_request_headers(Hdr7, InitCtx))),
     Hdr8 = riak_api_web_headers:make([]),
     {ok, Ctx8} = parse_request_headers(Hdr8, InitCtx),

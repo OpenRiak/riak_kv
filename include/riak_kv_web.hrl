@@ -20,6 +20,7 @@
 %% @doc common definitions for web handlers
 
 -define(TXT_HEADER, {'Content-Type', <<"text/plain">>}).
+-define(JSN_HEADER, {'Content-Type', <<"application/json">>}).
 
 -define(HEAD_VCLOCK, <<"X-Riak-Vclock">>).
 -define(HEAD_USERMETA_PREFIX, <<"X-Riak-Meta-">>).

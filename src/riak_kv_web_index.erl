@@ -41,23 +41,21 @@
     ]
 ).
 
--record(context,
-    {
-        client = riak_client:new(node(), self()) :: riak_client:riak_client(),
-        bucket :: riak_object:bucket(),
-        field :: binary(),
-        field_type = bin :: bin|int|dollar,
-        start_term :: binary(),
-        end_term :: binary(),
-        max_results = all :: pos_integer() | all,
-        return_terms_client = false :: boolean(),
-        pagination_sort = false :: boolean(),
-        stream = false :: boolean(),
-        term_regex :: binary() | undefined,
-        continuation :: binary() | undefined,
-        timeout :: pos_integer() | undefined
-    }
-).
+-record(context, {
+    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    bucket :: riak_object:bucket(),
+    field :: binary(),
+    field_type = bin :: bin | int | dollar,
+    start_term :: binary(),
+    end_term :: binary(),
+    max_results = all :: pos_integer() | all,
+    return_terms_client = false :: boolean(),
+    pagination_sort = false :: boolean(),
+    stream = false :: boolean(),
+    term_regex :: binary() | undefined,
+    continuation :: binary() | undefined,
+    timeout :: pos_integer() | undefined
+}).
 
 -type context() :: #context{}.
 
@@ -123,7 +121,6 @@ match_route(
     );
 match_route(_Method, _Path, _SP) ->
     nomatch.
-
 
 %% @doc check_permissions for using this module or route
 -spec check_permissions(
@@ -222,9 +219,8 @@ parse_request_headers(ReqHeaders, Ctx) ->
     | riak_api_web_acceptor:halt_response().
 process_request(none, Ctx) ->
     KeyOnly =
-        Ctx#context.field_type == dollar
-        orelse
-        Ctx#context.start_term == Ctx#context.end_term,
+        Ctx#context.field_type == dollar orelse
+            Ctx#context.start_term == Ctx#context.end_term,
     IndexQuery =
         riak_index:to_index_query(
             [
@@ -255,7 +251,6 @@ process_request(none, Ctx) ->
     ok.
 record_request(_Timings, _Completion, _Ctx) ->
     ok.
-
 
 %% ===================================================================
 %% Validation functions
@@ -292,7 +287,7 @@ validate_max_results(Params, Ctx) ->
                 {ok, Ctx#context{max_results = IntMR}}
             catch
                 _:_ ->
-                    ErrMsg = 
+                    ErrMsg =
                         <<
                             "Invalid max_results ~0p "
                             "is not a positive integer"
@@ -302,7 +297,7 @@ validate_max_results(Params, Ctx) ->
     end.
 
 -spec validate_maybe_true(
-    return_terms|pagination_sort|stream,
+    return_terms | pagination_sort | stream,
     riak_api_web_handler:query_params(),
     context()
 ) ->
@@ -317,9 +312,9 @@ validate_maybe_true(Key, Params, Ctx) ->
                     case Key of
                         return_terms ->
                             KeyOnly =
-                                Ctx#context.field_type == dollar
-                                orelse
-                                Ctx#context.start_term == Ctx#context.end_term,
+                                Ctx#context.field_type == dollar orelse
+                                    Ctx#context.start_term ==
+                                        Ctx#context.end_term,
                             case KeyOnly of
                                 true ->
                                     {
@@ -352,14 +347,15 @@ validate_maybe_true(Key, Params, Ctx) ->
 
 -spec validate_query_type(
     context()
-) -> 
-    {ok, context()}|riak_api_web_acceptor:halt_response().
-validate_query_type(Ctx = #context{field = DollarI})
-        when DollarI == <<"$key">>; DollarI == <<"$bucket">> ->
+) ->
+    {ok, context()} | riak_api_web_acceptor:halt_response().
+validate_query_type(Ctx = #context{field = DollarI}) when
+    DollarI == <<"$key">>; DollarI == <<"$bucket">>
+->
     {ok, Ctx#context{field_type = dollar}};
 validate_query_type(Ctx = #context{field = Index}) when is_binary(Index) ->
     case byte_size(Index) of
-        L when L > 4  ->
+        L when L > 4 ->
             <<_Idx:(L - 4)/binary, Suffix:4/binary>> = Index,
             case string:casefold(Suffix) of
                 <<"_bin">> ->
@@ -379,7 +375,7 @@ validate_query_type(Ctx = #context{field = Index}) when is_binary(Index) ->
     riak_api_web_handler:query_params(),
     context()
 ) ->
-    {ok, context()}|riak_api_web_acceptor:halt_response().
+    {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_term_regex(Params, Ctx) ->
     case lists:keyfind(<<"term_regex">>, 1, Params) of
         false ->
@@ -397,7 +393,7 @@ validate_term_regex(Params, Ctx) ->
                     {halt, 400, [?TXT_HEADER], ErrMsg, []};
                 {{error, ErrorSpec}, _} ->
                     ErrMsg =
-                        << "Invalid term regular expression ~p : ~p">>,
+                        <<"Invalid term regular expression ~p : ~p">>,
                     {halt, 400, [?TXT_HEADER], ErrMsg, [Re, ErrorSpec]}
             end
     end.
@@ -406,7 +402,7 @@ validate_term_regex(Params, Ctx) ->
     riak_api_web_handler:query_params(),
     context()
 ) ->
-    {ok, context()}|riak_api_web_acceptor:halt_response().
+    {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_continuation(Params, Ctx) ->
     case lists:keyfind(<<"continuation">>, 1, Params) of
         false ->
@@ -416,9 +412,9 @@ validate_continuation(Params, Ctx) ->
                 _ = riak_index:decode_continuation(C),
                 {ok, Ctx#context{continuation = C, pagination_sort = true}}
             catch
-                _ : _ ->
+                _:_ ->
                     ErrMsg =
-                        << "Invalid continuation ~p - cannot be decoded">>,
+                        <<"Invalid continuation ~p - cannot be decoded">>,
                     {halt, 400, [?TXT_HEADER], ErrMsg, [C]}
             end
     end.
@@ -469,7 +465,7 @@ process_memory_query(Query, Ctx) ->
                     Results
                 ),
             JsonResults =
-                encode_results( 
+                encode_results(
                     Ctx#context.return_terms_client,
                     Results,
                     Continuation
@@ -534,7 +530,7 @@ process_stream_query(Query, Ctx) ->
                 ]
         end,
     Opts = riak_index:add_timeout_opt(Ctx#context.timeout, InitOpts),
-    {ok, ReqID, FSMPid} = 
+    {ok, ReqID, FSMPid} =
         riak_client:stream_get_index(Bucket, Query, Opts, Client),
     StreamFun =
         index_stream_fun(
@@ -546,22 +542,23 @@ process_stream_query(Query, Ctx) ->
             },
             {undefined, 0},
             proplists:get_value(timeout, Opts)
-                % Need to use same timeout as query, which may be different
-                % to any client timeout
+            % Need to use same timeout as query, which may be different
+            % to any client timeout
         ),
     {ok, {200, [CTypeHdr], {stream, StreamFun}, true, none}, Ctx}.
 
 -type stream_fun() ::
-    fun(() -> 
-        {binary(), stream_fun()} |
-        done |
-        error
+    fun(
+        () ->
+            {binary(), stream_fun()}
+            | done
+            | error
     ).
 
 -spec index_stream_fun(
     {non_neg_integer(), pid()},
-    {unicode:chardata(), boolean(), pos_integer()|all},
-    {{binary(), riak_object:key()}|undefined, non_neg_integer()},
+    {unicode:chardata(), boolean(), pos_integer() | all},
+    {{binary(), riak_object:key()} | undefined, non_neg_integer()},
     non_neg_integer()
 ) ->
     stream_fun().
@@ -591,10 +588,14 @@ index_stream_fun(
                                     #{?Q_2I_CONTINUATION_BIN => Continuation}
                                 ),
                             [
-                                "\r\n--", Boundary, "\r\n",
+                                "\r\n--",
+                                Boundary,
+                                "\r\n",
                                 "Content-Type: application/json\r\n\r\n",
                                 Json,
-                                "\r\n--", Boundary, "--\r\n"
+                                "\r\n--",
+                                Boundary,
+                                "--\r\n"
                             ]
                     end,
                 {
@@ -614,12 +615,14 @@ index_stream_fun(
             {ReqID, {results, Results}} ->
                 JsonResults =
                     encode_results(ReturnTerms, Results, undefined),
-                Body = 
-                [
-                    "\r\n--", Boundary, "\r\n",
-                    "Content-Type: application/json\r\n\r\n",
-                    JsonResults
-                ],
+                Body =
+                    [
+                        "\r\n--",
+                        Boundary,
+                        "\r\n",
+                        "Content-Type: application/json\r\n\r\n",
+                        JsonResults
+                    ],
                 {
                     iolist_to_binary(Body),
                     index_stream_fun(
@@ -656,18 +659,23 @@ clear_index_fsm_msgs(ReqID) ->
     receive
         {ReqID, _} ->
             clear_index_fsm_msgs(ReqID)
-    after
-        0 ->
-            ok
+    after 0 ->
+        ok
     end.
 
 stream_error(Error, Boundary) ->
     ?LOG_ERROR("Error in index wm: ~p", [Error]),
     ErrorJson = encode_error(Error),
-    Body = ["\r\n--", Boundary, "\r\n",
-            "Content-Type: application/json\r\n\r\n",
-            ErrorJson,
-            "\r\n--", Boundary, "--\r\n"],
+    Body = [
+        "\r\n--",
+        Boundary,
+        "\r\n",
+        "Content-Type: application/json\r\n\r\n",
+        ErrorJson,
+        "\r\n--",
+        Boundary,
+        "--\r\n"
+    ],
     {iolist_to_binary(Body), fun() -> done end}.
 
 encode_error({error, E}) ->
@@ -675,7 +683,7 @@ encode_error({error, E}) ->
 encode_error(Error) when is_atom(Error); is_binary(Error) ->
     riak_kv_wm_json:encode(#{error => Error});
 encode_error(Error) ->
-    E = io_lib:format("~0p",[Error]),
+    E = io_lib:format("~0p", [Error]),
     riak_kv_wm_json:encode(#{error => iolist_to_binary(E)}).
 
 %% ===================================================================
@@ -685,7 +693,7 @@ encode_error(Error) ->
 -spec make_continuation(
     all | non_neg_integer(),
     list()
-) -> 
+) ->
     binary() | undefined.
 make_continuation(MR, Results) when is_integer(MR), length(Results) == MR ->
     riak_index:make_continuation(Results);
@@ -710,8 +718,10 @@ otp_encode_results(true, Results, undefined) ->
     );
 otp_encode_results(true, Results, Continuation) ->
     riak_kv_wm_json:encode(
-        #{?Q_RESULTS_BIN => Results,
-            ?Q_2I_CONTINUATION_BIN => Continuation},
+        #{
+            ?Q_RESULTS_BIN => Results,
+            ?Q_2I_CONTINUATION_BIN => Continuation
+        },
         fun results_encode/2
     );
 otp_encode_results(false, Results, undefined) ->
@@ -721,8 +731,10 @@ otp_encode_results(false, Results, undefined) ->
     );
 otp_encode_results(false, Results, Continuation) ->
     riak_kv_wm_json:encode(
-        #{?Q_KEYS_BIN => Results,
-            ?Q_2I_CONTINUATION_BIN => Continuation},
+        #{
+            ?Q_KEYS_BIN => Results,
+            ?Q_2I_CONTINUATION_BIN => Continuation
+        },
         fun keys_encode/2
     ).
 
@@ -760,7 +772,8 @@ encoder_test_() ->
     {timeout, 600, fun encode_tester/0}.
 
 encode_tester() ->
-    timer:sleep(100), % awkward silence to tidy screen output
+    % awkward silence to tidy screen output
+    timer:sleep(100),
     encode_implementation_tester(otp).
 
 encode_implementation_tester(_Otp) ->
@@ -768,29 +781,35 @@ encode_implementation_tester(_Otp) ->
 
     io:format(user, "~n~nTesting Implementation ~w~n", [otp]),
     ResultSetsTiny =
-        [{<<"1K">>, large_results(1000)},
+        [
+            {<<"1K">>, large_results(1000)},
             {<<"2K">>, large_results(2000)},
             {<<"3K">>, large_results(3000)},
             {<<"5K">>, large_results(5000)},
-            {<<"8K">>, large_results(8000)}],
+            {<<"8K">>, large_results(8000)}
+        ],
     encode_tester(ResultSetsTiny, microseconds),
 
     garbage_collect(),
 
     ResultSetsSmall =
-        [{<<"13K">>, large_results(13000)},
+        [
+            {<<"13K">>, large_results(13000)},
             {<<"21K">>, large_results(21000)},
             {<<"34K">>, large_results(34000)},
-            {<<"55K">>, large_results(55000)}],
+            {<<"55K">>, large_results(55000)}
+        ],
     encode_tester(ResultSetsSmall, milliseconds),
 
     garbage_collect(),
 
     ResultSetsMid =
-        [{<<"100K">>, large_results(100000)},
+        [
+            {<<"100K">>, large_results(100000)},
             {<<"200K">>, large_results(200000)},
             {<<"300K">>, large_results(300000)},
-            {<<"500K">>, large_results(500000)}],
+            {<<"500K">>, large_results(500000)}
+        ],
     encode_tester(ResultSetsMid, milliseconds),
 
     ok.
@@ -804,7 +823,7 @@ encode_tester(ResultSets, Unit) ->
                 1000
         end,
     Fun = fun otp_encode_results/2,
-    
+
     TotalTime =
         lists:sum(
             lists:map(
@@ -815,7 +834,8 @@ encode_tester(ResultSets, Unit) ->
                     io:format(
                         user,
                         "Result set of ~s in ~w ~p ",
-                        [Tag, TC div Divisor, Unit]),
+                        [Tag, TC div Divisor, Unit]
+                    ),
                     TC
                 end,
                 ResultSets
@@ -826,7 +846,8 @@ encode_tester(ResultSets, Unit) ->
 large_results(N) ->
     lists:map(
         fun(I) -> {generate_term(I), generate_key(I)} end,
-        lists:seq(1, N)).
+        lists:seq(1, N)
+    ).
 
 generate_term(I) ->
     iolist_to_binary(io_lib:format("q~9..0B", [I])).
@@ -844,7 +865,7 @@ extract_params(URI) ->
 
 test_uri(URI) ->
     URIBase = <<"types/T/buckets/B/index/index_bin/aStart/zEnd">>,
-    << URIBase/binary, URI/binary >>.
+    <<URIBase/binary, URI/binary>>.
 
 valid_dollarkey_test() ->
     InitCtx =
@@ -1042,15 +1063,13 @@ accept_header_test() ->
     ?assertMatch(ok, element(1, parse_request_headers(Hdr5, InitCtx))),
     Hdr6 =
         riak_api_web_headers:make([
-                {'Accept', <<"application/octet-stream">>}
-            ]
-        ),
+            {'Accept', <<"application/octet-stream">>}
+        ]),
     ?assertMatch(halt, element(1, parse_request_headers(Hdr6, InitCtx))),
     Hdr7 =
         riak_api_web_headers:make([
-                {'Accept', <<"*/*">>}
-            ]
-        ),
+            {'Accept', <<"*/*">>}
+        ]),
     ?assertMatch(ok, element(1, parse_request_headers(Hdr7, InitCtx))),
     Hdr8 = riak_api_web_headers:make([]),
     ?assertMatch(ok, element(1, parse_request_headers(Hdr8, InitCtx))).
@@ -1091,7 +1110,7 @@ simple_stream_test() ->
     ?assertMatch(done, StreamFun5()),
     ?assertMatch(<<>>, RBin3),
     Bin = iolist_to_binary([RBin1, RBin2, RBin3, RBin4, RBin5]),
-    R = 
+    R =
         decode_results(
             Bin,
             iolist_to_binary(["\r\n--", Boundary]),
@@ -1102,38 +1121,38 @@ simple_stream_test() ->
     ?assertMatch(300, length(R)),
     ok.
 
-    decode_results(Footer, _Boundary, _Header, Footer, Acc) ->
-        Acc;
-    decode_results(Bin, Boundary, Header, Footer, Acc) ->
-        HS = byte_size(Header),
-        BS = byte_size(Boundary),
-        case Bin of
-            << Header:HS/binary, Rest/binary >> ->
-                [JsonBin, Remainder] =
-                    string:split(Rest, Boundary, leading),
-                case JsonBin of
-                    <<>> ->
-                        decode_results(
-                            Remainder,
-                            Boundary,
-                            Header,
-                            Footer,
-                            Acc
-                        );
-                    JsonBin ->
-                        #{<<"results">> := RL} =
-                            riak_kv_wm_json:decode(JsonBin),
-                        decode_results(
-                            Remainder,
-                            Boundary,
-                            Header,
-                            Footer,
-                            Acc ++ RL
-                        )
-                end;
-            << Boundary:BS/binary, Rest/binary >> ->
-                decode_results(Rest, Boundary, Header, Footer, Acc)
-        end.
+decode_results(Footer, _Boundary, _Header, Footer, Acc) ->
+    Acc;
+decode_results(Bin, Boundary, Header, Footer, Acc) ->
+    HS = byte_size(Header),
+    BS = byte_size(Boundary),
+    case Bin of
+        <<Header:HS/binary, Rest/binary>> ->
+            [JsonBin, Remainder] =
+                string:split(Rest, Boundary, leading),
+            case JsonBin of
+                <<>> ->
+                    decode_results(
+                        Remainder,
+                        Boundary,
+                        Header,
+                        Footer,
+                        Acc
+                    );
+                JsonBin ->
+                    #{<<"results">> := RL} =
+                        riak_kv_wm_json:decode(JsonBin),
+                    decode_results(
+                        Remainder,
+                        Boundary,
+                        Header,
+                        Footer,
+                        Acc ++ RL
+                    )
+            end;
+        <<Boundary:BS/binary, Rest/binary>> ->
+            decode_results(Rest, Boundary, Header, Footer, Acc)
+    end.
 
 stream_error_test() ->
     Boundary = riak_core_util:unique_id_62(),
@@ -1143,6 +1162,5 @@ stream_error_test() ->
     {Err2, ErrFun2} = stream_error({'EXIT', timeout}, Boundary),
     ?assert(is_binary(Err2)),
     ?assertMatch(done, ErrFun2()).
-    
 
 -endif.

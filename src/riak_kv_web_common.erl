@@ -67,7 +67,8 @@ add_routes() ->
             {10, riak_kv_web_object_store},
             {15, riak_kv_web_object_delete},
             {30, riak_kv_web_index},
-            {80, riak_kv_web_stats}
+            {80, riak_kv_web_stats},
+            {90, riak_kv_web_aaefold}
         ],
     riak_api_web:add_routes(Routes).
 
