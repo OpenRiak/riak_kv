@@ -435,9 +435,11 @@ process_request(none, Ctx) ->
                 {ok, Results} ->
                     QueryName = element(1, Query),
                     JsonResults =
-                        riak_kv_clusteraae_fsm:json_encode_results(
-                            QueryName,
-                            Results
+                        iolist_to_binary(
+                            riak_kv_clusteraae_fsm:json_encode_results(
+                                QueryName,
+                                Results
+                            )
                         ),
                     {ok, {200, [?JSN_HEADER], JsonResults, true, none}, Ctx};
                 {error, timeout} ->

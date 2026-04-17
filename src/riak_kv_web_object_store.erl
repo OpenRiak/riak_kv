@@ -23,6 +23,7 @@
 -module(riak_kv_web_object_store).
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
@@ -84,8 +85,9 @@
     key :: riak_object:key(),
     put_options = ?PUT_DEFAULTS :: put_options(),
     object :: riak_object:riak_object() | undefined,
-    if_not_modified :: vclock:vclock() | undefined,
-    if_none_match = false :: boolean()
+    if_not_modified :: true | undefined,
+    if_not_modified_clock :: vclock:vclock() | undefined, 
+    if_none_match :: true | undefined
 }).
 
 -type context() :: #context{}.
@@ -262,6 +264,7 @@ process_request(RqBdy, Context) ->
                     riak_object:update_value(Context#context.object, ObjBody),
                     Context
                 ),
+            ?LOG_INFO("Rsp ~0p", [PutRsp]),
             case PutRsp of
                 {error, Reason} ->
                     handle_error(Reason, Context);
@@ -395,7 +398,13 @@ validate_conditional_request(ReqHeaders, Ctx) ->
                         >>,
                     {halt, 400, [?TXT_HEADER], ErrorRsp, []};
                 DecodedClock ->
-                    {ok, Ctx0#context{if_not_modified = DecodedClock}}
+                    {
+                        ok,
+                        Ctx0#context{
+                            if_not_modified = true,
+                            if_not_modified_clock = DecodedClock
+                        }
+                    }
             end;
         {_OrigKey, _MultipleClocks} ->
             ErrorRsp =
@@ -558,75 +567,46 @@ take_first_encoding([Param | Rest]) ->
 ) ->
     ok | {ok, riak_object:riak_object()} | {error, term()}.
 do_put(Object, Ctx) ->
-    CondPutMode =
-        application:get_env(riak_kv, conditional_put_mode, api_only),
-    {CondPutOptions, SessionToken} =
-        case
-            {
-                Ctx#context.if_not_modified,
-                Ctx#context.if_none_match,
-                CondPutMode =/= api_only
-            }
-        of
-            {undefined, false, _} ->
-                {[], none};
-            {NotMod, NoneMatch, true} ->
-                TokenResult =
-                    riak_kv_token_session:session_request_retry(
-                        {Ctx#context.bucket, Ctx#context.key}
-                    ),
-                case TokenResult of
-                    {true, Token} ->
-                        GetOpts =
-                            [
-                                {basic_quorum, true},
-                                {return_body, false},
-                                {deleted_vclock, true}
-                            ],
-                        Condition =
-                            case NotMod of
-                                undefined ->
-                                    {undefined, true, GetOpts};
-                                InClock ->
-                                    {{true, InClock}, undefined, GetOpts}
-                            end,
-                        {[{condition_check, Condition}], Token};
+    {CheckResult, CondPutOptions, SessionToken} =
+        riak_kv_put_core:ready_conditional_check(
+            Ctx#context.if_not_modified,
+            Ctx#context.if_none_match,
+            fun() -> Ctx#context.if_not_modified_clock end,
+            Ctx#context.bucket,
+            Ctx#context.key,
+            Ctx#context.client
+        ),
+    case CheckResult of
+        ok ->
+            PutRsp =
+                case SessionToken of
+                    none ->
+                        riak_client:put(
+                            Object,
+                            CondPutOptions ++
+                                riak_kv_web_common:filter_options(
+                                    Ctx#context.put_options
+                                ),
+                            Ctx#context.client
+                        );
                     _ ->
-                        case {NotMod, NoneMatch} of
-                            {_, true} ->
-                                {[{if_none_match, true}], none};
-                            {InClock, _} ->
-                                {[{if_not_modified, InClock}], none}
-                        end
-                end;
-            {NotMod, NoneMatch, false} ->
-                case {NotMod, NoneMatch} of
-                    {_, true} ->
-                        {[{if_none_match, true}], none};
-                    {InClock, _} ->
-                        {[{if_not_modified, InClock}], none}
-                end
-        end,
-    case SessionToken of
-        none ->
-            riak_client:put(
-                Object,
-                CondPutOptions ++
-                    riak_kv_web_common:filter_options(Ctx#context.put_options),
-                Ctx#context.client
-            );
-        _ ->
-            riak_kv_token_session:session_use(
-                SessionToken,
-                put,
-                [
-                    Object,
-                    CondPutOptions ++
-                        riak_kv_web_common:filter_options(
-                            Ctx#context.put_options
+                        riak_kv_token_session:session_use(
+                            SessionToken,
+                            put,
+                            [
+                                Object,
+                                CondPutOptions ++
+                                    riak_kv_web_common:filter_options(
+                                        Ctx#context.put_options
+                                    )
+                            ]
                         )
-                ]
-            )
+                end,
+            riak_kv_token_session:session_release(SessionToken),
+            PutRsp;
+        {error, Reason} ->
+            riak_kv_token_session:session_release(SessionToken),
+            {error, Reason}
     end.
 
 %% ===================================================================

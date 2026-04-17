@@ -20,9 +20,12 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_kv_put_core).
+-export([ready_conditional_check/6]).
 -export([init/8, add_result/2, enough/1, response/1,
          final/1, result_shortcode/1, result_idx/1]).
 -export_type([putcore/0, result/0, reply/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -61,6 +64,76 @@
                   idx_type :: idx_type() %% mapping of idx -> primary | fallback
                  }).
 -opaque putcore() :: #putcore{}.
+
+
+%% ====================================================================
+%% Ready Conditional PUT
+%% ====================================================================
+
+-type get_clock_fun() :: fun(() -> vclock:vclock()).
+
+-spec ready_conditional_check(
+    true | undefined,
+    true | undefined,
+    get_clock_fun(),
+    riak_object:bucket(),
+    riak_object:key(),
+    riak_client:riak_client()
+) ->
+    {
+        ok | {error, term()},
+        riak_kv_put_fsm:options(),
+        riak_kv_token_session:session_ref()|none
+    }.
+ready_conditional_check(IfNotModified, IfNoneMatch, ModClockFun, B, K, C) ->
+    CondPutMode =
+        application:get_env(riak_kv, conditional_put_mode, api_only),
+    MakeTokenRequest = CondPutMode =/= api_only,
+    GetOpts =
+        [
+            {basic_quorum, true},
+            {return_body, false},
+            {deleted_vclock, true}
+        ],
+    case {IfNotModified, IfNoneMatch, MakeTokenRequest} of
+        {undefined, undefined, _} ->
+            {ok, [], none};
+        {NotMod, NoneMatch, true} ->
+            TokenResult =
+                riak_kv_token_session:session_request_retry({B, K}),
+            case TokenResult of
+                {true, Token} ->
+                    Condition =
+                        case NotMod of
+                            undefined ->
+                                {undefined, true, GetOpts};
+                            _ ->
+                                {{true, ModClockFun()}, undefined, GetOpts}
+                        end,
+                    {ok, [{condition_check, Condition}], Token};
+                _ ->
+                    ?LOG_WARNING(
+                        "Fallback to weak check as no token available "
+                        "for ~p ~p",
+                        [B, K]
+                    ),
+                    {CheckR, PutOpts} =
+                        riak_kv_put_fsm:conditional_check(
+                            riak_client:get(B, K, GetOpts, C),
+                            {NotMod, ModClockFun()},
+                            NoneMatch
+                        ),
+                    {CheckR, PutOpts, none}
+            end;
+        {NotMod, NoneMatch, false} ->
+            {CheckR, PutOpts} =
+                riak_kv_put_fsm:conditional_check(
+                    riak_client:get(B, K, GetOpts, C),
+                    {NotMod, ModClockFun()},
+                    NoneMatch
+                ),
+            {CheckR, PutOpts, none}
+    end.
 
 %% ====================================================================
 %% Public API
