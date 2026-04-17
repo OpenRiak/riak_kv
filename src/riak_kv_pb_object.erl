@@ -328,6 +328,7 @@ process(
         riak_kv_put_core:ready_conditional_check(
             IfNotModified,
             IfNoneMatch,
+            undefined,
             fun() -> erlify_rpbvc(PbVC) end,
             B,
             K,

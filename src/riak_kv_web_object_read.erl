@@ -217,23 +217,41 @@ parse_request_headers(ReqHeaders, Ctx) ->
     %% "*/*" is acceptable here, and avoid more complex matching logic when
     %% producing the response
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-        <<"multipart/mixed">> ->
-            {ok, Ctx#context{multipart_accepted = true}};
-        <<"*/*">> ->
-            {ok, Ctx};
         CTL when is_list(CTL) ->
-            case lists:filter(fun maybe_all/1, CTL) of
-                [] ->
-                    {ok, Ctx#context{accepted_types = CTL}};
-                L when length(L) > 0 ->
-                    {ok, Ctx}
+            case lists:any(fun maybe_all/1, CTL) of
+                true ->
+                    {ok, Ctx#context{multipart_accepted = true}};
+                false ->
+                    case lists:any(fun maybe_multipart/1, CTL) of
+                        true ->
+                            {
+                                ok,
+                                Ctx#context{
+                                    multipart_accepted = true,
+                                    accepted_types = CTL
+                                }
+                            };
+                        false ->
+                            {ok, Ctx#context{accepted_types = CTL}}
+                    end
             end;
         CT when is_binary(CT) ->
             case maybe_all(CT) of
                 true ->
-                    {ok, Ctx};
+                    {ok, Ctx#context{multipart_accepted = true}};
                 false ->
-                    {ok, Ctx#context{accepted_types = [CT]}}
+                    case maybe_multipart(CT) of
+                        true ->
+                            {
+                                ok,
+                                Ctx#context{
+                                    accepted_types = [CT],
+                                    multipart_accepted = true
+                                }
+                            };
+                        false ->
+                            {ok, Ctx#context{accepted_types = [CT]}}
+                    end
             end;
         undefined ->
             {ok, Ctx}
@@ -414,18 +432,22 @@ produce_response(Object) ->
 ) ->
     {200 | 300 | 400 | 406, riak_api_web_headers:header_list(), binary()}.
 produce_response(RObj, Ctx) ->
+    Vclock = riak_object:vclock(RObj),
     VcHdr =
         {
             ?HEAD_VCLOCK,
-            base64:encode(
-                riak_object:encode_vclock(riak_object:vclock(RObj))
-            )
+            base64:encode(riak_object:encode_vclock(Vclock))
         },
     case riak_object:get_contents(RObj) of
         [SingletonObject] ->
             handle_singleton_object(SingletonObject, VcHdr, Ctx);
         Siblings ->
-            handle_multiple_objects(Siblings, VcHdr, Ctx)
+            EtHdr =
+                {
+                    'Etag',
+                    riak_kv_web_common:make_clock_etag(Vclock)
+                },
+            handle_multiple_objects(Siblings, VcHdr, EtHdr, Ctx)
     end.
 
 -spec handle_singleton_object(
@@ -440,7 +462,7 @@ handle_singleton_object({MD0, Value0}, VcHdr, Ctx) ->
     EtHdr =
         {
             'Etag',
-            uri_string:quote(riak_object:metadata_fetch(?MD_VTAG, MD))
+            list_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD))
         },
     LmdHdr =
         {
@@ -460,12 +482,14 @@ handle_singleton_object({MD0, Value0}, VcHdr, Ctx) ->
 -spec handle_multiple_objects(
     list({riak_object:riak_object_meta(), riak_object:value()}),
     {binary(), binary()},
+    {'Etag', binary()},
     context()
 ) ->
     {200 | 400 | 406, riak_api_web_headers:header_list(), binary()}.
 handle_multiple_objects(
     Siblings,
     VcHdr,
+    EtHdr,
     Ctx = #context{multipart_accepted = MAcc, vtag = VTag}
 ) when MAcc == true, VTag == undefined ->
     Boundary = produce_boundary(),
@@ -483,6 +507,7 @@ handle_multiple_objects(
     ObjHeaders =
         [
             VcHdr,
+            EtHdr,
             last_modified_header(Siblings),
             {
                 'Content-Type',
@@ -493,6 +518,7 @@ handle_multiple_objects(
 handle_multiple_objects(
     Siblings,
     VcHdr,
+    EtHdr,
     _Ctx = #context{multipart_accepted = MAcc, vtag = VTag}
 ) when MAcc == false, VTag == undefined ->
     VTags =
@@ -502,10 +528,11 @@ handle_multiple_objects(
         ),
     LmdHdr = last_modified_header(Siblings),
     Body = [<<"Siblings:\n">>, [[V, <<"\n">>] || V <- VTags]],
-    {300, [VcHdr, LmdHdr], Body};
+    {300, [VcHdr, EtHdr, LmdHdr, ?TXT_HEADER], iolist_to_binary(Body)};
 handle_multiple_objects(
     Siblings,
     VcHdr,
+    _EtHdr,
     Ctx = #context{vtag = VTag}
 ) when is_binary(VTag) ->
     ChosenSibs =
@@ -775,8 +802,19 @@ size_limits() ->
 
 -spec maybe_all(binary()) -> boolean().
 maybe_all(CType) ->
-    case binary:split(CType, <<";">>, []) of
-        [<<"*/*">>, _Rest] ->
+    case hd(binary:split(CType, <<";">>, [])) of
+        <<"*/*">> ->
+            true;
+        _ ->
+            false
+    end.
+
+-spec maybe_multipart(binary()) -> boolean().
+maybe_multipart(CType) ->
+    case hd(binary:split(CType, <<";">>, [])) of
+        <<"multipart/mixed">> ->
+            true;
+        <<"multipart/*">> ->
             true;
         _ ->
             false
@@ -789,11 +827,69 @@ maybe_all(CType) ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 type_match(Type, AcceptedTypes) ->
     riak_kv_web_common:type_match(Type, AcceptedTypes).
 
+accept_multipart_test() ->
+    Accept1 =
+        [
+            {
+                'Accept',
+                <<"*/*">>
+            }
+        ],
+        % Accept anything, and so that includes multipart
+    Headers1 = riak_api_web_headers:make(Accept1),
+    DummyCtx =
+        #context{
+            bucket = {<<"Type">>, <<"B">>},
+            key = <<"K">>,
+            method = 'GET'
+        },
+    {ok, Ctx1} = parse_request_headers(Headers1, DummyCtx),
+    ?assertMatch(true, Ctx1#context.multipart_accepted),
+    ?assertMatch(all, Ctx1#context.accepted_types),
+    Accept2 =
+        [
+            {
+                'Accept',
+                [<<"multipart/mixed">>, <<"*/*;q=0.9">>]
+            }
+        ],
+    Headers2 = riak_api_web_headers:make(Accept2),
+    {ok, Ctx2} = parse_request_headers(Headers2, DummyCtx),
+    ?assertMatch(true, Ctx2#context.multipart_accepted),
+    ?assertMatch(all, Ctx2#context.accepted_types),
+    Accept3 =
+        [
+            {
+                'Accept',
+                [<<"application/json">>, <<"multipart/*;q=0.9">>]
+            }
+        ],
+    Headers3 = riak_api_web_headers:make(Accept3),
+    {ok, Ctx3} = parse_request_headers(Headers3, DummyCtx),
+    ?assertMatch(true, Ctx3#context.multipart_accepted),
+    ?assertMatch(
+        [<<"application/json">>, <<"multipart/*;q=0.9">>],
+        Ctx3#context.accepted_types
+    ),
+    Accept4 =
+        [
+            {
+                'Accept',
+                <<"multipart/mixed">>
+            }
+        ],
+    Headers4 = riak_api_web_headers:make(Accept4),
+    {ok, Ctx4} = parse_request_headers(Headers4, DummyCtx),
+    ?assertMatch(true, Ctx4#context.multipart_accepted),
+    ?assertMatch(
+        [<<"multipart/mixed">>],
+        Ctx4#context.accepted_types
+    ).
+    
 accept_filter_test() ->
     Accept1 =
         [
@@ -876,7 +972,11 @@ metadata_format_test() ->
             {<<"pc_bin">>, <<"LS11_0ES|ROBERTS">>},
             {<<"family_bin">>, <<"ROBERTS|LS1_4BT.LS11_0ES">>}
         ],
-    VTag = base64:encode(term_to_binary({'node1', os:timestamp()})),
+    VTag =
+        riak_core_util:integer_to_list(
+            erlang:phash2(term_to_binary({'node1', os:timestamp()})),
+            62
+        ),
     LMD = os:timestamp(),
     MetaData =
         maps:from_list(
@@ -1069,7 +1169,8 @@ with_bucket_prop_test_() ->
 
 singleton_response() ->
     LastMod = os:timestamp(),
-    ET1 = <<"a123456zz">>,
+    ET1 = "a123456zz",
+    ET1B = list_to_binary(ET1),
     O0 = riak_object:new({<<"T">>, <<"B">>}, <<"K">>, <<"willy">>),
     MD0 = get_metadata(LastMod, ET1),
     O1 =
@@ -1091,7 +1192,7 @@ singleton_response() ->
             key = <<"K">>
         },
     {200, HdrList1, <<"gnonto">>} = produce_response(OM1, Ctx),
-    ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList1)),
+    ?assertMatch({'Etag', ET1B}, lists:keyfind('Etag', 1, HdrList1)),
     ErlTerm = maps:put(name, <<"gnonto">>, maps:new()),
     O2 =
         riak_object:increment_vclock(
@@ -1109,7 +1210,7 @@ singleton_response() ->
         {'Content-Type', <<"application/x-erlang-binary">>},
         lists:keyfind('Content-Type', 1, HdrList2)
     ),
-    ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList2)),
+    ?assertMatch({'Etag', ET1B}, lists:keyfind('Etag', 1, HdrList2)),
     PlainTextValue = "gnonto",
     O3 =
         riak_object:increment_vclock(
@@ -1123,7 +1224,7 @@ singleton_response() ->
     {200, HdrList3, ConvertedVal3} =
         produce_response(OM3, Ctx),
     ?assertMatch("gnonto", binary_to_term(ConvertedVal3)),
-    ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList3)),
+    ?assertMatch({'Etag', ET1B}, lists:keyfind('Etag', 1, HdrList3)),
     CtxHead =
         #context{
             method = 'HEAD',
@@ -1132,7 +1233,7 @@ singleton_response() ->
         },
     {200, HdrList4, <<>>} =
         produce_response(OM3, CtxHead),
-    ?assertMatch({'Etag', ET1}, lists:keyfind('Etag', 1, HdrList4)).
+    ?assertMatch({'Etag', ET1B}, lists:keyfind('Etag', 1, HdrList4)).
 
 sibling_response() ->
     LastMod1 = os:timestamp(),

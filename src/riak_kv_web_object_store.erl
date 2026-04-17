@@ -23,7 +23,6 @@
 -module(riak_kv_web_object_store).
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
--include_lib("kernel/include/logger.hrl").
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
@@ -87,7 +86,8 @@
     object :: riak_object:riak_object() | undefined,
     if_not_modified :: true | undefined,
     if_not_modified_clock :: vclock:vclock() | undefined, 
-    if_none_match :: true | undefined
+    if_none_match :: true | undefined,
+    if_match :: list(binary()) | undefined
 }).
 
 -type context() :: #context{}.
@@ -264,7 +264,6 @@ process_request(RqBdy, Context) ->
                     riak_object:update_value(Context#context.object, ObjBody),
                     Context
                 ),
-            ?LOG_INFO("Rsp ~0p", [PutRsp]),
             case PutRsp of
                 {error, Reason} ->
                     handle_error(Reason, Context);
@@ -383,11 +382,20 @@ validate_conditional_request(ReqHeaders, Ctx) ->
             _ ->
                 Ctx#context{if_none_match = true}
         end,
+    Ctx1 =
+        case riak_api_web_headers:get_value('If-Match', ReqHeaders) of
+            undefined ->
+                Ctx0;
+            V when is_binary(V) ->
+                Ctx0#context{if_match = [V]};
+            V when is_list(V) ->
+                Ctx0#context{if_match = V}
+        end,
     IfNotModClock =
         riak_api_web_headers:lookup(?HEAD_IFNOTMOD_CASEFOLD, ReqHeaders, true),
     case IfNotModClock of
         undefined ->
-            {ok, Ctx0};
+            {ok, Ctx1};
         {_OrigKey, [EncodedClock]} ->
             case riak_kv_web_common:decode_clock(EncodedClock) of
                 error ->
@@ -400,7 +408,7 @@ validate_conditional_request(ReqHeaders, Ctx) ->
                 DecodedClock ->
                     {
                         ok,
-                        Ctx0#context{
+                        Ctx1#context{
                             if_not_modified = true,
                             if_not_modified_clock = DecodedClock
                         }
@@ -571,6 +579,7 @@ do_put(Object, Ctx) ->
         riak_kv_put_core:ready_conditional_check(
             Ctx#context.if_not_modified,
             Ctx#context.if_none_match,
+            Ctx#context.if_match,
             fun() -> Ctx#context.if_not_modified_clock end,
             Ctx#context.bucket,
             Ctx#context.key,
@@ -655,6 +664,10 @@ handle_error("match_found", _Ctx) ->
     {halt, 412, [], <<>>, []};
 handle_error("modified", _Ctx) ->
     {halt, 409, [], <<>>, []};
+handle_error("notfound", _Ctx) ->
+    {halt, 409, [], <<>>, []};
+handle_error(not_matched, _Ctx) ->
+    {halt, 412, [], <<>>, []};
 handle_error(OtherError, _Ctx) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p">>, [OtherError]}.
 

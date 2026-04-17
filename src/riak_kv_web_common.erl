@@ -37,7 +37,8 @@
         add_routes/0,
         get_version_vector/1,
         get_timeout/1,
-        filter_options/1
+        filter_options/1,
+        make_clock_etag/1
     ]
 ).
 
@@ -326,6 +327,11 @@ get_timeout(Params) ->
                     {halt, 400, [?TXT_HEADER], ErrMsg, [TO]}
             end
     end.
+
+-spec make_clock_etag(vclock:vclock()) -> binary().
+make_clock_etag(Vclock) ->
+    <<ETag:128/integer>> = crypto:hash(md5, term_to_binary(Vclock)),
+    list_to_binary(riak_core_util:integer_to_list(ETag, 62)).
 
 %% ===================================================================
 %% EUnit tests
