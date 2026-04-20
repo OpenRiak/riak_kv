@@ -212,10 +212,9 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    %% There is no concept of preference required - the content-type is either
-    %% accepted or not.  The default is accept all, and so try and find if
-    %% "*/*" is acceptable here, and avoid more complex matching logic when
-    %% producing the response
+    %% Normally the content-type is either accepted or not, and this needs to
+    %% be quickest if all content is accepted.
+    %% Preference may be required in sibling state.
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
         CTL when is_list(CTL) ->
             {

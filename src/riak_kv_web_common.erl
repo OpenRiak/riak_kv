@@ -259,15 +259,15 @@ type_preference({PMT, SMT}, [ThisType|Rest], Match, BestQ) ->
     case match_type(TypeInfo, {PMT, SMT}) of
         true ->
             QV =
-                try
-                    case string:trim(MaybeQ, both) of
-                        <<"q=", BF/binary >> ->
-                            binary_to_float(BF);
-                        _ ->
-                            1.0
-                    end
-                catch
-                    _ : _ ->
+                case string:trim(MaybeQ, both) of
+                    <<"q=", BF/binary >> ->
+                        try
+                            binary_to_float(BF)
+                        catch
+                            _ : _ ->
+                                +0.0
+                        end;
+                    _ ->
                         1.0
                 end,
             type_preference({PMT, SMT}, Rest, true, max(QV, BestQ));
@@ -533,6 +533,20 @@ type_preference_test() ->
     ?assertMatch(true, type_match(<<"text/plain">>, Accept1)),
     ?assertMatch(true, type_match(<<"multipart/mixed">>, Accept4)),
     ?assertMatch(true, type_match(<<"text/plain">>, Accept4)),
-    ?assertMatch(false, type_match(<<"text/xml">>, Accept4)).
+    ?assertMatch(false, type_match(<<"text/xml">>, Accept4)),
+
+    Accept5 =
+        [
+            <<"text/plain; q=0.9 ">>,
+            <<"application-json">>,
+            <<"multipart/* ; q=A ">>
+        ],
+    ?assertMatch({true, 0.9}, type_preference(<<"text/plain">>, Accept5)),
+    ?assertMatch({true, +0.0}, type_preference(<<"multipart/mixed">>, Accept5)),
+    ?assertMatch(
+        {false, +0.0},
+        type_preference(<<"application/json">>, Accept5)
+    ).
+    
 
 -endif.
