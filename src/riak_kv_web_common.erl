@@ -69,6 +69,7 @@ add_routes() ->
             {5, riak_kv_web_object_read},
             {10, riak_kv_web_object_store},
             {15, riak_kv_web_object_delete},
+            {20, riak_kv_web_query},
             {30, riak_kv_web_index},
             {80, riak_kv_web_stats},
             {90, riak_kv_web_aaefold}
@@ -248,7 +249,7 @@ type_preference(error, _AcceptedTypes, Match, BestQ) ->
     {Match, BestQ};
 type_preference(_, [], Match, BestQ) ->
     {Match, BestQ};
-type_preference({PMT, SMT}, [ThisType|Rest], Match, BestQ) ->
+type_preference({PMT, SMT}, [ThisType | Rest], Match, BestQ) ->
     {TypeInfo, MaybeQ} =
         case binary:split(ThisType, get_subsplitter()) of
             [PlainType] when is_binary(PlainType) ->
@@ -260,11 +261,11 @@ type_preference({PMT, SMT}, [ThisType|Rest], Match, BestQ) ->
         true ->
             QV =
                 case string:trim(MaybeQ, both) of
-                    <<"q=", BF/binary >> ->
+                    <<"q=", BF/binary>> ->
                         try
                             binary_to_float(BF)
                         catch
-                            _ : _ ->
+                            _:_ ->
                                 +0.0
                         end;
                     _ ->
@@ -288,7 +289,7 @@ type_match({_PMT, _SMT}, []) ->
     false;
 type_match(error, _AcceptedTypes) ->
     error;
-type_match({PMT, SMT}, [AcceptedType|Rest]) ->
+type_match({PMT, SMT}, [AcceptedType | Rest]) ->
     case match_type(AcceptedType, {PMT, SMT}) of
         true ->
             true;
@@ -392,6 +393,7 @@ make_clock_etag(Vclock) ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 split_path(RequestLine) ->
     {ok, {http_request, Method, {abs_path, Path}, _Version}, _Rest} =
@@ -494,6 +496,22 @@ routing_test() ->
         check_path(
             <<"GET /other HTTP/1.1\r\n">>
         )
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_query, _, _},
+        check_path(<<"GET /buckets/B/query HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_query, _, _},
+        check_path(<<"POST /buckets/B/query HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_query, _, _},
+        check_path(<<"GET /types/T/buckets/B/query HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET, POST">>}], <<>>, []},
+        check_path(<<"PUT /buckets/B/query HTTP/1.1\r\n">>)
     ).
 
 type_preference_test() ->
@@ -547,6 +565,5 @@ type_preference_test() ->
         {false, +0.0},
         type_preference(<<"application/json">>, Accept5)
     ).
-    
 
 -endif.

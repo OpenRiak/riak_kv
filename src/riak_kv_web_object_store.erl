@@ -85,7 +85,7 @@
     put_options = ?PUT_DEFAULTS :: put_options(),
     object :: riak_object:riak_object() | undefined,
     if_not_modified :: true | undefined,
-    if_not_modified_clock :: vclock:vclock() | undefined, 
+    if_not_modified_clock :: vclock:vclock() | undefined,
     if_none_match :: true | undefined,
     if_match :: list(binary()) | undefined
 }).

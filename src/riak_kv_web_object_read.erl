@@ -860,7 +860,7 @@ accept_multipart_test() ->
                 <<"*/*">>
             }
         ],
-        % Accept anything, and so that includes multipart
+    % Accept anything, and so that includes multipart
     Headers1 = riak_api_web_headers:make(Accept1),
     DummyCtx =
         #context{
@@ -911,7 +911,7 @@ accept_multipart_test() ->
         [<<"multipart/mixed">>],
         Ctx4#context.preferred_types
     ).
-    
+
 accept_filter_test() ->
     Accept1 =
         [

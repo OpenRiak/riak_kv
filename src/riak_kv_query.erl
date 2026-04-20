@@ -185,7 +185,8 @@
         query_definition/0,
         complex_query_definition/0,
         query_user_input/0,
-        encoding_fun/0
+        encoding_fun/0,
+        validation_stage/0
     ]
 ).
 
