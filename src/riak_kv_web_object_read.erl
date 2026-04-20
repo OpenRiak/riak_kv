@@ -98,8 +98,8 @@
     key :: riak_object:key(),
     get_options = ?GET_DEFAULTS :: get_options(),
     vtag :: binary() | undefined,
-    accepted_types = all :: list(binary()) | all,
-    multipart_accepted = false :: boolean()
+    all_types_accepted = true :: boolean(),
+    preferred_types = [] :: list(binary())
 }).
 
 -type context() :: #context{}.
@@ -218,43 +218,23 @@ parse_request_headers(ReqHeaders, Ctx) ->
     %% producing the response
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
         CTL when is_list(CTL) ->
-            case lists:any(fun maybe_all/1, CTL) of
-                true ->
-                    {ok, Ctx#context{multipart_accepted = true}};
-                false ->
-                    case lists:any(fun maybe_multipart/1, CTL) of
-                        true ->
-                            {
-                                ok,
-                                Ctx#context{
-                                    multipart_accepted = true,
-                                    accepted_types = CTL
-                                }
-                            };
-                        false ->
-                            {ok, Ctx#context{accepted_types = CTL}}
-                    end
-            end;
+            {
+                ok,
+                Ctx#context{
+                    all_types_accepted = lists:any(fun maybe_all/1, CTL),
+                    preferred_types = CTL
+                }
+            };
         CT when is_binary(CT) ->
-            case maybe_all(CT) of
-                true ->
-                    {ok, Ctx#context{multipart_accepted = true}};
-                false ->
-                    case maybe_multipart(CT) of
-                        true ->
-                            {
-                                ok,
-                                Ctx#context{
-                                    accepted_types = [CT],
-                                    multipart_accepted = true
-                                }
-                            };
-                        false ->
-                            {ok, Ctx#context{accepted_types = [CT]}}
-                    end
-            end;
+            {
+                ok,
+                Ctx#context{
+                    all_types_accepted = maybe_all(CT),
+                    preferred_types = [CT]
+                }
+            };
         undefined ->
-            {ok, Ctx}
+            {ok, Ctx#context{all_types_accepted = true}}
     end.
 
 %% @doc Process the request and produce a response
@@ -489,49 +469,6 @@ handle_singleton_object({MD0, Value0}, VcHdr, Ctx) ->
 handle_multiple_objects(
     Siblings,
     VcHdr,
-    EtHdr,
-    Ctx = #context{multipart_accepted = MAcc, vtag = VTag}
-) when MAcc == true, VTag == undefined ->
-    Boundary = produce_boundary(),
-    EncodedSibs =
-        lists:map(
-            fun({MD0, V0}) ->
-                {MD, V} =
-                    encode_value(MD0, V0, Ctx#context.method == 'GET'),
-                multipart_body_part(Boundary, MD, V, Ctx)
-            end,
-            Siblings
-        ),
-    Terminator = iolist_to_binary([<<"\r\n--">>, Boundary, <<"--\r\n">>]),
-    SibValue = iolist_to_binary(EncodedSibs),
-    ObjHeaders =
-        [
-            VcHdr,
-            EtHdr,
-            last_modified_header(Siblings),
-            {
-                'Content-Type',
-                iolist_to_binary([<<"multipart/mixed; boundary=">>, Boundary])
-            }
-        ],
-    {200, ObjHeaders, <<SibValue/binary, Terminator/binary>>};
-handle_multiple_objects(
-    Siblings,
-    VcHdr,
-    EtHdr,
-    _Ctx = #context{multipart_accepted = MAcc, vtag = VTag}
-) when MAcc == false, VTag == undefined ->
-    VTags =
-        lists:map(
-            fun({M, _V}) -> riak_object:metadata_fetch(?MD_VTAG, M) end,
-            Siblings
-        ),
-    LmdHdr = last_modified_header(Siblings),
-    Body = [<<"Siblings:\n">>, [[V, <<"\n">>] || V <- VTags]],
-    {300, [VcHdr, EtHdr, LmdHdr, ?TXT_HEADER], iolist_to_binary(Body)};
-handle_multiple_objects(
-    Siblings,
-    VcHdr,
     _EtHdr,
     Ctx = #context{vtag = VTag}
 ) when is_binary(VTag) ->
@@ -576,6 +513,71 @@ handle_multiple_objects(
                     )
                 )
             }
+    end;
+handle_multiple_objects(Siblings, VcHdr, EtHdr, Ctx) ->
+    case multipart_preferred(Ctx) of
+        true ->
+            Boundary = produce_boundary(),
+            EncodedSibs =
+                lists:map(
+                    fun({MD0, V0}) ->
+                        {MD, V} =
+                            encode_value(MD0, V0, Ctx#context.method == 'GET'),
+                        multipart_body_part(Boundary, MD, V, Ctx)
+                    end,
+                    Siblings
+                ),
+            Terminator =
+                iolist_to_binary([<<"\r\n--">>, Boundary, <<"--\r\n">>]),
+            SibValue = iolist_to_binary(EncodedSibs),
+            ObjHeaders =
+                [
+                    VcHdr,
+                    EtHdr,
+                    last_modified_header(Siblings),
+                    {
+                        'Content-Type',
+                        iolist_to_binary(
+                            [<<"multipart/mixed; boundary=">>, Boundary]
+                        )
+                    }
+                ],
+            {200, ObjHeaders, <<SibValue/binary, Terminator/binary>>};
+        false ->
+            VTags =
+                lists:map(
+                    fun({M, _V}) ->
+                        riak_object:metadata_fetch(?MD_VTAG, M)
+                    end,
+                    Siblings
+                ),
+            LmdHdr = last_modified_header(Siblings),
+            Body = [<<"Siblings:\n">>, [[V, <<"\n">>] || V <- VTags]],
+            {300, [VcHdr, EtHdr, LmdHdr, ?TXT_HEADER], iolist_to_binary(Body)};
+        error ->
+            {406, [], <<>>}
+    end.
+
+-spec multipart_preferred(context()) -> boolean() | error.
+multipart_preferred(Context) ->
+    {MultiPreference, MultiScore} =
+        riak_kv_web_common:type_preference(
+            <<"multipart/mixed">>,
+            Context#context.preferred_types
+        ),
+    {TextPreference, TextScore} =
+        riak_kv_web_common:type_preference(
+            <<"text/plain">>,
+            Context#context.preferred_types
+        ),
+    TextAccepted = TextPreference orelse Context#context.all_types_accepted,
+    case {MultiPreference, MultiScore > TextScore, TextAccepted} of
+        {true, true, _} ->
+            true;
+        {_, _, true} ->
+            false;
+        _ ->
+            error
     end.
 
 -spec last_modified_header(
@@ -618,7 +620,7 @@ multipart_body_part(Boundary, MD, Val, Ctx) ->
             MD,
             [EtHdr, LmdHdr],
             type,
-            Ctx#context{accepted_types = all}
+            Ctx#context{all_types_accepted = true}
         ),
     case Hdrs of
         Hdrs when is_list(Hdrs) ->
@@ -654,20 +656,25 @@ produce_boundary() ->
 produce_response_headers(MD, Hdrs, type, Context) ->
     ContentType = get_ctype(MD),
     TypeMatch =
-        riak_kv_web_common:type_match(
-            ContentType,
-            Context#context.accepted_types
-        ),
+        case Context#context.all_types_accepted of
+            true ->
+                true;
+            false ->
+                riak_kv_web_common:type_match(
+                    ContentType,
+                    Context#context.preferred_types
+                )
+        end,
     case TypeMatch of
-        {true, CType} ->
+        true ->
             ExtendedCType =
                 case riak_object:metadata_find(?MD_CHARSET, MD) of
                     {ok, CS} when is_binary(CS); is_list(CS); is_atom(CS) ->
                         iolist_to_binary(
-                            [CType, <<"; charset=">>, ensure_binary(CS)]
+                            [ContentType, <<"; charset=">>, ensure_binary(CS)]
                         );
                     error ->
-                        CType
+                        ContentType
                 end,
             produce_response_headers(
                 MD,
@@ -675,13 +682,39 @@ produce_response_headers(MD, Hdrs, type, Context) ->
                 encoding,
                 Context
             );
-        {false, _} ->
+        false ->
             ErrMsg =
                 io_lib:format(
                     <<"Content-Type ~0p not in accepted types of ~0p">>,
-                    [ContentType, Context#context.accepted_types]
+                    [ContentType, Context#context.preferred_types]
                 ),
-            {406, [?TXT_HEADER], iolist_to_binary(ErrMsg)}
+            {406, [?TXT_HEADER], iolist_to_binary(ErrMsg)};
+        error ->
+            DefaultCType = <<"application/octet-stream">>,
+            MatchDefault =
+                riak_kv_web_common:type_match(
+                    DefaultCType,
+                    Context#context.preferred_types
+                ),
+            case MatchDefault of
+                true ->
+                    produce_response_headers(
+                        MD,
+                        [{'Content-Type', DefaultCType} | Hdrs],
+                        encoding,
+                        Context
+                    );
+                _ ->
+                    ErrMsg =
+                        io_lib:format(
+                            <<
+                                "Content-Type ~0p invalid and "
+                                "default of ~0p not accepted"
+                            >>,
+                            [ContentType, DefaultCType]
+                        ),
+                    {406, [?TXT_HEADER], iolist_to_binary(ErrMsg)}
+            end
     end;
 produce_response_headers(MD, Hdrs, encoding, Context) ->
     case riak_object:metadata_find(?MD_ENCODING, MD) of
@@ -809,17 +842,6 @@ maybe_all(CType) ->
             false
     end.
 
--spec maybe_multipart(binary()) -> boolean().
-maybe_multipart(CType) ->
-    case hd(binary:split(CType, <<";">>, [])) of
-        <<"multipart/mixed">> ->
-            true;
-        <<"multipart/*">> ->
-            true;
-        _ ->
-            false
-    end.
-
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -848,8 +870,8 @@ accept_multipart_test() ->
             method = 'GET'
         },
     {ok, Ctx1} = parse_request_headers(Headers1, DummyCtx),
-    ?assertMatch(true, Ctx1#context.multipart_accepted),
-    ?assertMatch(all, Ctx1#context.accepted_types),
+    ?assertMatch(false, multipart_preferred(Ctx1)),
+    ?assertMatch(true, Ctx1#context.all_types_accepted),
     Accept2 =
         [
             {
@@ -859,8 +881,8 @@ accept_multipart_test() ->
         ],
     Headers2 = riak_api_web_headers:make(Accept2),
     {ok, Ctx2} = parse_request_headers(Headers2, DummyCtx),
-    ?assertMatch(true, Ctx2#context.multipart_accepted),
-    ?assertMatch(all, Ctx2#context.accepted_types),
+    ?assertMatch(true, multipart_preferred(Ctx2)),
+    ?assertMatch(true, Ctx2#context.all_types_accepted),
     Accept3 =
         [
             {
@@ -870,11 +892,12 @@ accept_multipart_test() ->
         ],
     Headers3 = riak_api_web_headers:make(Accept3),
     {ok, Ctx3} = parse_request_headers(Headers3, DummyCtx),
-    ?assertMatch(true, Ctx3#context.multipart_accepted),
+    ?assertMatch(true, multipart_preferred(Ctx3)),
     ?assertMatch(
         [<<"application/json">>, <<"multipart/*;q=0.9">>],
-        Ctx3#context.accepted_types
+        Ctx3#context.preferred_types
     ),
+    ?assertMatch(false, Ctx3#context.all_types_accepted),
     Accept4 =
         [
             {
@@ -884,10 +907,10 @@ accept_multipart_test() ->
         ],
     Headers4 = riak_api_web_headers:make(Accept4),
     {ok, Ctx4} = parse_request_headers(Headers4, DummyCtx),
-    ?assertMatch(true, Ctx4#context.multipart_accepted),
+    ?assertMatch(true, multipart_preferred(Ctx4)),
     ?assertMatch(
         [<<"multipart/mixed">>],
-        Ctx4#context.accepted_types
+        Ctx4#context.preferred_types
     ).
     
 accept_filter_test() ->
@@ -911,32 +934,15 @@ accept_filter_test() ->
             method = 'GET'
         },
     {ok, UpdCtx} = parse_request_headers(Headers1, DummyCtx),
-    AcceptedTypes1 = UpdCtx#context.accepted_types,
+    AcceptedTypes1 = UpdCtx#context.preferred_types,
     ?assert(is_list(AcceptedTypes1)),
-    ?assertMatch(
-        {true, <<"text/html">>},
-        type_match(ensure_binary("text/html"), AcceptedTypes1)
-    ),
-    ?assertMatch(
-        {false, <<"application/json">>},
-        type_match(ensure_binary("application/json"), AcceptedTypes1)
-    ),
-    ?assertMatch(
-        {true, <<"image/jpeg">>},
-        type_match(ensure_binary("image/jpeg"), AcceptedTypes1)
-    ),
-    ?assertMatch(
-        {false, <<"application/xhtml">>},
-        type_match(ensure_binary("application/xhtml"), AcceptedTypes1)
-    ),
-    ?assertMatch(
-        {true, <<"application/xhtml+xml">>},
-        type_match(ensure_binary("application/xhtml+xml"), AcceptedTypes1)
-    ),
-    ?assertMatch(
-        {true, <<"application/xml">>},
-        type_match(ensure_binary("application/xml"), AcceptedTypes1)
-    ),
+    ?assertNot(UpdCtx#context.all_types_accepted),
+    ?assert(type_match(ensure_binary("text/html"), AcceptedTypes1)),
+    ?assertNot(type_match(ensure_binary("application/json"), AcceptedTypes1)),
+    ?assert(type_match(ensure_binary("image/jpeg"), AcceptedTypes1)),
+    ?assertNot(type_match(ensure_binary("application/xhtml"), AcceptedTypes1)),
+    ?assert(type_match(ensure_binary("application/xhtml+xml"), AcceptedTypes1)),
+    ?assert(type_match(ensure_binary("application/xml"), AcceptedTypes1)),
 
     HdrList1 =
         produce_response_headers(
@@ -1096,7 +1102,6 @@ validate_counts_test() ->
         extract_params(
             <<"types/T/buckets/B/keys/K?r=all&pr=2&node_confirms=1&n_val=default">>
         ),
-    io:format("Params ~0p~n", [QP1]),
     {ok, Ctx1} = validate_counts(QP1, Ctx),
     ?assertMatch(all, maps:get(r, Ctx1#context.get_options)),
     ?assertMatch(2, maps:get(pr, Ctx1#context.get_options)),
@@ -1288,7 +1293,12 @@ sibling_response() ->
         {200, HdrList1, <<>>},
         produce_response(OM1, Ctx1#context{method = 'HEAD'})
     ),
-    Ctx2 = Ctx1#context{multipart_accepted = false, vtag = undefined},
+    Ctx2 =
+        Ctx1#context{
+            preferred_types = [],
+            all_types_accepted = true,
+            vtag = undefined
+        },
     {300, HdrList2, SibBody2} = produce_response(OM1, Ctx2),
     ?assert(
         lists:keyfind(?HEAD_VCLOCK, 1, HdrList2) ==
@@ -1315,7 +1325,11 @@ sibling_response() ->
     ),
 
     %% Return multipart body
-    Ctx3 = Ctx1#context{multipart_accepted = true, vtag = undefined},
+    Ctx3 =
+        Ctx1#context{
+            preferred_types = [<<"multipart/mixed">>],
+            vtag = undefined
+        },
     {200, HdrList3, MultiBody3} = produce_response(OM1, Ctx3),
     {'Last-Modified', FormattedDate3} =
         lists:keyfind('Last-Modified', 1, HdrList3),
@@ -1438,29 +1452,20 @@ hidden_all_accepted_test() ->
         #context{method = 'GET', bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
     {ok, Ctx1} = parse_request_headers(ReqHeaders1, InitCtx),
     CType = <<"application/octet-stream">>,
-    ?assertMatch(
-        {true, _},
-        riak_kv_web_common:type_match(CType, Ctx1#context.accepted_types)
-    ),
+    ?assert(riak_kv_web_common:type_match(CType, Ctx1#context.preferred_types)),
 
     ReqHeaders2 =
         riak_api_web_headers:make(
             [{'Accept', [<<"multipart/mixed">>, <<"application/*;q=0.9">>]}]
         ),
     {ok, Ctx2} = parse_request_headers(ReqHeaders2, InitCtx),
-    ?assertMatch(
-        {true, _},
-        riak_kv_web_common:type_match(CType, Ctx2#context.accepted_types)
-    ),
+    ?assert(riak_kv_web_common:type_match(CType, Ctx2#context.preferred_types)),
 
     ReqHeaders3 =
         riak_api_web_headers:make(
             [{'Accept', <<"*/*;q=0.9">>}]
         ),
     {ok, Ctx3} = parse_request_headers(ReqHeaders3, InitCtx),
-    ?assertMatch(
-        {true, _},
-        riak_kv_web_common:type_match(CType, Ctx3#context.accepted_types)
-    ).
+    ?assert(riak_kv_web_common:type_match(CType, Ctx3#context.preferred_types)).
 
 -endif.

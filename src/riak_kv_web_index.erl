@@ -186,7 +186,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
         undefined ->
             {ok, Ctx};
         AcceptType ->
-            {Match, _} =
+            Match =
                 riak_kv_web_common:type_match(
                     <<"application/json">>,
                     AcceptType

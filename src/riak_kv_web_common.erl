@@ -33,12 +33,14 @@
         boolean_fold/3,
         decode_clock/1,
         normalise_boolean_param/1,
+        type_preference/2,
         type_match/2,
         add_routes/0,
         get_version_vector/1,
         get_timeout/1,
         filter_options/1,
-        make_clock_etag/1
+        make_clock_etag/1,
+        compile_splitters/0
     ]
 ).
 
@@ -227,49 +229,99 @@ decode_clock(EncodedClock) ->
             error
     end.
 
--spec type_match(
+-spec type_preference(
     binary(),
-    list(binary()) | binary() | all
+    list(binary()) | binary()
 ) ->
-    {boolean(), binary()}.
-type_match(ContentType, all) ->
-    {true, ContentType};
-type_match(ContentType, AcceptedType) when is_binary(AcceptedType) ->
-    type_match(ContentType, [AcceptedType]);
-type_match(ContentType, AcceptedTypes) ->
-    case lists:member(<<"*/*">>, AcceptedTypes) of
+    {boolean(), float()}.
+type_preference(ContentType, AcceptedTypes) ->
+    AcceptedTypeList =
+        case is_list(AcceptedTypes) of
+            true ->
+                AcceptedTypes;
+            false ->
+                [AcceptedTypes]
+        end,
+    type_preference(split_type(ContentType), AcceptedTypeList, false, 0.0).
+
+type_preference(error, _AcceptedTypes, Match, BestQ) ->
+    {Match, BestQ};
+type_preference(_, [], Match, BestQ) ->
+    {Match, BestQ};
+type_preference({PMT, SMT}, [ThisType|Rest], Match, BestQ) ->
+    {TypeInfo, MaybeQ} =
+        case binary:split(ThisType, get_subsplitter()) of
+            [PlainType] when is_binary(PlainType) ->
+                {PlainType, <<>>};
+            [PlainType, Suffix] when is_binary(Suffix) ->
+                {PlainType, Suffix}
+        end,
+    case match_type(TypeInfo, {PMT, SMT}) of
         true ->
-            {true, ContentType};
+            QV =
+                try
+                    case string:trim(MaybeQ, both) of
+                        <<"q=", BF/binary >> ->
+                            binary_to_float(BF);
+                        _ ->
+                            1.0
+                    end
+                catch
+                    _ : _ ->
+                        1.0
+                end,
+            type_preference({PMT, SMT}, Rest, true, max(QV, BestQ));
         false ->
-            case split_type(ContentType) of
-                {Type, SubType} ->
-                    type_match(Type, SubType, ContentType, AcceptedTypes);
-                error ->
-                    type_match(
-                        <<"application">>,
-                        <<"octet-stream">>,
-                        <<"application/octet-stream">>,
-                        AcceptedTypes
-                    )
-            end
+            type_preference({PMT, SMT}, Rest, Match, BestQ)
     end.
 
-type_match(_Type, _SubType, BinType, []) ->
-    {false, BinType};
-type_match(Type, SubType, BinType, [AcceptedType | Rest]) ->
-    case split_type(AcceptedType) of
-        {Type, SubType} ->
-            {true, BinType};
-        {Type, <<"*">>} ->
-            {true, BinType};
-        _ ->
-            type_match(Type, SubType, BinType, Rest)
+-spec type_match(
+    binary() | {binary(), binary()} | error,
+    list(binary()) | binary()
+) ->
+    boolean() | error.
+type_match(CType, AcceptedTypes) when is_binary(AcceptedTypes) ->
+    type_match(CType, [AcceptedTypes]);
+type_match(CType, AcceptedTypes) when is_binary(CType) ->
+    type_match(split_type(CType), AcceptedTypes);
+type_match({_PMT, _SMT}, []) ->
+    false;
+type_match(error, _AcceptedTypes) ->
+    error;
+type_match({PMT, SMT}, [AcceptedType|Rest]) ->
+    case match_type(AcceptedType, {PMT, SMT}) of
+        true ->
+            true;
+        false ->
+            type_match({PMT, SMT}, Rest)
     end.
+
+match_type(AcceptedType, {PMT, SMT}) ->
+    case {split_type(AcceptedType), {PMT, SMT}} of
+        {{PMT, SMT}, {PMT, SMT}} ->
+            true;
+        {{PMT, <<"*">>}, {PMT, _}} ->
+            true;
+        {{<<"*">>, <<"*">>}, _} ->
+            true;
+        _ ->
+            false
+    end.
+
+%% @doc Call this function when initialising API
+-spec compile_splitters() -> ok.
+compile_splitters() ->
+    CP = binary:compile_pattern([<<";">>, <<" ;">>]),
+    persistent_term:put({?MODULE, compile_patterns}, CP).
+
+-spec get_subsplitter() -> list(binary()) | binary:cp().
+get_subsplitter() ->
+    persistent_term:get({?MODULE, compile_patterns}, [<<";">>, <<" ;">>]).
 
 -spec split_type(binary()) -> {binary(), binary()} | error.
 split_type(BinType) ->
-    [PrimaryTypeInfo | _Rest] = string:split(BinType, <<";">>, leading),
-    case binary:split(PrimaryTypeInfo, <<"/">>, []) of
+    [PrimaryTypeInfo | _Rest] = binary:split(BinType, get_subsplitter()),
+    case binary:split(PrimaryTypeInfo, <<"/">>) of
         [Type, SubType] when is_binary(Type), is_binary(SubType) ->
             {Type, SubType};
         _NotSplitAsExpected ->
@@ -443,5 +495,44 @@ routing_test() ->
             <<"GET /other HTTP/1.1\r\n">>
         )
     ).
+
+type_preference_test() ->
+    Accept1 = [<<"multipart/mixed">>, <<"*/*;q=0.9">>],
+    Accept2 = [<<"*/*;q=0.9">>, <<"multipart/mixed">>],
+    Accept3 =
+        [
+            <<"text/plain;q=0.9 ">>,
+            <<"multipart_mixed;q=0.8">>,
+            <<"*/*; q=0.7 ">>
+        ],
+    ?assertMatch({true, 1.0}, type_preference(<<"multipart/mixed">>, Accept1)),
+    ?assertMatch({true, 0.9}, type_preference(<<"text/plain">>, Accept1)),
+    ?assertMatch({true, 1.0}, type_preference(<<"multipart/mixed">>, Accept2)),
+    ?assertMatch({true, 0.9}, type_preference(<<"text/plain">>, Accept2)),
+    ?assertMatch({true, 0.7}, type_preference(<<"multipart/mixed">>, Accept3)),
+    ?assertMatch({true, 0.9}, type_preference(<<"text/plain">>, Accept3)),
+    ?assertMatch(
+        {true, 0.7},
+        type_preference(<<"application/json">>, Accept3)
+    ),
+    Accept4 =
+        [
+            <<"text/plain; q=0.9 ">>,
+            <<"application/json">>,
+            <<"multipart/* ; q=0.7 ">>
+        ],
+    ?assertMatch({true, 0.7}, type_preference(<<"multipart/mixed">>, Accept4)),
+    ?assertMatch({true, 0.9}, type_preference(<<"text/plain">>, Accept4)),
+    ?assertMatch(
+        {true, 1.0},
+        type_preference(<<"application/json">>, Accept4)
+    ),
+    ?assertMatch({false, +0.0}, type_preference(<<"text/xml">>, Accept4)),
+
+    ?assertMatch(true, type_match(<<"multipart/mixed">>, Accept1)),
+    ?assertMatch(true, type_match(<<"text/plain">>, Accept1)),
+    ?assertMatch(true, type_match(<<"multipart/mixed">>, Accept4)),
+    ?assertMatch(true, type_match(<<"text/plain">>, Accept4)),
+    ?assertMatch(false, type_match(<<"text/xml">>, Accept4)).
 
 -endif.

@@ -242,6 +242,7 @@ start(_Type, _StartArgs) ->
 
             %% Add routes for web API
             ok = riak_kv_web_common:add_routes(),
+            ok = riak_kv_web_common:compile_splitters(),
 
             {ok, Pid};
         {error, Reason} ->

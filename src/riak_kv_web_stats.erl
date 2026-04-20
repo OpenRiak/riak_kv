@@ -128,27 +128,24 @@ parse_request_headers(ReqHeaders, Ctx) ->
     case riak_api_web_headers:get_value('Accept', ReqHeaders) of
         undefined ->
             {ok, Ctx#context{content_type = json}};
-        AcceptedTypes ->
-            JsonOK =
-                riak_kv_web_common:type_match(
+        AcceptType ->
+            {JsonOK, JsonScore} =
+                riak_kv_web_common:type_preference(
                     <<"application/json">>,
-                    AcceptedTypes
+                    AcceptType
                 ),
-            case JsonOK of
-                {true, _} ->
+            {TextOK, TextScore} =
+                riak_kv_web_common:type_preference(
+                    <<"text/plain">>,
+                    AcceptType
+                ),
+            case {JsonOK, JsonScore >= TextScore, TextOK} of
+                {true, true, _} ->
                     {ok, Ctx#context{content_type = json}};
+                {false, false, true} ->
+                    {ok, Ctx#context{content_type = plain}};
                 _ ->
-                    PlainOK =
-                        riak_kv_web_common:type_match(
-                            <<"text/plain">>,
-                            AcceptedTypes
-                        ),
-                    case PlainOK of
-                        {true, _} ->
-                            {ok, Ctx#context{content_type = plain}};
-                        _ ->
-                            {halt, 406, [], <<>>, []}
-                    end
+                    {halt, 406, [], <<>>, []}
             end
     end.
 
