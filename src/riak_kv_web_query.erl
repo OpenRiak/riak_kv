@@ -110,10 +110,9 @@
     #{binary() => binary() | non_neg_integer() | list(map())}.
 
 -type stage() ::
-    json_decode
-    | key_check
+    key_check
     | query_key_check
-    | init_timeout
+    | init
     | riak_kv_query:validation_stage().
 
 %% ===================================================================
@@ -391,7 +390,7 @@ process_request(RqBdy, #context{request_type = submit_query} = Ctx) ->
                         halt,
                         400,
                         [?JSN_HEADER],
-                        expand_query_reason(json_decode, Reason),
+                        expand_query_reason(init, Reason),
                         []
                     }
             end
@@ -663,12 +662,14 @@ add_queries(QueryMap, Query, QueryList) ->
 
 -spec expand_query_reason(stage(), binary()) -> binary().
 expand_query_reason(Stage, Reason) ->
-    iolist_to_binary(
-        io_lib:format(
-            <<"Validation failure at stage ~w due to ~s">>,
-            [Stage, Reason]
-        )
-    ).
+    ErrMsg =
+        iolist_to_binary(
+            io_lib:format(
+                <<"Validation failure at stage ~w due to ~s">>,
+                [Stage, Reason]
+            )
+        ),
+    iolist_to_binary(riak_kv_wm_json:encode(#{error => ErrMsg})).
 
 -spec convert_query(map()) -> riak_kv_query:query_user_input().
 convert_query(QM) ->
@@ -685,7 +686,7 @@ convert_query(QM) ->
 -spec fetch_timeouts(
     query_map()
 ) ->
-    {ok, pos_integer(), pos_integer()} | {error, init_timeout, binary()}.
+    {ok, pos_integer(), pos_integer()} | {error, init, binary()}.
 fetch_timeouts(QueryMap) ->
     Timeout =
         maps:get(
@@ -709,10 +710,10 @@ fetch_timeouts(QueryMap) ->
                 IT when is_integer(IT), IT > 0 ->
                     {ok, T, IT};
                 _ ->
-                    {error, init_timeout, <<"Bad inactivity timeout">>}
+                    {error, init, <<"Bad inactivity timeout">>}
             end;
         _ ->
-            {error, init_timeout, <<"Bad timeout">>}
+            {error, init, <<"Bad timeout">>}
     end.
 
 %% ===================================================================
@@ -750,7 +751,7 @@ process_query(InitQuery, Ctx) ->
                 )
             };
         {JsonEncodedResults, none} when is_binary(JsonEncodedResults) ->
-            {ok, JsonEncodedResults};
+            {ok, [?JSN_HEADER], JsonEncodedResults};
         {JsonEncodedResults, {{LT, LK}}} when
             is_binary(JsonEncodedResults),
             is_binary(LT),
@@ -758,7 +759,7 @@ process_query(InitQuery, Ctx) ->
         ->
             Continuation = riak_kv_query:make_continuation(LT, LK),
             {
-                true,
+                ok,
                 [
                     ?JSN_HEADER,
                     {?HEAD_CONTINUATION, Continuation}
@@ -1145,7 +1146,7 @@ invalid_query_to_test() ->
         "        ">>,
     {ok, M} = decode_json_body(IQJson),
     {error, S, E} = make_query_request({<<"BT">>, <<"B">>}, M),
-    ?assertMatch(init_timeout, S),
+    ?assertMatch(init, S),
     ?assertMatch(<<"Bad timeout">>, E).
 
 invalid_query_extratag_test() ->
