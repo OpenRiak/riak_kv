@@ -21,11 +21,13 @@
 
 -define(TXT_HEADER, {'Content-Type', <<"text/plain">>}).
 -define(JSN_HEADER, {'Content-Type', <<"application/json">>}).
+-define(BIN_HEADER, {'Content-Type', <<"application/octet-stream">>}).
 
 -define(HEAD_VCLOCK, <<"X-Riak-Vclock">>).
 -define(HEAD_USERMETA_PREFIX, <<"X-Riak-Meta-">>).
 -define(HEAD_INDEX_PREFIX, <<"X-Riak-Index-">>).
 -define(HEAD_DELETED, <<"X-Riak-Deleted">>).
+-define(HEAD_CONTINUATION, <<"X-Riak-Continuation">>).
 
 %% Case-folded headers to be used in lookups
 -define(HEAD_VCLOCK_CASEFOLD, <<"x-riak-vclock">>).
@@ -36,3 +38,12 @@
 -define(Q_2I_CONTINUATION_BIN, <<"continuation">>).
 -define(Q_RESULTS_BIN, <<"results">>).
 -define(Q_KEYS_BIN, <<"keys">>).
+
+%% erlfmt:ignore-begin
+-type stream_fun() ::
+    fun(() ->
+            {binary(), stream_fun()}
+            | done
+            | error
+    ).
+%% erlfmt:ignore-end

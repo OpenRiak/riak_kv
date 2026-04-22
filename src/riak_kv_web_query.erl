@@ -104,8 +104,6 @@
 -define(QUEUE_INACTIVITY_TIMEOUT, 120).
 -define(MAX_RESULTS_FROM_QUEUE, 1000).
 
--define(HEAD_CONTINUATION, "X-Riak-Continuation").
-
 -type query_map() ::
     #{binary() => binary() | non_neg_integer() | list(map())}.
 
@@ -170,7 +168,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             Scheme,
             Peer,
             Ctx#context.bucket,
-            riak_kv_index
+            "riak_kv.index"
         ),
     case Check of
         true ->
@@ -178,13 +176,11 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            B = Ctx#context.bucket,
-            case riak_kv_web_common:check_type_exists(B) of
-                true ->
-                    % TODO: Add referrer check in
+            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+                ok ->
                     {ok, Ctx};
-                false ->
-                    {halt, 404, [], <<"Unknown bucket type: ~s">>, [B]}
+                HaltResponse ->
+                    HaltResponse
             end;
         HaltResponse ->
             HaltResponse
@@ -252,26 +248,11 @@ parse_query_params(Params, #context{request_type = fetch_results} = Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    AcceptedTypes =
-        case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-            undefined ->
-                [<<"application/json">>];
-            SingleType when is_binary(SingleType) ->
-                [SingleType];
-            MultipleTypes when is_list(MultipleTypes) ->
-                MultipleTypes
-        end,
-    case riak_kv_web_common:type_match(<<"application/json">>, AcceptedTypes) of
-        true ->
+    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+        ok ->
             {ok, Ctx};
-        false ->
-            {
-                halt,
-                406,
-                [?TXT_HEADER],
-                <<"application/json must be accepted">>,
-                []
-            }
+        HaltResponse ->
+            HaltResponse
     end.
 
 %% @doc Process the request and produce a response
@@ -822,25 +803,26 @@ encode_key_withterm(Result, Encode) ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 invalid_json_test() ->
     InvalidJson =
-        <<% Missing comma after example_bin
-        "\n"
-        "            {\n"
-        "                \"accumulation_option\" : \"keys\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"index_name\" : \"example_bin\"\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        % Missing comma after example_bin
+        <<
+            "\n"
+            "            {\n"
+            "                \"accumulation_option\" : \"keys\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"index_name\" : \"example_bin\"\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     R = decode_json_body(InvalidJson),
     io:format("~p~n", [R]),
     ?assertMatch(
@@ -850,93 +832,101 @@ invalid_json_test() ->
 
 simple_query_test() ->
     SimpleQueryJson =
-        <<"\n"
-        "            {\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(SimpleQueryJson),
     {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)).
 
 invalid_query_ae1_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {error, S, _E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(aggregation_expression, S).
 
 invalid_query_ae2_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {error, S, _E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(aggregation_expression, S).
 
 invalid_query_ae3_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {error, S, E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(query_evaluation, S),
@@ -944,29 +934,31 @@ invalid_query_ae3_test() ->
 
 valid_query_ae4_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"inactivity_timeout\" : 180,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"inactivity_timeout\" : 180,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)),
@@ -975,34 +967,36 @@ valid_query_ae4_test() ->
 
 valid_query_ae5_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"accumulation_option\" : \"keys\",\n"
-        "                \"substitutions\" :\n"
-        "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example1_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\",\n"
-        "                            \"evaluation_expression\" :\n"
-        "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
-        "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example2_bin\",\n"
-        "                            \"start_term\" : \"C\",\n"
-        "                            \"end_term\"   : \"D\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"accumulation_option\" : \"keys\",\n"
+            "                \"substitutions\" :\n"
+            "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example1_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\",\n"
+            "                            \"evaluation_expression\" :\n"
+            "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
+            "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example2_bin\",\n"
+            "                            \"start_term\" : \"C\",\n"
+            "                            \"end_term\"   : \"D\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {ok, Q} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assert(riak_kv_query:is_query(Q)),
@@ -1012,34 +1006,36 @@ valid_query_ae5_test() ->
 invalid_query_ae6_test() ->
     % unescaped "|" in eval expression
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"accumulation_option\" : \"keys\",\n"
-        "                \"substitutions\" :\n"
-        "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example1_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\",\n"
-        "                            \"evaluation_expression\" :\n"
-        "                                \"delim($term, |, ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
-        "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example2_bin\",\n"
-        "                            \"start_term\" : \"C\",\n"
-        "                            \"end_term\"   : \"D\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"accumulation_option\" : \"keys\",\n"
+            "                \"substitutions\" :\n"
+            "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example1_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\",\n"
+            "                            \"evaluation_expression\" :\n"
+            "                                \"delim($term, |, ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
+            "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example2_bin\",\n"
+            "                            \"start_term\" : \"C\",\n"
+            "                            \"end_term\"   : \"D\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid eval function">>},
@@ -1049,34 +1045,36 @@ invalid_query_ae6_test() ->
 invalid_query_ae7_test() ->
     % BETWEN not BETWEEN
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"accumulation_option\" : \"keys\",\n"
-        "                \"substitutions\" :\n"
-        "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example1_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\",\n"
-        "                            \"evaluation_expression\" :\n"
-        "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
-        "                            \"filter_expression\" : \"($dob BETWEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example2_bin\",\n"
-        "                            \"start_term\" : \"C\",\n"
-        "                            \"end_term\"   : \"D\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"accumulation_option\" : \"keys\",\n"
+            "                \"substitutions\" :\n"
+            "                    {\"low_dob\" : \"20210804\", \"high_dob\" : \"20223101\", \"gnsc\" : \"Ma\"},\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example1_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\",\n"
+            "                            \"evaluation_expression\" :\n"
+            "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
+            "                            \"filter_expression\" : \"($dob BETWEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example2_bin\",\n"
+            "                            \"start_term\" : \"C\",\n"
+            "                            \"end_term\"   : \"D\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid filter function">>},
@@ -1086,34 +1084,36 @@ invalid_query_ae7_test() ->
 invalid_query_ae8_test() ->
     % missing substitution
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"accumulation_option\" : \"keys\",\n"
-        "                \"substitutions\" :\n"
-        "                    {\"low_dob\" : \"20210804\", \"gnsc\" : \"Ma\"},\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example1_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\",\n"
-        "                            \"evaluation_expression\" :\n"
-        "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
-        "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example2_bin\",\n"
-        "                            \"start_term\" : \"C\",\n"
-        "                            \"end_term\"   : \"D\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"accumulation_option\" : \"keys\",\n"
+            "                \"substitutions\" :\n"
+            "                    {\"low_dob\" : \"20210804\", \"gnsc\" : \"Ma\"},\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example1_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\",\n"
+            "                            \"evaluation_expression\" :\n"
+            "                                \"delim($term, \\\"|\\\", ($fn, $dob, $dod, $gns, $pcs)) | slice($gns, 2, $gns)\",\n"
+            "                            \"filter_expression\" : \"($dob BETWEEN :low_dob AND :high_dob\) AND contains($gns, :gnsc)\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example2_bin\",\n"
+            "                            \"start_term\" : \"C\",\n"
+            "                            \"end_term\"   : \"D\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, query_evaluation, <<"Invalid filter function">>},
@@ -1122,28 +1122,30 @@ invalid_query_ae8_test() ->
 
 invalid_query_to_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 0,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 0,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     {error, S, E} = make_query_request({<<"BT">>, <<"B">>}, M),
     ?assertMatch(init, S),
@@ -1151,30 +1153,32 @@ invalid_query_to_test() ->
 
 invalid_query_extratag_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"subs\" : {\"dob\" : \"19260812\"},\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\",\n"
-        "                            \"end_key\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"subs\" : {\"dob\" : \"19260812\"},\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\",\n"
+            "                            \"end_key\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, <<"Unexpected keys in request [<<\"subs\">>]">>},
@@ -1187,13 +1191,15 @@ invalid_query_extratag_test() ->
 
 invalid_query_missingtag1_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"subs\" : {\"dob\" : \"19260812\"}\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"subs\" : {\"dob\" : \"19260812\"}\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, <<"Missing required keys in request [<<\"query_list\">>]">>},
@@ -1202,27 +1208,29 @@ invalid_query_missingtag1_test() ->
 
 invalid_query_missingtag2_test() ->
     IQJson =
-        <<"\n"
-        "            {\n"
-        "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
-        "                \"timeout\" : 60,\n"
-        "                \"query_list\" :\n"
-        "                    [\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 1,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"start_term\" : \"A\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        },\n"
-        "                        {\n"
-        "                            \"aggregation_tag\" : 2,\n"
-        "                            \"index_name\" : \"example_bin\",\n"
-        "                            \"end_term\"   : \"B\"\n"
-        "                        }\n"
-        "\n"
-        "                    ]\n"
-        "            }\n"
-        "        ">>,
+        <<
+            "\n"
+            "            {\n"
+            "                \"aggregation_expression\" : \"$1 INTERSECT $2\",\n"
+            "                \"timeout\" : 60,\n"
+            "                \"query_list\" :\n"
+            "                    [\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 1,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"start_term\" : \"A\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        },\n"
+            "                        {\n"
+            "                            \"aggregation_tag\" : 2,\n"
+            "                            \"index_name\" : \"example_bin\",\n"
+            "                            \"end_term\"   : \"B\"\n"
+            "                        }\n"
+            "\n"
+            "                    ]\n"
+            "            }\n"
+            "        "
+        >>,
     {ok, M} = decode_json_body(IQJson),
     ?assertMatch(
         {error, <<"Missing required keys in request [<<\"start_term\">>]">>},

@@ -41,7 +41,8 @@
         index_spec/0,
         riak_object_meta/0,
         old_object/0,
-        hook_old_object/0
+        hook_old_object/0,
+        repl_ref/0
     ]
 ).
 
@@ -105,6 +106,8 @@
 -type index_value() :: integer() | binary().
 -type index_spec() :: {index_op(), binary(), index_value()}.
 -type binary_version() :: v0 | v1.
+-type repl_ref() ::
+    {reap, {bucket(), key(), vclock:vclock(), erlang:timestamp()}}.
 
 -define(MAX_KEY_SIZE, 65536).
 
@@ -1353,11 +1356,6 @@ to_binary_version(Vsn, _B, _K, Obj = #r_object{}) ->
 -spec binary_version(binary()) -> binary_version().
 binary_version(<<131,_/binary>>) -> v0;
 binary_version(<<?MAGIC:8/integer, 1:8/integer, _/binary>>) -> v1.
-
--type repl_ref() ::
-    {reap,
-        {riak_object:bucket(), riak_object:key(),
-            vclock:vclock(), erlang:timestamp()}}.
 
 %% @doc Encode for nextgen_repl
 -spec nextgenrepl_encode(

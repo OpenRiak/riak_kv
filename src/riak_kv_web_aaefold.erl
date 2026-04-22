@@ -188,7 +188,7 @@ match_route(Method, Path, [<<"rangerepl">> | Rest]) ->
             only_get(
                 #context{
                     fold_type = {range_action, repl_keys, BT},
-                    repl_queue = check_queuename(Queue)
+                    repl_queue = riak_kv_web_common:check_queuename(Queue)
                 },
                 Method
             );
@@ -524,15 +524,15 @@ validate_field(segment_filter, undefined, Filter) ->
 validate_field(segment_filter, SegF, Filter) when is_map(SegF) ->
     ValidTreeSize =
         case maps:get(<<"tree_size">>, SegF, undefined) of
-            TreeSize when is_binary(TreeSize) ->
+            undefined ->
+                {invalid, <<"Segment filter has no tree_size">>};
+            TreeSize ->
                 case check_size(TreeSize) of
                     invalid ->
                         {invalid, <<"Segment filter has invalid tree_size">>};
                     {valid, ValidSize} ->
                         {valid, ValidSize}
-                end;
-            undefined ->
-                {invalid, <<"Segment filter has no tree_size">>}
+                end
         end,
     ValidSegList =
         case maps:get(<<"segments">>, SegF, undefined) of
@@ -630,14 +630,24 @@ check_integer(Bin) ->
             false
     end.
 
--spec check_size(binary()) -> {valid, leveled_tictac:tree_size()} | invalid.
+-spec check_size(
+    binary() | string()
+) ->
+    {valid, leveled_tictac:tree_size()} | invalid.
 check_size(TreeSize) ->
     try
-        TS = binary_to_existing_atom(TreeSize),
+        TS =
+            case is_binary(TreeSize) of
+                true ->
+                    binary_to_existing_atom(TreeSize);
+                _ when is_list(TreeSize) ->
+                    list_to_existing_atom(TreeSize)
+            end,
         true = leveled_tictac:valid_size(TS),
         {valid, TS}
     catch
         _:_ ->
+            ?LOG_WARNING("Invalid Tree Size ~0p", [TreeSize]),
             invalid
     end.
 
@@ -649,15 +659,6 @@ check_seglist(SegList) ->
             SegList
         ),
     length(IntMembers) == length(SegList).
-
--spec check_queuename(binary()) -> atom().
-check_queuename(Queue) ->
-    try
-        binary_to_existing_atom(Queue)
-    catch
-        _:_ ->
-            undefined
-    end.
 
 %% ===================================================================
 %% Internal Functions

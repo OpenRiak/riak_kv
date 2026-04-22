@@ -41,6 +41,12 @@
     ]
 ).
 
+-export(
+    [
+        encode_results/3
+    ]
+).
+
 -record(context, {
     client = riak_client:new(node(), self()) :: riak_client:riak_client(),
     bucket :: riak_object:bucket(),
@@ -137,17 +143,16 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             Scheme,
             Peer,
             Ctx#context.bucket,
-            riak_kv_index
+            "riak_kv.index"
         ),
     case Check of
         true ->
             B = Ctx#context.bucket,
             case riak_kv_web_common:check_type_exists(B) of
-                true ->
-                    % TODO: Add referrer check in
+                ok ->
                     {ok, Ctx};
-                false ->
-                    {halt, 404, [], <<"Unknown bucket type: ~s">>, [B]}
+                HaltResponse ->
+                    HaltResponse
             end;
         HaltResponse ->
             HaltResponse
@@ -182,22 +187,11 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    case riak_api_web_headers:get_value('Accept', ReqHeaders) of
-        undefined ->
+    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+        ok ->
             {ok, Ctx};
-        AcceptType ->
-            Match =
-                riak_kv_web_common:type_match(
-                    <<"application/json">>,
-                    AcceptType
-                ),
-            case Match of
-                true ->
-                    {ok, Ctx};
-                false ->
-                    ErrMsg = <<"application/json must be accepted">>,
-                    {halt, 406, [?TXT_HEADER], ErrMsg, []}
-            end
+        HaltResponse ->
+            HaltResponse
     end.
 
 %% @doc Process the request and produce a response
@@ -474,7 +468,7 @@ process_memory_query(Query, Ctx) ->
                 ok,
                 {
                     200,
-                    [{'Content-Type', <<"application/json">>}],
+                    [?JSN_HEADER],
                     iolist_to_binary(JsonResults),
                     true,
                     none
@@ -546,14 +540,6 @@ process_stream_query(Query, Ctx) ->
             % to any client timeout
         ),
     {ok, {200, [CTypeHdr], {stream, StreamFun}, true, none}, Ctx}.
-
--type stream_fun() ::
-    fun(
-        () ->
-            {binary(), stream_fun()}
-            | done
-            | error
-    ).
 
 -spec index_stream_fun(
     {non_neg_integer(), pid()},

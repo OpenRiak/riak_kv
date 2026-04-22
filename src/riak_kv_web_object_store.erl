@@ -134,28 +134,25 @@ match_route(
         [<<"types">>, <<"default">>, <<"buckets">>, Bucket, <<"keys">>, Key]
     );
 match_route(
-    Method,
+    'POST',
     Path,
     [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>]
 ) ->
-    case Method of
-        'POST' ->
-            K = iolist_to_binary(riak_core_util:unique_id_62()),
-            match_route(
-                Method,
-                Path,
-                [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>, K]
-            );
-        _ ->
-            {method_not_allowed, ['POST']}
-    end;
+    % Note - overlap with riak_kv_web_keylist
+    % Hence no method_not_allowed
+    K = iolist_to_binary(riak_core_util:unique_id_62()),
+    match_route(
+        'POST',
+        Path,
+        [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>, K]
+    );
 match_route(
-    Method,
+    'POST',
     Path,
     [<<"buckets">>, Bucket, <<"keys">>]
 ) ->
     match_route(
-        Method,
+        'POST',
         Path,
         [<<"types">>, <<"default">>, <<"buckets">>, Bucket, <<"keys">>]
     );
@@ -177,7 +174,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             Scheme,
             Peer,
             Ctx#context.bucket,
-            riak_kv_put
+            "riak_kv.put"
         ),
     case Check of
         true ->
@@ -185,13 +182,11 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            B = Ctx#context.bucket,
-            case riak_kv_web_common:check_type_exists(B) of
-                true ->
-                    % TODO: Add referrer check in
+            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+                ok ->
                     {ok, Ctx};
-                false ->
-                    {halt, 404, [], <<"Unknown bucket type: ~s">>, [B]}
+                HaltResponse ->
+                    HaltResponse
             end;
         HaltResponse ->
             HaltResponse

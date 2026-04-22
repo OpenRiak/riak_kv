@@ -165,7 +165,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             Scheme,
             Peer,
             Ctx#context.bucket,
-            riak_kv_get
+            "riak_kv.get"
         ),
     case Check of
         true ->
@@ -173,13 +173,11 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            B = Ctx#context.bucket,
-            case riak_kv_web_common:check_type_exists(B) of
-                true ->
-                    % TODO: Add referrer check in
+            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+                ok ->
                     {ok, Ctx};
-                false ->
-                    {halt, 404, [], <<"Unknown bucket type: ~s">>, [B]}
+                HaltResponse ->
+                    HaltResponse
             end;
         HaltResponse ->
             HaltResponse

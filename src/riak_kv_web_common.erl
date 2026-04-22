@@ -40,7 +40,9 @@
         get_timeout/1,
         filter_options/1,
         make_clock_etag/1,
-        compile_splitters/0
+        compile_splitters/0,
+        check_queuename/1,
+        accept_json_only/1
     ]
 ).
 
@@ -68,11 +70,15 @@ add_routes() ->
         [
             {5, riak_kv_web_object_read},
             {10, riak_kv_web_object_store},
+            {12, riak_kv_web_queue},
             {15, riak_kv_web_object_delete},
             {20, riak_kv_web_query},
             {30, riak_kv_web_index},
-            {80, riak_kv_web_stats},
-            {90, riak_kv_web_aaefold}
+            {60, riak_kv_web_stats},
+            {80, riak_kv_web_aaefold},
+            {85, riak_kv_web_keylist},
+            {86, riak_kv_web_bucketlist},
+            {95, riak_kv_web_ping}
         ],
     riak_api_web:add_routes(Routes).
 
@@ -81,7 +87,7 @@ add_routes() ->
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
     riak_object:bucket() | undefined,
-    atom()
+    string() | undefined
 ) ->
     true | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Bucket, PermissionRequired) ->
@@ -113,24 +119,54 @@ check_permissions(ReqHeaders, Scheme, Peer, Bucket, PermissionRequired) ->
             {halt, RC, RH, RB, RS}
     end.
 
+-spec accept_json_only(
+    riak_api_web_headers:headers()
+) ->
+    ok | riak_api_web_acceptor:halt_response().
+accept_json_only(ReqHeaders) ->
+    AcceptedTypes =
+        case riak_api_web_headers:get_value('Accept', ReqHeaders) of
+            undefined ->
+                [<<"application/json">>];
+            SingleType when is_binary(SingleType) ->
+                [SingleType];
+            MultipleTypes when is_list(MultipleTypes) ->
+                MultipleTypes
+        end,
+    case type_match(<<"application/json">>, AcceptedTypes) of
+        true ->
+            ok;
+        false ->
+            {
+                halt,
+                406,
+                [?TXT_HEADER],
+                <<"application/json must be accepted">>,
+                []
+            }
+    end.
+
 -spec set_bucket(binary(), binary()) -> riak_object:bucket().
 set_bucket(<<"default">>, Bucket) ->
     Bucket;
 set_bucket(BucketType, Bucket) ->
     {BucketType, Bucket}.
 
--spec check_type_exists(riak_object:bucket()) -> boolean().
+-spec check_type_exists(
+    riak_object:bucket()
+) ->
+    ok | riak_api_web_acceptor:halt_response().
 check_type_exists({Type, _Bucket}) ->
     case riak_core_bucket_type:get(Type) of
         undefined ->
             % Not that this fetches the properties for the type from
             % the metadata - which may be an unnecessary cost.
-            false;
+            {halt, 404, [], <<"Unknown bucket type: ~0p">>, [Type]};
         _ ->
-            true
+            ok
     end;
 check_type_exists(Bucket) when is_binary(Bucket) ->
-    true.
+    ok.
 
 -spec count_fold(
     riak_api_web_handler:query_params(),
@@ -386,6 +422,15 @@ make_clock_etag(Vclock) ->
     <<ETag:128/integer>> = crypto:hash(md5, term_to_binary(Vclock)),
     list_to_binary(riak_core_util:integer_to_list(ETag, 62)).
 
+-spec check_queuename(binary()) -> atom().
+check_queuename(Queue) ->
+    try
+        binary_to_existing_atom(Queue)
+    catch
+        _:_ ->
+            undefined
+    end.
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -393,7 +438,6 @@ make_clock_etag(Vclock) ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 split_path(RequestLine) ->
     {ok, {http_request, Method, {abs_path, Path}, _Version}, _Rest} =
@@ -512,6 +556,54 @@ routing_test() ->
     ?assertMatch(
         {halt, 405, [{'Allow', <<"GET, POST">>}], <<>>, []},
         check_path(<<"PUT /buckets/B/query HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_queue, _, _},
+        check_path((<<"GET /queuename/queue HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_queue, _, _},
+        check_path((<<"POST /queuename/queue HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 404, [], <<>>, []},
+        check_path((<<"POST /queuename/notanexistingatom HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_queue, _, _},
+        check_path((<<"GET /membership_request HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET">>}], <<>>, []},
+        check_path(<<"POST /membership_request HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET, POST">>}], <<>>, []},
+        check_path((<<"PUT /queuename/queue HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_keylist, _, _},
+        check_path((<<"GET /types/T/buckets/B/keys?keys=true HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_keylist, _, _},
+        check_path((<<"GET /buckets/B/keys?keys=true HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET, POST">>}], <<>>, []},
+        check_path(<<"PUT /buckets/B/keys?keys=true HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_bucketlist, _, _},
+        check_path((<<"GET /types/T/buckets?buckets=true HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_bucketlist, _, _},
+        check_path((<<"GET /buckets?buckets=true HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET">>}], <<>>, []},
+        check_path(<<"PUT /buckets?buckets=true HTTP/1.1\r\n">>)
     ).
 
 type_preference_test() ->

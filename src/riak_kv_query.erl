@@ -510,10 +510,10 @@ add_queries(Query, Queries, Subs) ->
             Error
     end.
 
--spec make_continuation(index_limiter(), riak_object:key()) -> string().
+-spec make_continuation(index_limiter(), riak_object:key()) -> binary().
 make_continuation(StartTerm, StartKeyExclusive) ->
     M = #{?CONT_ST => StartTerm, ?CONT_SK => StartKeyExclusive},
-    base64:encode_to_string(iolist_to_binary(riak_kv_wm_json:encode(M))).
+    base64:encode(iolist_to_binary(riak_kv_wm_json:encode(M))).
 
 -spec validate_substitutions(substitutions()) -> ok|validation_error().
 validate_substitutions(Subs) ->
