@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP bucket properties fetch/store
 
--module(riak_kv_web_bprops).
+-module(riak_kv_ag_bprops).
 
 -include("riak_kv_web.hrl").
 
@@ -60,19 +60,19 @@ match_route('PUT', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 64 * 1024},
-        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = set}
+        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = set}
     };
 match_route('GET', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 0},
-        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = get}
+        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = get}
     };
 match_route('DELETE', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 0},
-        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = reset}
+        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = reset}
     };
 match_route(_, _, [<<"types">>, _T, <<"buckets">>, _B, <<"props">>]) ->
     {method_not_allowed, ['GET', 'PUT', 'DELETE']};
@@ -102,7 +102,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
                 "riak_core.set_bucket"
         end,
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -132,7 +132,7 @@ parse_query_params(_Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, #context{op = get} = Ctx) ->
-    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
@@ -239,10 +239,10 @@ jsonify_bucket_prop({chash_keyfun, {Mod, Fun}}) when
 ->
     {
         ?JSON_CHASH,
-            #{
-                ?JSON_MOD => atom_to_binary(Mod, utf8),
-                ?JSON_FUN => atom_to_binary(Fun, utf8)
-            }
+        #{
+            ?JSON_MOD => atom_to_binary(Mod, utf8),
+            ?JSON_FUN => atom_to_binary(Fun, utf8)
+        }
     };
 jsonify_bucket_prop({rs_extractfun, _}) ->
     none;

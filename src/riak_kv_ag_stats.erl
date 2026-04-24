@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP API requests for node statistics
 
--module(riak_kv_web_stats).
+-module(riak_kv_ag_stats).
 
 -include("riak_kv_web.hrl").
 
@@ -84,7 +84,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             {ok, Ctx};
         false ->
             Check =
-                riak_kv_web_common:check_permissions(
+                riak_kv_ag_common:check_permissions(
                     ReqHeaders,
                     Scheme,
                     Peer,
@@ -109,7 +109,7 @@ parse_query_params([], Ctx) ->
     % Typically we expect no options - so shortcut the validation in this case
     {ok, Ctx};
 parse_query_params(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -130,12 +130,12 @@ parse_request_headers(ReqHeaders, Ctx) ->
             {ok, Ctx#context{content_type = json}};
         AcceptType ->
             {JsonOK, JsonScore} =
-                riak_kv_web_common:type_preference(
+                riak_kv_ag_common:type_preference(
                     <<"application/json">>,
                     AcceptType
                 ),
             {TextOK, TextScore} =
-                riak_kv_web_common:type_preference(
+                riak_kv_ag_common:type_preference(
                     <<"text/plain">>,
                     AcceptType
                 ),

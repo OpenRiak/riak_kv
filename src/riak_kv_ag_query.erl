@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_kv_web_query).
+-module(riak_kv_ag_query).
 -include_lib("riak_kv/include/riak_kv_web.hrl").
 
 -if(?OTP_RELEASE == 26).
@@ -130,14 +130,14 @@ match_route(Method, _, [<<"types">>, T, <<"buckets">>, B, <<"query">>]) ->
         'GET' ->
             Context =
                 #context{
-                    bucket = riak_kv_web_common:set_bucket(T, B),
+                    bucket = riak_kv_ag_common:set_bucket(T, B),
                     request_type = fetch_results
                 },
             {ok, {32, 2048, 0}, Context};
         'POST' ->
             Context =
                 #context{
-                    bucket = riak_kv_web_common:set_bucket(T, B),
+                    bucket = riak_kv_ag_common:set_bucket(T, B),
                     request_type = submit_query
                 },
             {ok, {32, 2048, 64 * 1024}, Context};
@@ -163,7 +163,7 @@ match_route(_Method, _Path, _SplitPath) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -176,7 +176,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+            case riak_kv_ag_common:check_type_exists(Ctx#context.bucket) of
                 ok ->
                     {ok, Ctx};
                 HaltResponse ->
@@ -248,7 +248,7 @@ parse_query_params(Params, #context{request_type = fetch_results} = Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
@@ -576,7 +576,7 @@ encode_queued_results(ResultMap) ->
             iolist_to_binary(
                 riak_kv_wm_json:encode(
                     ResultMap,
-                    fun riak_kv_web_query:encode_key/2
+                    fun riak_kv_ag_query:encode_key/2
                 )
             );
         false ->
@@ -585,7 +585,7 @@ encode_queued_results(ResultMap) ->
                     iolist_to_binary(
                         riak_kv_wm_json:encode(
                             ResultMap,
-                            fun riak_kv_web_query:encode_key_withterm/2
+                            fun riak_kv_ag_query:encode_key_withterm/2
                         )
                     )
             end
@@ -761,14 +761,14 @@ encode_results(AccOpt, Results) when AccOpt == keys; AccOpt == raw_keys ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
             #{get_result_key(AccOpt) => Results},
-            fun riak_kv_web_query:encode_key/2
+            fun riak_kv_ag_query:encode_key/2
         )
     );
 encode_results(AccOpt, Results) when AccOpt == terms; AccOpt == raw_terms ->
     iolist_to_binary(
         riak_kv_wm_json:encode(
             #{get_result_key(AccOpt) => Results},
-            fun riak_kv_web_query:encode_key_withterm/2
+            fun riak_kv_ag_query:encode_key_withterm/2
         )
     );
 encode_results(AccOpt, Count) when AccOpt == count; AccOpt == raw_count ->

@@ -241,8 +241,8 @@ start(_Type, _StartArgs) ->
             ok = riak_kv_cli_registry:register_cli(),
 
             %% Add routes for web API
-            ok = riak_kv_web_common:add_routes(),
-            ok = riak_kv_web_common:compile_splitters(),
+            ok = riak_kv_ag_common:add_routes(),
+            ok = riak_kv_ag_common:compile_splitters(),
 
             {ok, Pid};
         {error, Reason} ->

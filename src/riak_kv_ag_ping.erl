@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP ping API
 
--module(riak_kv_web_ping).
+-module(riak_kv_ag_ping).
 
 -include("riak_kv_web.hrl").
 
@@ -58,7 +58,7 @@ match_route('GET', _, [<<"ping">>]) ->
     {ok, {32, 2048, 0}, #context{}};
 match_route(_, _, [<<"ping">>]) ->
     {method_not_allowed, ['GET']};
-match_route(_, _,  _) ->
+match_route(_, _, _) ->
     nomatch.
 
 %% @doc check_permissions for using this module or route
@@ -71,7 +71,7 @@ match_route(_, _,  _) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -122,7 +122,6 @@ parse_request_headers(_ReqHeaders, Ctx) ->
     | riak_api_web_acceptor:halt_response().
 process_request(none, Ctx) ->
     {ok, {200, [?TXT_HEADER], <<"OK">>, true, none}, Ctx}.
-    
 
 %% @doc Record the output of the interaction
 -spec record_request(

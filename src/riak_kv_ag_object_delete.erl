@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP API requests to 'DELETE' an object
 
--module(riak_kv_web_object_delete).
+-module(riak_kv_ag_object_delete).
 -include("riak_kv_web.hrl").
 
 -if(?OTP_RELEASE == 26).
@@ -106,7 +106,7 @@ match_route(
         Method when Method == 'DELETE' ->
             Context =
                 #context{
-                    bucket = riak_kv_web_common:set_bucket(BucketType, Bucket),
+                    bucket = riak_kv_ag_common:set_bucket(BucketType, Bucket),
                     key = Key
                 },
             {ok, size_limits(), Context};
@@ -154,7 +154,7 @@ match_route(_Method, _Path, _SplitPath) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -167,7 +167,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+            case riak_kv_ag_common:check_type_exists(Ctx#context.bucket) of
                 ok ->
                     {ok, Ctx};
                 HaltResponse ->
@@ -231,7 +231,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
     | riak_api_web_acceptor:halt_response().
 process_request(none, Context) ->
     DelOptions =
-        riak_kv_web_common:filter_options(Context#context.del_options),
+        riak_kv_ag_common:filter_options(Context#context.del_options),
     Result =
         case Context#context.vclock of
             undefined ->
@@ -279,7 +279,7 @@ record_request(_Timings, _Completion, _Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -295,7 +295,7 @@ validate_timeout(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_counts(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:count_fold(
+        riak_kv_ag_common:count_fold(
             Params,
             [
                 <<"w">>,
@@ -322,7 +322,7 @@ validate_counts(Params, Context) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_booleans(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:boolean_fold(
+        riak_kv_ag_common:boolean_fold(
             Params,
             [<<"sloppy_quorum">>],
             Context#context.del_options
@@ -340,7 +340,7 @@ validate_booleans(Params, Context) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 set_version_vector(ReqHeaders, Ctx) ->
-    case riak_kv_web_common:get_version_vector(ReqHeaders) of
+    case riak_kv_ag_common:get_version_vector(ReqHeaders) of
         {ok, none} ->
             {ok, Ctx};
         {ok, DecodedClock} ->

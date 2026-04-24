@@ -20,7 +20,7 @@
 %% @doc Handler for HTTP API requests to store an object ('PUT' or 'POST'
 %% requests)
 
--module(riak_kv_web_object_store).
+-module(riak_kv_ag_object_store).
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
 
@@ -114,7 +114,7 @@ match_route(
             Context =
                 #context{
                     method = Method,
-                    bucket = riak_kv_web_common:set_bucket(BucketType, Bucket),
+                    bucket = riak_kv_ag_common:set_bucket(BucketType, Bucket),
                     key = Key
                 },
             {ok, size_limits(), Context};
@@ -138,7 +138,7 @@ match_route(
     Path,
     [<<"types">>, BucketType, <<"buckets">>, Bucket, <<"keys">>]
 ) ->
-    % Note - overlap with riak_kv_web_keylist
+    % Note - overlap with riak_kv_ag_keylist
     % Hence no method_not_allowed
     K = iolist_to_binary(riak_core_util:unique_id_62()),
     match_route(
@@ -169,7 +169,7 @@ match_route(_Method, _Path, _SplitPath) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -182,7 +182,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+            case riak_kv_ag_common:check_type_exists(Ctx#context.bucket) of
                 ok ->
                     {ok, Ctx};
                 HaltResponse ->
@@ -265,7 +265,7 @@ process_request(RqBdy, Context) ->
                 ok ->
                     {ok, {204, [], <<>>, true, UpdRqBody}, Context};
                 {ok, Obj} ->
-                    {ok, riak_kv_web_object_read:produce_response(Obj)}
+                    {ok, riak_kv_ag_object_read:produce_response(Obj)}
             end
     end.
 
@@ -289,7 +289,7 @@ record_request(_Timings, _Completion, _Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -305,7 +305,7 @@ validate_timeout(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_counts(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:count_fold(
+        riak_kv_ag_common:count_fold(
             Params,
             [<<"w">>, <<"dw">>, <<"pw">>, <<"n_val">>, <<"node_confirms">>],
             Context#context.put_options
@@ -324,7 +324,7 @@ validate_counts(Params, Context) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_booleans(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:boolean_fold(
+        riak_kv_ag_common:boolean_fold(
             Params,
             [<<"returnbody">>, <<"basic_quorum">>, <<"asis">>],
             Context#context.put_options
@@ -392,7 +392,7 @@ validate_conditional_request(ReqHeaders, Ctx) ->
         undefined ->
             {ok, Ctx1};
         {_OrigKey, [EncodedClock]} ->
-            case riak_kv_web_common:decode_clock(EncodedClock) of
+            case riak_kv_ag_common:decode_clock(EncodedClock) of
                 error ->
                     ErrorRsp =
                         <<
@@ -428,7 +428,7 @@ validate_conditional_request(ReqHeaders, Ctx) ->
 ) ->
     {ok, riak_object:riak_object()} | riak_api_web_acceptor:halt_response().
 set_version_vector(ReqHeaders, Obj) ->
-    case riak_kv_web_common:get_version_vector(ReqHeaders) of
+    case riak_kv_ag_common:get_version_vector(ReqHeaders) of
         {ok, none} ->
             {ok, Obj};
         {ok, DecodedClock} ->
@@ -588,7 +588,7 @@ do_put(Object, Ctx) ->
                         riak_client:put(
                             Object,
                             CondPutOptions ++
-                                riak_kv_web_common:filter_options(
+                                riak_kv_ag_common:filter_options(
                                     Ctx#context.put_options
                                 ),
                             Ctx#context.client
@@ -600,7 +600,7 @@ do_put(Object, Ctx) ->
                             [
                                 Object,
                                 CondPutOptions ++
-                                    riak_kv_web_common:filter_options(
+                                    riak_kv_ag_common:filter_options(
                                         Ctx#context.put_options
                                     )
                             ]

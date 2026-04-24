@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc common functions used by web API handlers
 
--module(riak_kv_web_common).
+-module(riak_kv_ag_common).
 
 -include_lib("kernel/include/logger.hrl").
 -include("riak_kv_web.hrl").
@@ -68,18 +68,18 @@ filter_options(Options) ->
 add_routes() ->
     Routes =
         [
-            {5, riak_kv_web_object_read},
-            {10, riak_kv_web_object_store},
-            {12, riak_kv_web_queue},
-            {15, riak_kv_web_object_delete},
-            {20, riak_kv_web_query},
-            {30, riak_kv_web_index},
-            {60, riak_kv_web_stats},
-            {80, riak_kv_web_aaefold},
-            {85, riak_kv_web_keylist},
-            {86, riak_kv_web_bucketlist},
-            {95, riak_kv_web_ping},
-            {98, riak_kv_web_bprops}
+            {5, riak_kv_ag_object_read},
+            {10, riak_kv_ag_object_store},
+            {12, riak_kv_ag_queue},
+            {15, riak_kv_ag_object_delete},
+            {20, riak_kv_ag_query},
+            {30, riak_kv_ag_index},
+            {60, riak_kv_ag_stats},
+            {80, riak_kv_ag_aaefold},
+            {85, riak_kv_ag_keylist},
+            {86, riak_kv_ag_bucketlist},
+            {95, riak_kv_ag_ping},
+            {98, riak_kv_ag_bprops}
         ],
     riak_api_web:add_routes(Routes).
 
@@ -383,7 +383,7 @@ get_version_vector(ReqHeaders) ->
         undefined ->
             {ok, none};
         {_OrigKey, [EncodedClock]} ->
-            case riak_kv_web_common:decode_clock(EncodedClock) of
+            case riak_kv_ag_common:decode_clock(EncodedClock) of
                 error ->
                     ErrorRsp =
                         <<
@@ -465,15 +465,15 @@ check_path(RequestLine) ->
 routing_test() ->
     add_routes(),
     ?assertMatch(
-        {ok, riak_kv_web_object_read, _, _},
+        {ok, riak_kv_ag_object_read, _, _},
         check_path(<<"GET /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_read, _, _},
+        {ok, riak_kv_ag_object_read, _, _},
         check_path(<<"HEAD /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_read, _, _},
+        {ok, riak_kv_ag_object_read, _, _},
         check_path(<<"GET /buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
@@ -481,7 +481,7 @@ routing_test() ->
         check_path(<<"OPTIONS /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_store, _, _},
+        {ok, riak_kv_ag_object_store, _, _},
         check_path(<<"POST /types/T/buckets/B/keys HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
@@ -489,43 +489,43 @@ routing_test() ->
         check_path(<<"PUT /types/T/buckets/B/keys HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_store, _, _},
+        {ok, riak_kv_ag_object_store, _, _},
         check_path(<<"POST /buckets/B/keys HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_delete, _, _},
+        {ok, riak_kv_ag_object_delete, _, _},
         check_path(<<"DELETE /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_object_delete, _, _},
+        {ok, riak_kv_ag_object_delete, _, _},
         check_path(<<"DELETE /buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_index, _, _},
+        {ok, riak_kv_ag_index, _, _},
         check_path(
             <<"GET /types/T/buckets/B/index/field1_bin/exact HTTP/1.1\r\n">>
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_index, _, _},
+        {ok, riak_kv_ag_index, _, _},
         check_path(
             <<"GET /types/T/buckets/B/index/field1_bin/s/e HTTP/1.1\r\n">>
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_index, _, _},
+        {ok, riak_kv_ag_index, _, _},
         check_path(
             <<"GET /buckets/B/index/field1_bin/exact HTTP/1.1\r\n">>
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_index, _, _},
+        {ok, riak_kv_ag_index, _, _},
         check_path(
             <<"GET /buckets/B/index/field1_bin/s/e HTTP/1.1\r\n">>
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_index, _, _},
+        {ok, riak_kv_ag_index, _, _},
         check_path(
             <<"GET /buckets/B/index/field1_int/1/10 HTTP/1.1\r\n">>
         )
@@ -537,7 +537,7 @@ routing_test() ->
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_stats, _, _},
+        {ok, riak_kv_ag_stats, _, _},
         check_path(
             <<"GET /stats HTTP/1.1\r\n">>
         )
@@ -549,15 +549,15 @@ routing_test() ->
         )
     ),
     ?assertMatch(
-        {ok, riak_kv_web_query, _, _},
+        {ok, riak_kv_ag_query, _, _},
         check_path(<<"GET /buckets/B/query HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_query, _, _},
+        {ok, riak_kv_ag_query, _, _},
         check_path(<<"POST /buckets/B/query HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_query, _, _},
+        {ok, riak_kv_ag_query, _, _},
         check_path(<<"GET /types/T/buckets/B/query HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
@@ -565,11 +565,11 @@ routing_test() ->
         check_path(<<"PUT /buckets/B/query HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_queue, _, _},
+        {ok, riak_kv_ag_queue, _, _},
         check_path((<<"GET /queuename/queue HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_queue, _, _},
+        {ok, riak_kv_ag_queue, _, _},
         check_path((<<"POST /queuename/queue HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
@@ -577,7 +577,7 @@ routing_test() ->
         check_path((<<"POST /queuename/notanexistingatom HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_queue, _, _},
+        {ok, riak_kv_ag_queue, _, _},
         check_path((<<"GET /membership_request HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
@@ -589,11 +589,11 @@ routing_test() ->
         check_path((<<"PUT /queuename/queue HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_keylist, _, _},
+        {ok, riak_kv_ag_keylist, _, _},
         check_path((<<"GET /types/T/buckets/B/keys?keys=true HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_keylist, _, _},
+        {ok, riak_kv_ag_keylist, _, _},
         check_path((<<"GET /buckets/B/keys?keys=true HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
@@ -601,11 +601,11 @@ routing_test() ->
         check_path(<<"PUT /buckets/B/keys?keys=true HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_bucketlist, _, _},
+        {ok, riak_kv_ag_bucketlist, _, _},
         check_path((<<"GET /types/T/buckets?buckets=true HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_bucketlist, _, _},
+        {ok, riak_kv_ag_bucketlist, _, _},
         check_path((<<"GET /buckets?buckets=true HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
@@ -613,15 +613,15 @@ routing_test() ->
         check_path(<<"PUT /buckets?buckets=true HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {ok, riak_kv_web_bprops, _, _},
+        {ok, riak_kv_ag_bprops, _, _},
         check_path((<<"GET /types/T/buckets/B/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_bprops, _, _},
+        {ok, riak_kv_ag_bprops, _, _},
         check_path((<<"GET /buckets/B/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {ok, riak_kv_web_bprops, _, _},
+        {ok, riak_kv_ag_bprops, _, _},
         check_path((<<"DELETE /buckets/B/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(

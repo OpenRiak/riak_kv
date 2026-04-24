@@ -20,7 +20,7 @@
 %% @doc Handler for HTTP API requests to read an object ('GET' or 'HEAD'
 %% requests)
 
--module(riak_kv_web_object_read).
+-module(riak_kv_ag_object_read).
 -include_lib("kernel/include/logger.hrl").
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
@@ -128,7 +128,7 @@ match_route(
             Context =
                 #context{
                     method = Method,
-                    bucket = riak_kv_web_common:set_bucket(BucketType, Bucket),
+                    bucket = riak_kv_ag_common:set_bucket(BucketType, Bucket),
                     key = Key
                 },
             {ok, size_limits(), Context};
@@ -160,7 +160,7 @@ match_route(_Method, _Path, _SplitPath) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -173,7 +173,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             % if it does not exist - so better to give a sensible error here.
             % Note this requires the fetching (and discarding) of the type
             % properties.
-            case riak_kv_web_common:check_type_exists(Ctx#context.bucket) of
+            case riak_kv_ag_common:check_type_exists(Ctx#context.bucket) of
                 ok ->
                     {ok, Ctx};
                 HaltResponse ->
@@ -256,7 +256,7 @@ process_request(none, Context) ->
         riak_client:get(
             Context#context.bucket,
             Context#context.key,
-            riak_kv_web_common:filter_options(
+            riak_kv_ag_common:filter_options(
                 Context#context.get_options
             ),
             Context#context.client
@@ -319,7 +319,7 @@ maybe_set_vtag(QueryParams, Context) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -335,7 +335,7 @@ validate_timeout(Params, Ctx) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_counts(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:count_fold(
+        riak_kv_ag_common:count_fold(
             Params,
             [<<"r">>, <<"pr">>, <<"n_val">>, <<"node_confirms">>],
             Context#context.get_options
@@ -354,7 +354,7 @@ validate_counts(Params, Context) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_booleans(Params, Context) ->
     FoldResult =
-        riak_kv_web_common:boolean_fold(
+        riak_kv_ag_common:boolean_fold(
             Params,
             [<<"basic_quorum">>, <<"notfound_ok">>],
             Context#context.get_options
@@ -422,7 +422,7 @@ produce_response(RObj, Ctx) ->
             EtHdr =
                 {
                     'Etag',
-                    riak_kv_web_common:make_clock_etag(Vclock)
+                    riak_kv_ag_common:make_clock_etag(Vclock)
                 },
             handle_multiple_objects(Siblings, VcHdr, EtHdr, Ctx)
     end.
@@ -558,12 +558,12 @@ handle_multiple_objects(Siblings, VcHdr, EtHdr, Ctx) ->
 -spec multipart_preferred(context()) -> boolean() | error.
 multipart_preferred(Context) ->
     {MultiPreference, MultiScore} =
-        riak_kv_web_common:type_preference(
+        riak_kv_ag_common:type_preference(
             <<"multipart/mixed">>,
             Context#context.preferred_types
         ),
     {TextPreference, TextScore} =
-        riak_kv_web_common:type_preference(
+        riak_kv_ag_common:type_preference(
             <<"text/plain">>,
             Context#context.preferred_types
         ),
@@ -657,7 +657,7 @@ produce_response_headers(MD, Hdrs, type, Context) ->
             true ->
                 true;
             false ->
-                riak_kv_web_common:type_match(
+                riak_kv_ag_common:type_match(
                     ContentType,
                     Context#context.preferred_types
                 )
@@ -689,7 +689,7 @@ produce_response_headers(MD, Hdrs, type, Context) ->
         error ->
             DefaultCType = <<"application/octet-stream">>,
             MatchDefault =
-                riak_kv_web_common:type_match(
+                riak_kv_ag_common:type_match(
                     DefaultCType,
                     Context#context.preferred_types
                 ),
@@ -848,7 +848,7 @@ maybe_all(CType) ->
 -include_lib("eunit/include/eunit.hrl").
 
 type_match(Type, AcceptedTypes) ->
-    riak_kv_web_common:type_match(Type, AcceptedTypes).
+    riak_kv_ag_common:type_match(Type, AcceptedTypes).
 
 accept_multipart_test() ->
     Accept1 =
@@ -1449,20 +1449,20 @@ hidden_all_accepted_test() ->
         #context{method = 'GET', bucket = {<<"T">>, <<"B">>}, key = <<"K">>},
     {ok, Ctx1} = parse_request_headers(ReqHeaders1, InitCtx),
     CType = <<"application/octet-stream">>,
-    ?assert(riak_kv_web_common:type_match(CType, Ctx1#context.preferred_types)),
+    ?assert(riak_kv_ag_common:type_match(CType, Ctx1#context.preferred_types)),
 
     ReqHeaders2 =
         riak_api_web_headers:make(
             [{'Accept', [<<"multipart/mixed">>, <<"application/*;q=0.9">>]}]
         ),
     {ok, Ctx2} = parse_request_headers(ReqHeaders2, InitCtx),
-    ?assert(riak_kv_web_common:type_match(CType, Ctx2#context.preferred_types)),
+    ?assert(riak_kv_ag_common:type_match(CType, Ctx2#context.preferred_types)),
 
     ReqHeaders3 =
         riak_api_web_headers:make(
             [{'Accept', <<"*/*;q=0.9">>}]
         ),
     {ok, Ctx3} = parse_request_headers(ReqHeaders3, InitCtx),
-    ?assert(riak_kv_web_common:type_match(CType, Ctx3#context.preferred_types)).
+    ?assert(riak_kv_ag_common:type_match(CType, Ctx3#context.preferred_types)).
 
 -endif.

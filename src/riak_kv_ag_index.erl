@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP API requests for (legacy) 2i queries
 
--module(riak_kv_web_index).
+-module(riak_kv_ag_index).
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
@@ -86,7 +86,7 @@ match_route(
         'GET' ->
             Context =
                 #context{
-                    bucket = riak_kv_web_common:set_bucket(BucketType, Bucket),
+                    bucket = riak_kv_ag_common:set_bucket(BucketType, Bucket),
                     field = Idx,
                     start_term = ST,
                     end_term = ET
@@ -138,7 +138,7 @@ match_route(_Method, _Path, _SP) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -148,7 +148,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     case Check of
         true ->
             B = Ctx#context.bucket,
-            case riak_kv_web_common:check_type_exists(B) of
+            case riak_kv_ag_common:check_type_exists(B) of
                 ok ->
                     {ok, Ctx};
                 HaltResponse ->
@@ -187,7 +187,7 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
@@ -256,7 +256,7 @@ record_request(_Timings, _Completion, _Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -301,7 +301,7 @@ validate_maybe_true(Key, Params, Ctx) ->
         false ->
             {ok, Ctx};
         {_, MT} ->
-            case riak_kv_web_common:normalise_boolean_param(MT) of
+            case riak_kv_ag_common:normalise_boolean_param(MT) of
                 true ->
                     case Key of
                         return_terms ->

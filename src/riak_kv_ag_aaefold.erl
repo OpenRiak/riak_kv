@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP API requests for (legacy) 2i queries
 
--module(riak_kv_web_aaefold).
+-module(riak_kv_ag_aaefold).
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
@@ -154,7 +154,7 @@ match_route(Method, Path, [<<"rangetrees">> | Rest]) ->
                         {
                             range_action,
                             merge_tree,
-                            riak_kv_web_common:set_bucket(Type, Bucket)
+                            riak_kv_ag_common:set_bucket(Type, Bucket)
                         },
                     only_get(
                         #context{fold_type = FoldType, tree_size = ValidSize},
@@ -166,7 +166,7 @@ match_route(Method, Path, [<<"rangetrees">> | Rest]) ->
                 {
                     range_action,
                     clocks,
-                    riak_kv_web_common:set_bucket(Type, Bucket)
+                    riak_kv_ag_common:set_bucket(Type, Bucket)
                 },
             only_get(
                 #context{fold_type = FoldType},
@@ -184,11 +184,11 @@ match_route(Method, Path, [<<"rangerepl">> | Rest]) ->
                 [<<"rangerepl">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket, <<"queuename">>, Queue] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{
                     fold_type = {range_action, repl_keys, BT},
-                    repl_queue = riak_kv_web_common:check_queuename(Queue)
+                    repl_queue = riak_kv_ag_common:check_queuename(Queue)
                 },
                 Method
             );
@@ -204,7 +204,7 @@ match_route(Method, Path, [<<"rangerepair">> | Rest]) ->
                 [<<"rangerepair">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{fold_type = {range_action, repair_keys, BT}},
                 Method
@@ -221,7 +221,7 @@ match_route(Method, Path, [<<"siblings">> | Rest]) ->
                 [<<"siblings">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket, <<"counts">>, Count] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             case check_integer(Count) of
                 Int when is_integer(Int), Int > 0 ->
                     only_get(
@@ -245,7 +245,7 @@ match_route(Method, Path, [<<"objectstats">> | Rest]) ->
                 [<<"objectstats">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{fold_type = {range_query, object_stats, BT}},
                 Method
@@ -262,7 +262,7 @@ match_route(Method, Path, [<<"objectsizes">> | Rest]) ->
                 [<<"objectsizes">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket, <<"sizes">>, Size] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             case check_integer(Size) of
                 Int when is_integer(Int), Int > 0 ->
                     only_get(
@@ -286,7 +286,7 @@ match_route(Method, Path, [<<"tombs">> | Rest]) ->
                 [<<"tombs">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{fold_type = {range_query, find_tombs, BT}},
                 Method
@@ -303,7 +303,7 @@ match_route(Method, Path, [<<"reap">> | Rest]) ->
                 [<<"reap">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{fold_type = {range_action, reap_tombs, BT}},
                 Method
@@ -320,7 +320,7 @@ match_route(Method, Path, [<<"erase">> | Rest]) ->
                 [<<"erase">>, <<"types">>, <<"default">>] ++ Rest
             );
         [<<"types">>, Type, <<"buckets">>, Bucket] ->
-            BT = riak_kv_web_common:set_bucket(Type, Bucket),
+            BT = riak_kv_ag_common:set_bucket(Type, Bucket),
             only_get(
                 #context{fold_type = {range_action, erase_keys, BT}},
                 Method
@@ -353,7 +353,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             {ok, Ctx};
         false ->
             Check =
-                riak_kv_web_common:check_permissions(
+                riak_kv_ag_common:check_permissions(
                     ReqHeaders,
                     Scheme,
                     Peer,

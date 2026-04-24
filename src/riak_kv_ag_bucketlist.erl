@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc Handler for HTTP bucketlist API (v2 or higher)
 
--module(riak_kv_web_bucketlist).
+-module(riak_kv_ag_bucketlist).
 
 -include("riak_kv_web.hrl").
 
@@ -86,7 +86,7 @@ match_route(_, _, _) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
     Check =
-        riak_kv_web_common:check_permissions(
+        riak_kv_ag_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -123,7 +123,7 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    case riak_kv_web_common:accept_json_only(ReqHeaders) of
+    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
@@ -263,7 +263,7 @@ bucket_stream_fun(ReqId) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_web_common:get_timeout(Params) of
+    case riak_kv_ag_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
