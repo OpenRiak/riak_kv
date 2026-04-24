@@ -99,19 +99,24 @@ match_route(_Method, _Path, _SplitPath) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
-    Check =
-        riak_kv_web_common:check_permissions(
-            ReqHeaders,
-            Scheme,
-            Peer,
-            undefined,
-            undefined
-        ),
-    case Check of
+    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
         true ->
             {ok, Ctx};
-        HaltResponse ->
-            HaltResponse
+        false ->
+            Check =
+                riak_kv_web_common:check_permissions(
+                    ReqHeaders,
+                    Scheme,
+                    Peer,
+                    undefined,
+                    undefined
+                ),
+            case Check of
+                true ->
+                    {ok, Ctx};
+                HaltResponse ->
+                    HaltResponse
+            end
     end.
 
 %% @doc parse and validate query params, passed as a map
@@ -136,7 +141,9 @@ parse_query_params(Params, #context{request_type = fetch_request} = Ctx) ->
             };
         _ ->
             {ok, Ctx#context{object_format = internal}}
-    end.
+    end;
+parse_query_params(_Params, Ctx) ->
+    {ok, Ctx}.
 
 %% @doc parse and validate the request headers
 -spec parse_request_headers(
@@ -163,7 +170,9 @@ parse_request_headers(ReqHeaders, Ctx) ->
                     fetch_request ->
                         <<"application/octet-stream">>;
                     membership_request ->
-                        <<"application/json">>
+                        <<"application/json">>;
+                    repl_request ->
+                        <<"text/plain">>
                 end,
             case riak_kv_web_common:type_match(CTypeRequired, AcceptedTypes) of
                 true ->

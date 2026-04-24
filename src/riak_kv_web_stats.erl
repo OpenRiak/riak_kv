@@ -59,9 +59,9 @@
 match_route(Method, Path, _) ->
     ExpectedStatsPath =
         iolist_to_binary(
-            application:get_env(riak_kv, stats_urlpath, "/stats")
+            application:get_env(riak_kv, stats_urlpath, "stats")
         ),
-    case {Path, Method} of
+    case {string:trim(Path, both, "/"), Method} of
         {ExpectedStatsPath, 'GET'} ->
             {ok, size_limits(), #context{}};
         {ExpectedStatsPath, _OtherMethod} ->

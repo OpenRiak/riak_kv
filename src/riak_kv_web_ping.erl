@@ -70,24 +70,19 @@ match_route(_, _,  _) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
-    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
+    Check =
+        riak_kv_web_common:check_permissions(
+            ReqHeaders,
+            Scheme,
+            Peer,
+            undefined,
+            undefined
+        ),
+    case Check of
         true ->
             {ok, Ctx};
-        false ->
-            Check =
-                riak_kv_web_common:check_permissions(
-                    ReqHeaders,
-                    Scheme,
-                    Peer,
-                    undefined,
-                    undefined
-                ),
-            case Check of
-                true ->
-                    {ok, Ctx};
-                HaltResponse ->
-                    HaltResponse
-            end
+        HaltResponse ->
+            HaltResponse
     end.
 
 %% @doc parse and validate query params, passed as a map

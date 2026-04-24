@@ -348,19 +348,24 @@ match_route(_Method, _Path, _SplitPath) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
-    Check =
-        riak_kv_web_common:check_permissions(
-            ReqHeaders,
-            Scheme,
-            Peer,
-            undefined,
-            undefined
-        ),
-    case Check of
+    case application:get_env(riak_kv, permit_insecure_http_ops, false) of
         true ->
             {ok, Ctx};
-        HaltResponse ->
-            HaltResponse
+        false ->
+            Check =
+                riak_kv_web_common:check_permissions(
+                    ReqHeaders,
+                    Scheme,
+                    Peer,
+                    undefined,
+                    undefined
+                ),
+            case Check of
+                true ->
+                    {ok, Ctx};
+                HaltResponse ->
+                    HaltResponse
+            end
     end.
 
 %% @doc parse and validate query params, passed as a map
@@ -393,8 +398,7 @@ parse_query_params(Params, Ctx) ->
                     {halt, 400, [?TXT_HEADER], ErrMsg, [NVal]}
             end;
         {{bucket_list, undefined}, false} ->
-            ErrMsg = <<"Missing nval in query params">>,
-            {halt, 400, [?TXT_HEADER], ErrMsg, []};
+            {ok, Ctx#context{fold_type = {bucket_list, 1}}};
         _ ->
             {ok, Ctx}
     end.
@@ -1154,8 +1158,9 @@ bucket_list_qparam_test() ->
     {ok, _, Ctx} = match_route('GET', <<>>, [<<"aaebucketlist">>]),
     {halt, 400, _, <<"Invalid nval in query params ~0p">>, [<<"A">>]} =
         parse_query_params(uri_string:dissect_query(<<"nval=A">>), Ctx),
-    {halt, 400, _, <<"Missing nval in query params">>, []} =
+    {ok, Ctx0} =
         parse_query_params(uri_string:dissect_query(<<"filter=A">>), Ctx),
+    ?assertMatch({bucket_list, 1}, Ctx0#context.fold_type),
     {ok, Ctx1} =
         parse_query_params(uri_string:dissect_query(<<"nval=3">>), Ctx),
     ?assertMatch({bucket_list, 3}, Ctx1#context.fold_type).

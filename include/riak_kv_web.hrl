@@ -39,6 +39,21 @@
 -define(Q_RESULTS_BIN, <<"results">>).
 -define(Q_KEYS_BIN, <<"keys">>).
 
+%% Names of JSON fields in bucket properties
+-define(JSON_PROPS, <<"props">>).
+-define(JSON_BUCKETS, <<"buckets">>).
+-define(JSON_KEYS, <<"keys">>).
+-define(JSON_MOD, <<"mod">>).
+-define(JSON_FUN, <<"fun">>).
+-define(JSON_ARG, <<"arg">>).
+-define(JSON_CHASH, <<"chash_keyfun">>).
+-define(JSON_JSFUN, <<"jsfun">>).
+-define(JSON_JSANON, <<"jsanon">>).
+-define(JSON_JSBUCKET, <<"bucket">>).
+-define(JSON_JSKEY, <<"key">>).
+-define(JSON_ALLOW_MULT, <<"allow_mult">>).
+-define(JSON_DATATYPE, <<"datatype">>).
+
 %% erlfmt:ignore-begin
 -type stream_fun() ::
     fun(() ->

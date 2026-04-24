@@ -159,7 +159,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
             Scheme,
             Peer,
             Ctx#context.bucket,
-            "riak_kv.put"
+            "riak_kv.delete"
         ),
     case Check of
         true ->
@@ -254,7 +254,7 @@ process_request(none, Context) ->
         ok ->
             {ok, {204, [], <<>>, true, none}, Context};
         {error, notfound} ->
-            {ok, {204, [], <<>>, true, none}, Context};
+            {ok, {404, [], <<>>, true, none}, Context};
         {error, Reason} ->
             handle_error(Reason, Context)
     end.

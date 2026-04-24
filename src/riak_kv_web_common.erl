@@ -78,7 +78,8 @@ add_routes() ->
             {80, riak_kv_web_aaefold},
             {85, riak_kv_web_keylist},
             {86, riak_kv_web_bucketlist},
-            {95, riak_kv_web_ping}
+            {95, riak_kv_web_ping},
+            {98, riak_kv_web_bprops}
         ],
     riak_api_web:add_routes(Routes).
 
@@ -90,7 +91,13 @@ add_routes() ->
     string() | undefined
 ) ->
     true | riak_api_web_acceptor:halt_response().
-check_permissions(ReqHeaders, Scheme, Peer, Bucket, PermissionRequired) ->
+check_permissions(ReqHeaders, Scheme, Peer, Bucket, GrantSought) when
+    is_binary(Bucket)
+->
+    check_permissions(
+        ReqHeaders, Scheme, Peer, {<<"default">>, Bucket}, GrantSought
+    );
+check_permissions(ReqHeaders, Scheme, Peer, Bucket, GrantSought) ->
     Authorised =
         riak_api_web_security:is_authorised(
             riak_core_security:is_enabled(),
@@ -101,12 +108,12 @@ check_permissions(ReqHeaders, Scheme, Peer, Bucket, PermissionRequired) ->
     case Authorised of
         {ok, undefined} ->
             true;
-        {ok, _SecContext} when PermissionRequired == undefined ->
+        {ok, _SecContext} when GrantSought == undefined ->
             true;
         {ok, SecContext} ->
             PermissionGranted =
                 riak_core_security:check_permission(
-                    {PermissionRequired, Bucket},
+                    {GrantSought, Bucket},
                     SecContext
                 ),
             case PermissionGranted of
@@ -604,6 +611,26 @@ routing_test() ->
     ?assertMatch(
         {halt, 405, [{'Allow', <<"GET">>}], <<>>, []},
         check_path(<<"PUT /buckets?buckets=true HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_bprops, _, _},
+        check_path((<<"GET /types/T/buckets/B/props HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_bprops, _, _},
+        check_path((<<"GET /buckets/B/props HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_web_bprops, _, _},
+        check_path((<<"DELETE /buckets/B/props HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 404, [], <<>>, []},
+        check_path((<<"PUT /types/T/props HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET, PUT, DELETE">>}], <<>>, []},
+        check_path(<<"POST /buckets/B/props HTTP/1.1\r\n">>)
     ).
 
 type_preference_test() ->
