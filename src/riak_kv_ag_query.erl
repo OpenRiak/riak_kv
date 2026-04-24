@@ -19,11 +19,12 @@
 %% -------------------------------------------------------------------
 
 -module(riak_kv_ag_query).
--include_lib("riak_kv/include/riak_kv_web.hrl").
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
 -endif.
+
+-include_lib("riak_kv/include/riak_kv_web.hrl").
 
 -export(
     [

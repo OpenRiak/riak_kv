@@ -19,13 +19,13 @@
 %% -------------------------------------------------------------------
 
 -module(riak_kv_ag_queue).
--include_lib("riak_kv/include/riak_kv_web.hrl").
--include_lib("kernel/include/logger.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
 -endif.
+
+-include_lib("riak_kv/include/riak_kv_web.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export(
     [

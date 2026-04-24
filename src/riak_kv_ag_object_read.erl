@@ -21,13 +21,13 @@
 %% requests)
 
 -module(riak_kv_ag_object_read).
--include_lib("kernel/include/logger.hrl").
--include("riak_object.hrl").
--include("riak_kv_web.hrl").
 
 -if(?OTP_RELEASE == 26).
 -feature(maybe_expr, enable).
 -endif.
+
+-include("riak_object.hrl").
+-include("riak_kv_web.hrl").
 
 -behaviour(riak_api_web_handler).
 
