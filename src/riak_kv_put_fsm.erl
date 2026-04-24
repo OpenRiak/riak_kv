@@ -1200,7 +1200,7 @@ conditional_check({ok, PreFetch0}, _NotMod, _NoneMatch, IfMatch) when IfMatch =/
             [MD] ->
                 list_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD));
             Sibs when length(Sibs) > 1 ->
-                riak_kv_ag_common:make_clock_etag(riak_object:vclock(PreFetch0))
+                riak_kv_web_common:make_clock_etag(riak_object:vclock(PreFetch0))
         end,
     case
         lists:member(

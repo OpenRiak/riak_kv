@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 %% @doc common functions used by web API handlers
 
--module(riak_kv_ag_common).
+-module(riak_kv_web_common).
 
 -include_lib("kernel/include/logger.hrl").
 -include("riak_kv_web.hrl").
@@ -383,7 +383,7 @@ get_version_vector(ReqHeaders) ->
         undefined ->
             {ok, none};
         {_OrigKey, [EncodedClock]} ->
-            case riak_kv_ag_common:decode_clock(EncodedClock) of
+            case riak_kv_web_common:decode_clock(EncodedClock) of
                 error ->
                     ErrorRsp =
                         <<

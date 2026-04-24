@@ -30,7 +30,7 @@
 -export(
     [
         match_route/3,
-        check_permissions/4,
+        check_permissions/5,
         parse_query_params/2,
         parse_request_headers/2,
         process_request/2,
@@ -60,7 +60,7 @@
     | {method_not_allowed, list(riak_api_web_acceptor:method())}
     | {ok, riak_api_web_handler:limits(), context()}.
 match_route('GET', _Path, [<<"queuename">>, Queue]) ->
-    case riak_kv_ag_common:check_queuename(Queue) of
+    case riak_kv_web_common:check_queuename(Queue) of
         undefined ->
             nomatch;
         QueueA ->
@@ -71,7 +71,7 @@ match_route('GET', _Path, [<<"queuename">>, Queue]) ->
             }
     end;
 match_route('POST', _Path, [<<"queuename">>, Queue]) ->
-    case riak_kv_ag_common:check_queuename(Queue) of
+    case riak_kv_web_common:check_queuename(Queue) of
         undefined ->
             nomatch;
         QueueA ->
@@ -95,16 +95,17 @@ match_route(_Method, _Path, _SplitPath) ->
     riak_api_web_headers:headers(),
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
+    riak_api_web_handler:peer_cert(),
     context()
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
-check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
+check_permissions(ReqHeaders, Scheme, Peer, _Cert, Ctx) ->
     case application:get_env(riak_kv, permit_insecure_http_ops, false) of
         true ->
             {ok, Ctx};
         false ->
             Check =
-                riak_kv_ag_common:check_permissions(
+                riak_kv_web_common:check_permissions(
                     ReqHeaders,
                     Scheme,
                     Peer,
@@ -174,7 +175,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
                     repl_request ->
                         <<"text/plain">>
                 end,
-            case riak_kv_ag_common:type_match(CTypeRequired, AcceptedTypes) of
+            case riak_kv_web_common:type_match(CTypeRequired, AcceptedTypes) of
                 true ->
                     {ok, Ctx};
                 false ->

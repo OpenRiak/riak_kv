@@ -28,7 +28,7 @@
 -export(
     [
         match_route/3,
-        check_permissions/4,
+        check_permissions/5,
         parse_query_params/2,
         parse_request_headers/2,
         process_request/2,
@@ -81,12 +81,13 @@ match_route(_, _, _) ->
     riak_api_web_headers:headers(),
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
+    riak_api_web_handler:peer_cert(),
     context()
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
-check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
+check_permissions(ReqHeaders, Scheme, Peer, _Cert, Ctx) ->
     Check =
-        riak_kv_ag_common:check_permissions(
+        riak_kv_web_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -123,7 +124,7 @@ parse_query_params(Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, Ctx) ->
-    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
+    case riak_kv_web_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
@@ -263,7 +264,7 @@ bucket_stream_fun(ReqId) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_timeout(Params, Ctx) ->
-    case riak_kv_ag_common:get_timeout(Params) of
+    case riak_kv_web_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->

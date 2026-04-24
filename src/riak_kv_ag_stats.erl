@@ -28,7 +28,7 @@
 -export(
     [
         match_route/3,
-        check_permissions/4,
+        check_permissions/5,
         parse_query_params/2,
         parse_request_headers/2,
         process_request/2,
@@ -75,16 +75,17 @@ match_route(Method, Path, _) ->
     riak_api_web_headers:headers(),
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
+    riak_api_web_handler:peer_cert(),
     context()
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
-check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
+check_permissions(ReqHeaders, Scheme, Peer, _Cert, Ctx) ->
     case application:get_env(riak_kv, permit_insecure_http_ops, false) of
         true ->
             {ok, Ctx};
         false ->
             Check =
-                riak_kv_ag_common:check_permissions(
+                riak_kv_web_common:check_permissions(
                     ReqHeaders,
                     Scheme,
                     Peer,
@@ -109,7 +110,7 @@ parse_query_params([], Ctx) ->
     % Typically we expect no options - so shortcut the validation in this case
     {ok, Ctx};
 parse_query_params(Params, Ctx) ->
-    case riak_kv_ag_common:get_timeout(Params) of
+    case riak_kv_web_common:get_timeout(Params) of
         {ok, none} ->
             {ok, Ctx};
         {ok, Timeout} ->
@@ -130,12 +131,12 @@ parse_request_headers(ReqHeaders, Ctx) ->
             {ok, Ctx#context{content_type = json}};
         AcceptType ->
             {JsonOK, JsonScore} =
-                riak_kv_ag_common:type_preference(
+                riak_kv_web_common:type_preference(
                     <<"application/json">>,
                     AcceptType
                 ),
             {TextOK, TextScore} =
-                riak_kv_ag_common:type_preference(
+                riak_kv_web_common:type_preference(
                     <<"text/plain">>,
                     AcceptType
                 ),

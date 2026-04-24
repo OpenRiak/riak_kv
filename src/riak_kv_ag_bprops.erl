@@ -28,7 +28,7 @@
 -export(
     [
         match_route/3,
-        check_permissions/4,
+        check_permissions/5,
         parse_query_params/2,
         parse_request_headers/2,
         process_request/2,
@@ -60,19 +60,19 @@ match_route('PUT', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 64 * 1024},
-        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = set}
+        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = set}
     };
 match_route('GET', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 0},
-        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = get}
+        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = get}
     };
 match_route('DELETE', _, [<<"types">>, T, <<"buckets">>, B, <<"props">>]) ->
     {
         ok,
         {32, 2048, 0},
-        #context{bucket = riak_kv_ag_common:set_bucket(T, B), op = reset}
+        #context{bucket = riak_kv_web_common:set_bucket(T, B), op = reset}
     };
 match_route(_, _, [<<"types">>, _T, <<"buckets">>, _B, <<"props">>]) ->
     {method_not_allowed, ['GET', 'PUT', 'DELETE']};
@@ -90,10 +90,11 @@ match_route(_, _, _) ->
     riak_api_web_headers:headers(),
     riak_api_web_socket:scheme(),
     riak_api_web_handler:peer_ip(),
+    riak_api_web_handler:peer_cert(),
     context()
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
-check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
+check_permissions(ReqHeaders, Scheme, Peer, _Cert, Ctx) ->
     Grant =
         case Ctx#context.op of
             get ->
@@ -102,7 +103,7 @@ check_permissions(ReqHeaders, Scheme, Peer, Ctx) ->
                 "riak_core.set_bucket"
         end,
     Check =
-        riak_kv_ag_common:check_permissions(
+        riak_kv_web_common:check_permissions(
             ReqHeaders,
             Scheme,
             Peer,
@@ -132,7 +133,7 @@ parse_query_params(_Params, Ctx) ->
 ) ->
     {ok, context()} | riak_api_web_acceptor:halt_response().
 parse_request_headers(ReqHeaders, #context{op = get} = Ctx) ->
-    case riak_kv_ag_common:accept_json_only(ReqHeaders) of
+    case riak_kv_web_common:accept_json_only(ReqHeaders) of
         ok ->
             {ok, Ctx};
         HaltResponse ->
