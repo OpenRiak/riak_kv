@@ -32,7 +32,7 @@
 -include("riak_kv_types.hrl").
 -endif.
 
--export_type([context/0, all_type/0, all_type_op/0]).
+-export_type([context/0, all_type/0, all_type_op/0, update/0, toplevel_type/0]).
 
 %% Mostly copied from riak_pb_dt_codec
 %% Value types

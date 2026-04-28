@@ -383,10 +383,10 @@ halt_error({error, {n_val_violation, N}}) ->
     {halt, 400, [?TXT_HEADER], Msg, [N]};
 halt_error({error, {r_val_unsatisfied, Requested, Returned}}) ->
     Msg = <<"R-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
+    {halt, 503, [?TXT_HEADER], Msg, [Returned, Requested]};
 halt_error({error, {pr_val_unsatisfied, Requested, Returned}}) ->
     Msg = <<"PR-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [Requested, Returned]};
+    {halt, 503, [?TXT_HEADER], Msg, [Returned, Requested]};
 halt_error({error, UnexpectedError}) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p~n">>, [UnexpectedError]}.
 

@@ -649,12 +649,12 @@ handle_error({n_val_violation, N}, _Ctx) ->
         >>,
     {halt, 400, [?TXT_HEADER], Msg, [N]};
 handle_error({dw_val_unsatisfied, DW, NumDW}, _Ctx) ->
-    {halt, 503, [?TXT_HEADER], <<"DW-value unsatisfied: ~p/~p">>, [DW, NumDW]};
+    {halt, 503, [?TXT_HEADER], <<"DW-value unsatisfied: ~p/~p">>, [NumDW, DW]};
 handle_error({pw_val_unsatisfied, PW, NumPW}, _Ctx) ->
-    {halt, 503, [?TXT_HEADER], <<"PW-value unsatisfied: ~p/~p">>, [PW, NumPW]};
+    {halt, 503, [?TXT_HEADER], <<"PW-value unsatisfied: ~p/~p">>, [NumPW, PW]};
 handle_error({node_confirms_val_unsatisfied, NC, NumNC}, _Ctx) ->
     Msg = <<"node_confirms-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [NC, NumNC]};
+    {halt, 503, [?TXT_HEADER], Msg, [NumNC, NC]};
 handle_error(failed, _Ctx) ->
     {halt, 412, [], <<>>, []};
 handle_error("match_found", _Ctx) ->

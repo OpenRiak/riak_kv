@@ -47,12 +47,12 @@
 ).
 
 -define(BAD_COUNT_PARAM_TEXT, <<
-    "~0p query parameter must be an integer or "
+    "~s query parameter must be an integer or "
     "one of the following words: 'one', 'quorum' or 'all'"
 >>).
 
 -define(BAD_BOOLEAN_PARAM_TEXT, <<
-    "~0p query parameter must be true or false"
+    "~s query parameter must be true or false"
 >>).
 
 -spec filter_options(#{atom() => term()}) -> list({atom(), term()}).
@@ -74,6 +74,7 @@ add_routes() ->
             {15, riak_kv_ag_object_delete},
             {20, riak_kv_ag_query},
             {30, riak_kv_ag_index},
+            {40, riak_kv_ag_crdt},
             {60, riak_kv_ag_stats},
             {80, riak_kv_ag_aaefold},
             {85, riak_kv_ag_keylist},

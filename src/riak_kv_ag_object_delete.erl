@@ -365,15 +365,15 @@ handle_error({n_val_violation, N}, _Ctx) ->
         >>,
     {halt, 400, [?TXT_HEADER], Msg, [N]};
 handle_error({dw_val_unsatisfied, DW, NumDW}, _Ctx) ->
-    {halt, 503, [?TXT_HEADER], <<"DW-value unsatisfied: ~p/~p">>, [DW, NumDW]};
+    {halt, 503, [?TXT_HEADER], <<"DW-value unsatisfied: ~p/~p">>, [NumDW, DW]};
 handle_error({pw_val_unsatisfied, PW, NumPW}, _Ctx) ->
-    {halt, 503, [?TXT_HEADER], <<"PW-value unsatisfied: ~p/~p">>, [PW, NumPW]};
+    {halt, 503, [?TXT_HEADER], <<"PW-value unsatisfied: ~p/~p">>, [NumPW, PW]};
 handle_error({pr_val_unsatisfied, PR, NumPR}, _Ctx) ->
     Msg = <<"PR-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [PR, NumPR]};
+    {halt, 503, [?TXT_HEADER], Msg, [NumPR, PR]};
 handle_error({r_val_unsatisfied, R, NumR}, _Ctx) ->
     Msg = <<"R-value unsatisfied: ~p/~p">>,
-    {halt, 503, [?TXT_HEADER], Msg, [R, NumR]};
+    {halt, 503, [?TXT_HEADER], Msg, [NumR, R]};
 handle_error(OtherError, _Ctx) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p">>, [OtherError]}.
 
