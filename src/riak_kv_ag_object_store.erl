@@ -636,7 +636,7 @@ do_put(Object, Ctx) ->
 -spec handle_error(
     term(),
     context()
-) -> 
+) ->
     {complete, riak_api_web_acceptor:response_code(), context()}
     | riak_api_web_acceptor:halt_response().
 handle_error(precommit_fail, Ctx) ->
@@ -649,7 +649,7 @@ handle_error(precommit_fail, Ctx) ->
         ),
     handle_error({precommit_fail, Msg}, Ctx);
 handle_error({precommit_fail, Msg}, _Ctx) ->
-    % There are specific error codes tested by riak_test verify_commit_hooks 
+    % There are specific error codes tested by riak_test verify_commit_hooks
     case is_binary(Msg) of
         true ->
             {halt, 403, [?TXT_HEADER], Msg, []};

@@ -473,8 +473,8 @@ handle_multiple_objects(
     ChosenSibs =
         lists:filter(
             fun({MD, _V}) ->
-                iolist_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD))
-                    == VTag
+                iolist_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD)) ==
+                    VTag
             end,
             Siblings
         ),
