@@ -176,7 +176,7 @@ process_request(none, Ctx) ->
     catch
         exit:{timeout, _} ->
             ErrMsg = <<"Request timed out after ~w ms">>,
-            {halt, 503, [?TXT_HEADER], ErrMsg, Ctx#context.timeout}
+            {halt, 503, [?TXT_HEADER], ErrMsg, [Ctx#context.timeout]}
     end.
 
 %% @doc Record the output of the interaction

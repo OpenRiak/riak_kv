@@ -416,7 +416,7 @@ get_timeout(Params) ->
         {<<"timeout">>, TO} when is_binary(TO) ->
             try
                 IntTO = binary_to_integer(TO),
-                true = IntTO >= 0,
+                true = IntTO > 0,
                 {ok, IntTO}
             catch
                 _:_ ->
@@ -626,12 +626,20 @@ routing_test() ->
         check_path((<<"DELETE /buckets/B/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {halt, 404, [], <<>>, []},
+        {ok, riak_kv_ag_bprops, _, _},
         check_path((<<"PUT /types/T/props HTTP/1.1\r\n">>))
+    ),
+    ?assertMatch(
+        {ok, riak_kv_ag_bprops, _, _},
+        check_path((<<"GET /types/T/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
         {halt, 405, [{'Allow', <<"GET, PUT, DELETE">>}], <<>>, []},
         check_path(<<"POST /buckets/B/props HTTP/1.1\r\n">>)
+    ),
+    ?assertMatch(
+        {halt, 405, [{'Allow', <<"GET, PUT">>}], <<>>, []},
+        check_path(<<"POST /types/T/props HTTP/1.1\r\n">>)
     ).
 
 type_preference_test() ->

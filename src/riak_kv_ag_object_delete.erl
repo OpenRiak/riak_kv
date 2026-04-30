@@ -77,7 +77,7 @@
     }.
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
     del_options = ?DEL_DEFAULTS :: del_options(),

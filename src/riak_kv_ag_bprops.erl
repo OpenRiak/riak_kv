@@ -22,6 +22,7 @@
 -module(riak_kv_ag_bprops).
 
 -include("riak_kv_web.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(riak_api_web_handler).
 
@@ -37,8 +38,9 @@
 ).
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
-    bucket :: riak_object:bucket(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
+    bucket :: riak_object:bucket() | binary(),
+    request = bucket :: bucket | type_only,
     op :: get | set | reset
 }).
 
@@ -82,6 +84,20 @@ match_route(Method, Path, [<<"buckets">>, B, <<"props">>]) ->
         Path,
         [<<"types">>, <<"default">>, <<"buckets">>, B, <<"props">>]
     );
+match_route('PUT', _, [<<"types">>, T, <<"props">>]) ->
+    {
+        ok,
+        {32, 2048, 64 * 1024},
+        #context{bucket = T, request = type_only, op = set}
+    };
+match_route('GET', _, [<<"types">>, T, <<"props">>]) ->
+    {
+        ok,
+        {32, 2048, 0},
+        #context{bucket = T, request = type_only, op = get}
+    };
+match_route(_, _, [<<"types">>, _T, <<"props">>]) ->
+    {method_not_allowed, ['GET', 'PUT']};
 match_route(_, _, _) ->
     nomatch.
 
@@ -159,13 +175,33 @@ parse_request_headers(_ReqHeaders, Ctx) ->
         context()
     }
     | riak_api_web_acceptor:halt_response().
-process_request(none, #context{op = get} = Ctx) ->
+process_request(none, #context{op = get, request = bucket} = Ctx) ->
     Props1 = riak_client:get_bucket(Ctx#context.bucket, Ctx#context.client),
-    {ok, {200, [?TXT_HEADER], encode_properties(Props1), true, none}, Ctx};
-process_request(none, #context{op = reset} = Ctx) ->
+    {ok, {200, [?JSN_HEADER], encode_properties(Props1), true, none}, Ctx};
+process_request(none, #context{op = reset, request = bucket} = Ctx) ->
     riak_client:reset_bucket(Ctx#context.bucket, Ctx#context.client),
     {ok, {204, [], <<>>, true, none}, Ctx};
-process_request(RqBdy, #context{op = set} = Ctx) when RqBdy =/= none ->
+process_request(RqBdy, #context{op = set, request = bucket} = Ctx) when
+    RqBdy =/= none
+->
+    case riak_api_web_body:get_body(RqBdy, all, 10000) of
+        {error, content_too_large} ->
+            {halt, 413, [], <<>>, []};
+        {ObjBody, UpdRqBody} when is_binary(ObjBody) ->
+            case safe_apply(ObjBody, Ctx) of
+                ok ->
+                    {ok, {204, [], <<>>, true, UpdRqBody}, Ctx};
+                {error, Details} ->
+                    JSON = iolist_to_binary(riak_kv_wm_json:encode(Details)),
+                    {halt, 400, [?JSN_HEADER], JSON, []}
+            end
+    end;
+process_request(none, #context{op = get, request = type_only} = Ctx) ->
+    Props = riak_core_bucket_type:get(Ctx#context.bucket),
+    {ok, {200, [?JSN_HEADER], encode_properties(Props), true, none}, Ctx};
+process_request(RqBdy, #context{op = set, request = type_only} = Ctx) when
+    RqBdy =/= none
+->
     case riak_api_web_body:get_body(RqBdy, all, 10000) of
         {error, content_too_large} ->
             {halt, 413, [], <<>>, []};
@@ -194,7 +230,7 @@ record_request(_Timings, _Completion, _Ctx) ->
 %% ===================================================================
 
 -spec safe_apply(binary(), context()) -> ok | {error, map()}.
-safe_apply(ObjBody, Ctx) ->
+safe_apply(ObjBody, #context{request = bucket} = Ctx) ->
     try
         ErlPropList = decode_properties(ObjBody),
         riak_client:set_bucket(
@@ -203,7 +239,23 @@ safe_apply(ObjBody, Ctx) ->
             Ctx#context.client
         )
     catch
-        _:_ ->
+        _:Error ->
+            ?LOG_WARNING(
+                "Decode failure applying bucket properties ~0p",
+                [Error]
+            ),
+            {error, #{error => <<"decode failure">>}}
+    end;
+safe_apply(ObjBody, #context{request = type_only} = Ctx) ->
+    try
+        ErlPropList = decode_properties(ObjBody),
+        riak_core_bucket_type:update(Ctx#context.bucket, ErlPropList)
+    catch
+        _:Error ->
+            ?LOG_WARNING(
+                "Decode failure applying bucket type properties ~0p",
+                [Error]
+            ),
             {error, #{error => <<"decode failure">>}}
     end.
 
@@ -245,6 +297,10 @@ jsonify_bucket_prop({chash_keyfun, {Mod, Fun}}) when
             ?JSON_FUN => atom_to_binary(Fun, utf8)
         }
     };
+jsonify_bucket_prop({postcommit, FunList}) ->
+    {?JSON_POSTC, jsonify_commit_hooks(FunList)};
+jsonify_bucket_prop({precommit, FunList}) ->
+    {?JSON_PREC, jsonify_commit_hooks(FunList)};
 jsonify_bucket_prop({rs_extractfun, _}) ->
     none;
 jsonify_bucket_prop({search_extractor, _}) ->
@@ -268,6 +324,10 @@ erlify_bucket_prop({?JSON_CHASH, Props}) ->
             binary_to_existing_atom(maps:get(?JSON_FUN, Props))
         }
     };
+erlify_bucket_prop({?JSON_POSTC, FunList}) ->
+    {postcommit, erlify_commit_hooks(FunList)};
+erlify_bucket_prop({?JSON_PREC, FunList}) ->
+    {precommit, erlify_commit_hooks(FunList)};
 erlify_bucket_prop({Prop, Value}) when is_binary(Value) ->
     {
         binary_to_existing_atom(Prop),
@@ -278,6 +338,41 @@ erlify_bucket_prop({Prop, Value}) when is_integer(Value); is_boolean(Value) ->
         binary_to_existing_atom(Prop),
         Value
     }.
+
+erlify_commit_hooks(FunList) ->
+    lists:map(
+        fun(P) ->
+            case maps:get(?JSON_NAME, P, undefined) of
+                undefined ->
+                    {
+                        struct,
+                        [
+                            {?JSON_MOD, maps:get(?JSON_MOD, P)},
+                            {?JSON_FUN, maps:get(?JSON_FUN, P)}
+                        ]
+                    };
+                HookName ->
+                    {struct, [{?JSON_NAME, HookName}]}
+            end
+        end,
+        FunList
+    ).
+
+jsonify_commit_hooks(FunList) ->
+    lists:map(
+        fun
+            ({struct, [{?JSON_NAME, Name}]}) ->
+                #{?JSON_NAME => Name};
+            ({struct, ModFun}) ->
+                {?JSON_MOD, Mod} = lists:keyfind(?JSON_MOD, 1, ModFun),
+                {?JSON_FUN, Fun} = lists:keyfind(?JSON_FUN, 1, ModFun),
+                #{
+                    ?JSON_MOD => Mod,
+                    ?JSON_FUN => Fun
+                }
+        end,
+        FunList
+    ).
 
 %% ===================================================================
 %% EUnit tests
@@ -316,6 +411,19 @@ circle_special_props_test() ->
             {rs_extractfun, modfun},
             {search_extractor, modfun},
             {chash_keyfun, {keymod, keymodfun}},
+            {
+                postcommit,
+                [
+                    {
+                        struct,
+                        [
+                            {<<"mod">>, <<"commitmod">>},
+                            {<<"fun">>, <<"commitfun">>}
+                        ]
+                    }
+                ]
+            },
+            {precommit, [{struct, [{<<"name">>, <<"name">>}]}]},
             {datatype, counter}
         ],
     SupportedProps =

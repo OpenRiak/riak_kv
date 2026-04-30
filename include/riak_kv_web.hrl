@@ -34,6 +34,7 @@
 -define(HEAD_IFNOTMOD_CASEFOLD, <<"x-riak-if-not-modified">>).
 -define(HEAD_USERMETA_CASEFOLD, <<"x-riak-meta-">>).
 -define(HEAD_INDEX_CASEFOLD, <<"x-riak-index-">>).
+-define(HEAD_CLIENTID_CASEFOLD, <<"x-riak-clientid">>).
 
 -define(Q_2I_CONTINUATION_BIN, <<"continuation">>).
 -define(Q_RESULTS_BIN, <<"results">>).
@@ -45,6 +46,7 @@
 -define(JSON_KEYS, <<"keys">>).
 -define(JSON_MOD, <<"mod">>).
 -define(JSON_FUN, <<"fun">>).
+-define(JSON_NAME, <<"name">>).
 -define(JSON_ARG, <<"arg">>).
 -define(JSON_CHASH, <<"chash_keyfun">>).
 -define(JSON_JSFUN, <<"jsfun">>).
@@ -53,6 +55,8 @@
 -define(JSON_JSKEY, <<"key">>).
 -define(JSON_ALLOW_MULT, <<"allow_mult">>).
 -define(JSON_DATATYPE, <<"datatype">>).
+-define(JSON_POSTC, <<"postcommit">>).
+-define(JSON_PREC, <<"precommit">>).
 
 %% erlfmt:ignore-begin
 -type stream_fun() ::

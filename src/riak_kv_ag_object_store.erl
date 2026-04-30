@@ -28,6 +28,7 @@
 
 -include("riak_object.hrl").
 -include("riak_kv_web.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(riak_api_web_handler).
 
@@ -47,10 +48,10 @@
     dw => default,
     pw => default,
     node_confirms => default,
-    sync_on_write => backend,
+    sync_on_write => default,
     n_val => default,
-    asis => false,
-    returnbody => false,
+    asis => default,
+    returnbody => default,
     timeout => undefined
 }).
 
@@ -73,13 +74,13 @@
         node_confirms => non_neg_integer() | default | quorum | all,
         sync_on_write => default | backend | one | all,
         n_val => pos_integer() | default,
-        asis => boolean(),
-        returnbody => boolean(),
+        asis => boolean() | default,
+        returnbody => boolean() | default,
         timeout => pos_integer() | undefined
     }.
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     method :: 'PUT' | 'POST',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -208,7 +209,8 @@ parse_query_params(Params, Ctx) ->
         {ok, Ctx0} ?= validate_timeout(Params, Ctx),
         {ok, Ctx1} ?= validate_counts(Params, Ctx0),
         {ok, Ctx2} ?= validate_booleans(Params, Ctx1),
-        validate_synconwrite(Params, Ctx2)
+        {ok, Ctx3} ?= validate_synconwrite(Params, Ctx2),
+        {ok, Ctx3}
     else
         HaltResponse ->
             HaltResponse
@@ -263,11 +265,19 @@ process_request(RqBdy, Context) ->
                 ),
             case PutRsp of
                 {error, Reason} ->
-                    handle_error(Reason, Context);
+                    case handle_error(Reason, Context) of
+                        {complete, RspCode, Ctx0} ->
+                            {ok, {RspCode, [], <<>>, true, UpdRqBody}, Ctx0};
+                        HaltResponse ->
+                            ?LOG_WARNING("Halt response: ~0p", [HaltResponse]),
+                            HaltResponse
+                    end;
                 ok ->
                     {ok, {204, [], <<>>, true, UpdRqBody}, Context};
                 {ok, Obj} ->
-                    {ok, riak_kv_ag_object_read:produce_response(Obj)}
+                    {RspCode, RspHdrs, RspBody} =
+                        riak_kv_ag_object_read:produce_response(Obj),
+                    {ok, {RspCode, RspHdrs, RspBody, true, UpdRqBody}, Context}
             end
     end.
 
@@ -582,6 +592,16 @@ do_put(Object, Ctx) ->
             Ctx#context.key,
             Ctx#context.client
         ),
+    StandardPutOptions =
+        riak_kv_web_common:filter_options(Ctx#context.put_options),
+    ?LOG_DEBUG(
+        "Put with options ~0p",
+        [StandardPutOptions]
+    ),
+    ?LOG_DEBUG(
+        "Put with conditions ~0p ~0p ~0p",
+        [CheckResult, CondPutOptions, SessionToken]
+    ),
     case CheckResult of
         ok ->
             PutRsp =
@@ -589,10 +609,7 @@ do_put(Object, Ctx) ->
                     none ->
                         riak_client:put(
                             Object,
-                            CondPutOptions ++
-                                riak_kv_web_common:filter_options(
-                                    Ctx#context.put_options
-                                ),
+                            CondPutOptions ++ StandardPutOptions,
                             Ctx#context.client
                         );
                     _ ->
@@ -601,10 +618,7 @@ do_put(Object, Ctx) ->
                             put,
                             [
                                 Object,
-                                CondPutOptions ++
-                                    riak_kv_web_common:filter_options(
-                                        Ctx#context.put_options
-                                    )
+                                CondPutOptions ++ StandardPutOptions
                             ]
                         )
                 end,
@@ -619,7 +633,12 @@ do_put(Object, Ctx) ->
 %% Internal Functions
 %% ===================================================================
 
--spec handle_error(term(), context()) -> riak_api_web_acceptor:halt_response().
+-spec handle_error(
+    term(),
+    context()
+) -> 
+    {complete, riak_api_web_acceptor:response_code(), context()}
+    | riak_api_web_acceptor:halt_response().
 handle_error(precommit_fail, Ctx) ->
     Msg =
         iolist_to_binary(
@@ -630,11 +649,15 @@ handle_error(precommit_fail, Ctx) ->
         ),
     handle_error({precommit_fail, Msg}, Ctx);
 handle_error({precommit_fail, Msg}, _Ctx) ->
+    % There are specific error codes tested by riak_test verify_commit_hooks 
     case is_binary(Msg) of
         true ->
             {halt, 403, [?TXT_HEADER], Msg, []};
+        false when is_list(Msg) ->
+            {halt, 403, [?TXT_HEADER], iolist_to_binary(Msg), []};
         false ->
-            {halt, 403, [?TXT_HEADER], iolist_to_binary(Msg), []}
+            BinMsg = iolist_to_binary(io_lib:format("~0p", [Msg])),
+            {halt, 500, [?TXT_HEADER], BinMsg, []}
     end;
 handle_error(too_many_fails, _Ctx) ->
     Msg = <<"Too Many write failures to satisfy W/DW">>,
@@ -655,16 +678,16 @@ handle_error({pw_val_unsatisfied, PW, NumPW}, _Ctx) ->
 handle_error({node_confirms_val_unsatisfied, NC, NumNC}, _Ctx) ->
     Msg = <<"node_confirms-value unsatisfied: ~p/~p">>,
     {halt, 503, [?TXT_HEADER], Msg, [NumNC, NC]};
-handle_error(failed, _Ctx) ->
-    {halt, 412, [], <<>>, []};
-handle_error("match_found", _Ctx) ->
-    {halt, 412, [], <<>>, []};
-handle_error("modified", _Ctx) ->
-    {halt, 409, [], <<>>, []};
-handle_error("notfound", _Ctx) ->
-    {halt, 409, [], <<>>, []};
-handle_error(not_matched, _Ctx) ->
-    {halt, 412, [], <<>>, []};
+handle_error(failed, Ctx) ->
+    {complete, 412, Ctx};
+handle_error("match_found", Ctx) ->
+    {complete, 412, Ctx};
+handle_error("modified", Ctx) ->
+    {complete, 409, Ctx};
+handle_error("notfound", Ctx) ->
+    {complete, 409, Ctx};
+handle_error(not_matched, Ctx) ->
+    {complete, 412, Ctx};
 handle_error(OtherError, _Ctx) ->
     {halt, 500, [?TXT_HEADER], <<"Error:~n~p">>, [OtherError]}.
 
@@ -708,6 +731,7 @@ request_headers_test() ->
             {<<"x-riak-index-name_bin">>, <<"name1">>},
             {<<"X-Riak-Meta-postcode">>, <<"postcode1">>},
             {<<"X-Riak-Meta-postcode">>, <<"postcode2">>},
+            {<<"X-Riak-ClientId">>, <<"LocalID0001">>},
             {'If-None-Match', <<"*">>},
             {'Content-Type', <<"application/json; charset=utf8">>},
             {'Content-Encoding', <<"gzip, deflate">>},
@@ -753,7 +777,15 @@ request_headers_test() ->
         "gzip, deflate",
         riak_object:metadata_fetch(?MD_ENCODING, MD)
     ),
-    ?assert(CtxOut#context.if_none_match).
+    ?assert(CtxOut#context.if_none_match),
+    ?assertMatch(
+        [_, undefined],
+        % The vnode_vclock capability present since 1.0
+        % So ignore any passed in client ID
+        % The code no longer sets the ID in the client, and then removes it
+        % after a capability check
+        element(2, CtxOut#context.client)
+    ).
 
 headers_clock_error1_test() ->
     Vc =

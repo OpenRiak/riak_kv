@@ -92,7 +92,7 @@
     | timeout.
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     method :: 'GET' | 'HEAD',
     bucket :: riak_object:bucket(),
     key :: riak_object:key(),
@@ -473,7 +473,8 @@ handle_multiple_objects(
     ChosenSibs =
         lists:filter(
             fun({MD, _V}) ->
-                riak_object:metadata_fetch(?MD_VTAG, MD) == VTag
+                iolist_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD))
+                    == VTag
             end,
             Siblings
         ),

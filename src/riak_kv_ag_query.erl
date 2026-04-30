@@ -40,7 +40,7 @@
 -export([get_result_key/1, encode_key/2, encode_key_withterm/2]).
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     bucket :: riak_object:bucket(),
     request_type :: submit_query | fetch_results,
     queue_request :: undefined | #{atom() => term()}

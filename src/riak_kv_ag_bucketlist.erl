@@ -37,7 +37,7 @@
 ).
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     bucket_type = <<"default">> :: binary(),
     stream = false :: boolean(),
     timeout :: pos_integer() | undefined

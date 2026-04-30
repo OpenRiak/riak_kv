@@ -58,7 +58,7 @@
 }).
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     method :: 'GET' | 'HEAD' | 'POST',
     bucket :: riak_object:bucket(),
     key :: riak_object:key() | {generated, riak_object:key()},
@@ -210,7 +210,7 @@ parse_query_params(Params, Ctx) ->
         {ok, Ctx0} ?= validate_timeout(Params, Ctx),
         {ok, Ctx1} ?= validate_counts(Params, Ctx0),
         {ok, Ctx2} ?= validate_booleans(Params, Ctx1),
-        {okk, Ctx2}
+        {ok, Ctx2}
     else
         HaltResponse ->
             HaltResponse
@@ -453,8 +453,8 @@ handle_common_error(Reason, Ctx) ->
         {n_val_violation, N} ->
             ErrMsg =
                 <<
-                    "Specified w/dw/pw/node_confirms values invalid for bucket"
-                    "n value of ~0p"
+                    "Specified w/dw/pw/node_confirms values invalid for"
+                    " bucket n value of ~0p"
                 >>,
             {halt, 400, [?TXT_HEADER], ErrMsg, [N]};
         {r_val_unsatisfied, Requested, Returned} ->

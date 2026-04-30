@@ -39,7 +39,7 @@
 ).
 
 -record(context, {
-    client = riak_client:new(node(), self()) :: riak_client:riak_client(),
+    client = riak_client:new(node(), undefined) :: riak_client:riak_client(),
     request_type :: fetch_request | repl_request | membership_request,
     queue_name :: atom() | undefined,
     object_format = internal :: internal | internal_aaehash
