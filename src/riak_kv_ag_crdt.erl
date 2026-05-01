@@ -263,7 +263,7 @@ process_request(none, #context{method = Method, crdt_mod = Mod} = Ctx) when
         ),
     case GetResult of
         {ok, RObj} ->
-            JsonBody = produce_json(RObj, Ctx, Mod),
+            JsonBody = iolist_to_binary(produce_json(RObj, Ctx, Mod)),
             case Method of
                 'GET' ->
                     {ok, {200, [?JSN_HEADER], JsonBody, true, none}, Ctx};
@@ -307,7 +307,8 @@ process_request(RqBdy, #context{method = 'POST', crdt_mod = Mod} = Ctx) ->
                         ok ->
                             {ok, {204, LocHdr, <<>>, true, UpdRqBdy}, Ctx};
                         {ok, RObj} ->
-                            JsonBody = produce_json(RObj, Ctx, Mod),
+                            JsonBody =
+                                iolist_to_binary(produce_json(RObj, Ctx, Mod)),
                             {
                                 ok,
                                 {
