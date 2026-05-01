@@ -461,7 +461,7 @@ split_path(RequestLine) ->
 
 check_path(RequestLine) ->
     {ok, Method, SplitPath, AbsPath} = split_path(RequestLine),
-    riak_api_web:get_route(Method, AbsPath, SplitPath).
+    riak_api_web:get_route(8000, Method, AbsPath, SplitPath).
 
 routing_test() ->
     add_routes(),
