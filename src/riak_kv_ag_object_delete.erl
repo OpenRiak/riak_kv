@@ -111,15 +111,8 @@ match_route(
                     key = Key
                 },
             {ok, size_limits(), Context};
-        Method when
-            Method == 'GET';
-            Method == 'HEAD';
-            Method == 'PUT';
-            Method == 'POST'
-        ->
-            nomatch;
         _OtherMethod ->
-            {method_not_allowed, ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']}
+            {method_not_allowed, ['DELETE']}
     end;
 match_route(
     Method,

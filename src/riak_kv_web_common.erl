@@ -478,7 +478,7 @@ routing_test() ->
         check_path(<<"GET /buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
-        {halt, 405, [{'Allow', _}], <<>>, []},
+        {halt, 405, [{'Allow', <<"DELETE, GET, HEAD, POST, PUT">>}], <<>>, []},
         check_path(<<"OPTIONS /types/T/buckets/B/keys/K HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
@@ -634,7 +634,7 @@ routing_test() ->
         check_path((<<"GET /types/T/props HTTP/1.1\r\n">>))
     ),
     ?assertMatch(
-        {halt, 405, [{'Allow', <<"GET, PUT, DELETE">>}], <<>>, []},
+        {halt, 405, [{'Allow', <<"DELETE, GET, PUT">>}], <<>>, []},
         check_path(<<"POST /buckets/B/props HTTP/1.1\r\n">>)
     ),
     ?assertMatch(
