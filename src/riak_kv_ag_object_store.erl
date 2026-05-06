@@ -350,7 +350,7 @@ validate_booleans(Params, Context) ->
     riak_api_web_handler:query_params(),
     context()
 ) ->
-    {ok, context()}.
+    {ok, context()} | riak_api_web_acceptor:halt_response().
 validate_synconwrite(QueryParams, Context) ->
     case lists:keyfind(<<"sync_on_write">>, 1, QueryParams) of
         false ->
@@ -495,7 +495,8 @@ set_user_metadata(ReqHeaders, MD) ->
     riak_api_web_headers:headers(),
     riak_object:riak_object_meta()
 ) ->
-    {ok, riak_object:riak_object_meta()}.
+    {ok, riak_object:riak_object_meta()}
+    | riak_api_web_acceptor:halt_response().
 set_content_type_and_encoding(ReqHeaders, MD) ->
     ContentEncodingHeader =
         riak_api_web_headers:get_value('Content-Encoding', ReqHeaders),
@@ -704,7 +705,7 @@ size_limits() ->
     {
         application:get_env(riak_kv, max_header_count, 1024),
         application:get_env(riak_kv, max_header_size, 16384),
-        application:get_env(riak_kv, max_object_size)
+        application:get_env(riak_kv, max_object_size, 52428800)
     }.
 
 %% ===================================================================

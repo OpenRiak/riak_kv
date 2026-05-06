@@ -480,7 +480,7 @@ add_queries(Query, Queries, Subs) ->
             case Query#riak_kv_query.type of
                 single_query when length(Queries) == 1 ->
                     [SingleQuery] = Queries,
-                    case evaluate_query(single, SingleQuery, Subs) of
+                    case evaluate_single_query(SingleQuery, Subs) of
                         {ok, EvaluatedQuery} ->
                             {
                                 ok,
@@ -548,17 +548,17 @@ evaluate_combo_queries(Queries, Subs) ->
 evaluate_combo_queries([], _Subs, Acc) ->
     {ok, lists:reverse(Acc)};
 evaluate_combo_queries([Q|Rest], Subs, Acc) ->
-    case evaluate_query(multi, Q, Subs) of
+    case evaluate_multi_query(Q, Subs) of
         {AT, {ok, EvaluatedQuery}} ->
             evaluate_combo_queries(Rest, Subs, [{AT, EvaluatedQuery}|Acc]);
         {_AT, Error} ->
             Error
     end.
 
-evaluate_query(multi, {AT, IN, ST, ET, RE, EE, FE}, Subs) ->
+evaluate_multi_query({AT, IN, ST, ET, RE, EE, FE}, Subs) ->
     case AT of
         PI when is_integer(PI), PI >= 0 ->
-            {AT, evaluate_query(single, {AT, IN, ST, ET, RE, EE, FE}, Subs)};
+            {AT, evaluate_single_query({AT, IN, ST, ET, RE, EE, FE}, Subs)};
         _ ->
             {AT,
                 {
@@ -567,8 +567,9 @@ evaluate_query(multi, {AT, IN, ST, ET, RE, EE, FE}, Subs) ->
                     <<"Untagged query in combination request">>
                 }
             }
-    end;
-evaluate_query(single, {_AT, IN, ST, ET, RE, EE, FE}, Subs) ->
+    end.
+
+evaluate_single_query({_AT, IN, ST, ET, RE, EE, FE}, Subs) ->
     IndexL = string:length(IN),
     case string:slice(IN, IndexL - 4) of
         <<"_bin">> ->

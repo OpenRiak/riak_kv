@@ -197,7 +197,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
 
 %% @doc Process the request and produce a response
 -spec process_request(
-    riak_api_web_body:req_body() | none,
+    none,
     context()
 ) ->
     {
@@ -207,7 +207,7 @@ parse_request_headers(ReqHeaders, Ctx) ->
             riak_api_web_headers:header_list(),
             riak_api_web_handler:response_body(),
             boolean(),
-            riak_api_web_body:req_body()
+            none
         },
         context()
     }
@@ -332,8 +332,7 @@ validate_maybe_true(Key, Params, Ctx) ->
                             {ok, Ctx#context{stream = true}}
                     end;
                 bad_param ->
-                    ErrMsg =
-                        "Invalid ~0p. ~0p is not a boolean",
+                    ErrMsg = <<"Invalid ~0p. ~0p is not a boolean">>,
                     {halt, 400, [?TXT_HEADER], ErrMsg, [Key, MT]};
                 _ ->
                     {ok, Ctx}
