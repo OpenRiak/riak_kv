@@ -177,15 +177,17 @@ There are three scenarios where the conditional check will be weakened:
 - The token granting system is enforced as **an honesty system**, it is the role of the application to ensure that all objects that require token protection have conditions added to update requests.  Updates without condition checks will be accepted in parallel to updates with condition checks, and there may be unresolved conflicts as a consequence.
 - When using multi-data centre replication, there is no cross-checking between clusters before granting tokens.  If running multiple clusters in active/active mode, then token consensus offers no protection against parallel writes, unless there is natural isolation within the application (should objects have a natural association with a region that would make inter-cluster concurrent writes unexpected).
 
-Stronger conditional updates can be made via either API through the use of "if_none_match" and the Riak-bespoke "if_not_modified" headers (or options in the case of the PB API).  Use of the HTTP-standard "if_not_modified" header or of the "if_match" header will result only in weak `api_only` checks, and is not fully supported.
+Stronger conditional updates can be made via either API through the use of "if-none-match" and the Riak-bespoke "if-not-modified" headers (or options in the case of the PB API).  Use of the HTTP-standard "if-unmodified-since" header or of the "if-match" header will result only in weak `api_only` checks, and is not fully supported.
 
-### Use of Request Header - If_None_Match
+### Use of Request Header - If-None-Match
 
-The use of if_none_match is tested on update operations only.  It uses the standard HTTP request header, but ignores the value - setting the request header to any content will be treated as `if_none_match: *`.  The purpose of if_none_match is simply to check that there is no object present before accepting the update.
+The use of if-none-match is tested on update operations only.  It uses the standard HTTP request header, but ignores the value - setting the request header to any content will be treated as `if-none-match: *`.  The purpose of if-none-match is simply to check that there is no object present before accepting the update.
 
-### Use of Request Header - If_Not_Modified (non-standard Riak header)
+### Use of Request Header - X-Riak-If-Not-Modified (non-standard Riak header)
 
-The use of if_not_modified varies from the standard behaviour of the if_not_modified HTTP request.  For Riak the `x-riak-if_not_modified` header should be used as a modification check, and the value of the header should be set to the encoded version vector that had been read prior to the update.  The PUT will then be conditional on the object being at this state before the change is applied.
+The use of `X-Riak-If-Not-Modified` varies from the standard behaviour of the `If-Unmodified-Since`/`If-Match` HTTP request.  For Riak the `X-Riak-If-Not-Modified` header should be used as a modification check, and the value of the header should be set to the encoded version vector that had been read prior to the update.  The PUT will then be conditional on the object being at this state before the change is applied.
+
+For the standard HTTP headers, [`If-Unmodified-Since`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Unmodified-Since) checks on the last-modified date, but this is not a sufficiently accurate check in Riak.  This option may be ignored in future releases.  The [`If-Match`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match) header matches against the etag of an object, however in Riak due to siblings, an object may have multiple tags.  The use of `If-Match` is not recommended, and will be clarified in a future release.
 
 ### Conditional requests and latch objects
 
@@ -204,8 +206,8 @@ Store requests should be sent using the `PUT` method, although the `POST` method
 Supported HTTP request headers for PUT:
 
 - `x-riak-vclock`; should be provided when mutating existing objects, should be the contents of the object read prior to update.
-- `x-riak-if_not_modified`; optional, for conditional requests.
-- `if_none-match: *`; optional, for conditional requests.
+- `x-riak-if-not-modified`; optional, for conditional requests.
+- `if-none-match: *`; optional, for conditional requests.
 - `authorization`; optional, for tls-protected requests only when [Riak security is enabled](./OperationsAndTroubleshootingGuide.md#enabling-riak-security).
 - `x-riak-meta-<key>: <value>`; optional, multiple keys may be provided, and will be mapped to user metadata.
 - `x-riak-index-<field> : <value1>, <value2>`; optional add multiple index fields, with multiple values in each field where those values are comma (and whitespace) separated.  Index fields should have the suffix `_bin` or `_int`.
@@ -258,8 +260,8 @@ Without providing version information, the delete will first read the current ve
 Supported HTTP request headers for DELETE:
 
 - `x-riak-vclock`; see above.
-- `x-riak-if_not_modified`; optional, for conditional requests.
-- `if_none-match: *`; optional, for conditional requests.
+- `x-riak-if-not-modified`; optional, for conditional requests.
+- `if-none-match: *`; optional, for conditional requests.
 - `authorization`; optional, for tls-protected requests only when Riak security is enabled.
 
 ### Example DELETE request
