@@ -187,7 +187,7 @@ The use of if-none-match is tested on update operations only.  It uses the stand
 
 The use of `X-Riak-If-Not-Modified` varies from the standard behaviour of the `If-Unmodified-Since`/`If-Match` HTTP request.  For Riak the `X-Riak-If-Not-Modified` header should be used as a modification check, and the value of the header should be set to the encoded version vector that had been read prior to the update.  The PUT will then be conditional on the object being at this state before the change is applied.
 
-For the standard HTTP headers, [`If-Unmodified-Since`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Unmodified-Since) checks on the last-modified date, but this is not a sufficiently accurate check in Riak.  This option may be ignored in future releases.  The [`If-Match`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match) header matches against the etag of an object, however in Riak due to siblings, an object may have multiple tags.  The use of `If-Match` is not recommended, and will be clarified in a future release.
+For the standard HTTP headers, [`If-Unmodified-Since`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Unmodified-Since) checks on the last-modified date, but this is not a sufficiently accurate check in Riak.  This option may be ignored in future releases.  The [`If-Match`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-Match) header matches against the ETag of an object, however in Riak due to siblings, an object may have multiple tags (ETag in HTTP is mapped to vtag in the Riak object space).  The use of `If-Match` is not recommended, and will be clarified in a future release.
 
 ### Conditional requests and latch objects
 
