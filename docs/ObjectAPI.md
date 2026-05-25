@@ -45,7 +45,7 @@ The Riak object Identifier is split into three parts:
 Internally within Riak all three elements are binary identifiers.  With the Object HTTP API, these elements are represented within the URL e.g. `/types/<BucketType>/buckets/<Bucket>/keys/<Key>`.
 
 {: .warning }
-> Although it is possible to use identifiers that are not URL-safe through the Protocol Buffer API, it is important not to do so - as any object using such an identifier may not be accessible via the HTTP API.  The best practice for the safe use of Unicode in cross-API identifiers, will be clarified in a future Riak release.
+> Although it is possible to use identifiers that are not URL-safe through the Protocol Buffer API, it is important not to do so - as any object using such an identifier may not be accessible via the HTTP API.  Guidelines for the safe use of Unicode in cross-API identifiers, will be clarified in a future Riak release.
 
 The [Bucket Type](./InstallAndStartGuide.md#configuration-of-riak---bucket-properties) is used to describe the properties of the object.  Properties are associated with a Bucket Type, and all Objects in the Buckets under that type will inherit those properties.
 
