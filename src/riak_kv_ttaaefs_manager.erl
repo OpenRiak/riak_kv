@@ -602,8 +602,14 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                             Bucket ->
                                 {Bucket, State#state.bucket_list}
                         end,
+                    TreeSize =
+                        application:get_env(
+                            riak_kv,
+                            ttaaefs_range_tree_size,
+                            small
+                        ),
                     Filter =
-                        {filter, B, KeyRange, small, all,
+                        {filter, B, KeyRange, TreeSize, all,
                         {LowerTime, UpperTime}, pre_hash},
                     {State0, Timeout} =
                         sync_clusters(From, ReqID, range, range, Filter,
