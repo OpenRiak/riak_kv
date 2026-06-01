@@ -28,12 +28,13 @@
 -export([start_link/1]).
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(riak_kv_queue_manager).
 
 -define(QUEUE_LIMIT, 100000).
 -define(OVERFLOW_LIMIT, 10000000).
 -define(REDO_TIMEOUT, 2000).
--define(OVERLOAD_PAUSE_MS, 10000).
 
 -export([start_link/0,
             start_job/1,
@@ -129,6 +130,25 @@ action({B, K}, _Redo) ->
         false ->
             case application:get_env(riak_kv, replicate_repair_tomb, true) of
                 true ->
+                    case get(replicate_repair_tomb_count) of
+                        undefined ->
+                            put(replicate_repair_tomb_count, 0),
+                            ?LOG_INFO(
+                                "First tomb replicated for this riak_kv_reader"
+                            ),
+                            ok;
+                        N ->
+                            case N rem 100 of
+                                0 ->
+                                    ?LOG_INFO(
+                                        "Replicated ~w repaired tombs",
+                                        [N + 1]
+                                    );
+                                _ ->
+                                    ok
+                            end,
+                            put(replicate_repair_tomb_count, N + 1)
+                    end,
                     GetResult = riak_client:get(B, K, [{r, all}], C),
                     maybe_repl({B, K}, GetResult);
                 false ->
