@@ -127,9 +127,37 @@ action({B, K}, _Redo) ->
         true ->
             _ = riak_kv_exchange_fsm:repair_consistent({B, K});
         false ->
-            _ = riak_client:get(B, K, C)
+            riak_kv_stat:update(prompted_repairs),
+            case application:get_env(riak_kv, replicate_repair_tomb, false) of
+                true ->
+                    GetResult = riak_client:get(B, K, [{r, all}], C),
+                    maybe_repl({B, K}, GetResult);
+                false ->
+                    _ = riak_client:get(B, K, C),
+                    ok
+            end
     end,
     true.
 
 -spec redo() -> boolean().
 redo() -> true.
+
+%%%============================================================================
+%%% Internal Functions
+%%%============================================================================
+
+-type get_result() :: {ok, riak_object:riak_object()}|{error, term()}.
+
+-spec maybe_repl(read_reference(), get_result()) -> ok.
+maybe_repl({B, K}, {ok, RObj}) ->
+    case riak_kv_util:is_x_deleted(RObj) of
+        true ->
+            riak_kv_stat:update(replicated_repairs),
+            riak_kv_replrtq_src:replrtq_coordput(
+                {B, K, riak_object:vclock(RObj), {tomb, RObj}}
+            );
+        false ->
+            ok
+    end;
+maybe_repl(_, _) ->
+    ok.

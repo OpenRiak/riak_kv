@@ -304,6 +304,10 @@ do_update(token_session_error) ->
 do_update({read_repairs, Preflist}) ->
     ok = exometer:update([?PFX, ?APP, node, gets, read_repairs], 1),
     do_repairs(Preflist);
+do_update(prompted_repairs) ->
+    ok = exometer:update([?PFX, ?APP, node, gets, prompted_repairs], 1);
+do_update(replicated_repairs) ->
+    ok = exometer:update([?PFX, ?APP, node, dets, replicated_repairs], 1);
 do_update({tictac_aae, ExchangeState}) ->
     ok = exometer:update([?PFX, ?APP, node, tictacaae, ExchangeState], 1);
 do_update({tictac_aae, ExchangeType, RepairCount}) ->
@@ -648,6 +652,18 @@ stats() ->
                                                {count, read_repairs_total}]},
      {[node, gets, skipped_read_repairs], spiral, [], [{one, skipped_read_repairs},
                                                        {count, skipped_read_repairs_total}]},
+     {
+        [node, gets, prompted_repairs],
+        spiral,
+        [],
+        [{one, prompted_repairs}, {count, prompted_repairs_total}]
+    },
+     {
+        [node, gets, replicated_repairs],
+        spiral,
+        [],
+        [{one, replicated_repairs}, {count, replicated_repairs_total}]
+    },
      {[node, tictacaae, root_compare], spiral, [],
         [{one, tictacaae_root_compare}, {count, tictacaae_root_compare_total}]},
      {[node, tictacaae, branch_compare], spiral, [],
