@@ -51,7 +51,9 @@
             autocheck_suppress/1,
             maybe_repair_trees/2,
             trigger_tree_repairs/0,
-            disable_tree_repairs/0
+            disable_tree_repairs/0,
+            disable_tree_reduction/0,
+            enable_tree_reduction/0
         ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -203,6 +205,25 @@ enable_ssl(Enable, Credentials) ->
 -spec set_bucketsync(list(riak_object:bucket())) -> ok.
 set_bucketsync(BucketList) ->
     gen_server:call(?MODULE, {set_bucketsync, BucketList}).
+
+%% @doc
+%% When performing per-bucket merges, the reduction check can be disabled with
+%% this function.  If the range being covered is static (i.e. no mutating 
+%% objects are covered, a needless verification of merge_tree_range can be
+%% avoided with this option).
+%% 
+%% This is a runtime change only, it cannot be permanently enabled across
+%% restarts.
+-spec disable_tree_reduction() -> ok.
+disable_tree_reduction() ->
+    application:set_env(riak_kv, ttaaefs_reduction, 1.0).
+
+%% @doc
+%% Reverse the disabling of tree reduction
+-spec enable_tree_reduction() -> ok.
+enable_tree_reduction() ->
+    application:unset_env(riak_kv, ttaaefs_reduction).
+
 
 
 %%%============================================================================
@@ -602,15 +623,16 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                             Bucket ->
                                 {Bucket, State#state.bucket_list}
                         end,
-                    TreeSize =
-                        application:get_env(
-                            riak_kv,
-                            ttaaefs_range_tree_size,
-                            small
-                        ),
                     Filter =
-                        {filter, B, KeyRange, TreeSize, all,
-                        {LowerTime, UpperTime}, pre_hash},
+                        {
+                            filter,
+                            B,
+                            KeyRange,
+                            get_range_treesize(),
+                            all,
+                            {LowerTime, UpperTime},
+                            pre_hash
+                        },
                     {State0, Timeout} =
                         sync_clusters(From, ReqID, range, range, Filter,
                                         NextBucketList, partial, State,
@@ -749,6 +771,52 @@ clear_range() ->
 get_range() ->
     application:get_env(riak_kv, ttaaefs_check_range, none).
 
+-spec get_range_treesize() -> small|medium|large|xlarge.
+%% Get Configured tree range size.  Tree sizes smaller than small are not
+%% supported as a segment space =< 2 ^ 15 is not compatible with segment
+%% acceleration of folds
+get_range_treesize() ->
+    case application:get_env(riak_kv, ttaaefs_range_tree_size) of
+        {ok, Size} when
+            Size == small;
+            Size == medium;
+            Size == large;
+            Size == xlarge ->
+            Size;
+        _ ->
+            small
+    end.
+
+get_exchange_options(MaxResults, WorkType, KeyFilter) ->
+    ExchangePause =
+        application:get_env(
+            riak_kv,
+            tictacaae_exchangepause,
+            ?EXCHANGE_PAUSE_MS
+        ),
+    InitOpts =
+        [
+            {transition_pause_ms, ExchangePause},
+            {max_results, MaxResults},
+            {scan_timeout, ?CRASH_TIMEOUT div 2},
+            {purpose, WorkType},
+            {key_filter, KeyFilter}
+        ],
+    WRF =
+        case application:get_env(riak_kv, ttaaefs_reduction) of
+            {ok, Scale} when is_float(Scale), Scale >= 0.0, Scale =< 1.0 ->
+                [{worthwile_reduction, Scale}];
+            _ ->
+                []
+        end,
+    WRC =
+        case application:get_env(riak_kv, ttaaefs_reduction_cached) of
+            {ok, Count} when is_integer(Count), Count >= 0 ->
+                [{worthwile_reduction_cached, Count}];
+            _ ->
+                []
+        end,
+    WRF ++ WRC ++ InitOpts.
 
 -spec autocheck_suppress() -> ok.
 autocheck_suppress() ->
@@ -919,9 +987,6 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                     MaxResults,
                     {ReqID0, Ref, WorkType}),
 
-            ExchangePause =
-                app_helper:get_env(
-                    riak_kv, tictacaae_exchangepause, ?EXCHANGE_PAUSE_MS),
             {ok, ExPid, ExID} =
                 aae_exchange:start(
                     Ref,
@@ -930,13 +995,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                     RepairFun,
                     ReplyFun,
                     Filter, 
-                    [
-                        {transition_pause_ms, ExchangePause},
-                        {max_results, MaxResults},
-                        {scan_timeout, ?CRASH_TIMEOUT div 2},
-                        {purpose, WorkType},
-                        {key_filter, KeyFilter}
-                    ]
+                    get_exchange_options(MaxResults, WorkType, KeyFilter)
                 ),
             
             ?LOG_INFO(
