@@ -271,6 +271,13 @@ resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
     SyncConfig = get_current_scope(), 
     set_bucketsync([Bucket]),
     disable_tree_reduction(),
+    CurrentPause =
+        application:get_env(
+            riak_kv,
+            tictacaae_exchangepause,
+            ?EXCHANGE_PAUSE_MS
+        ),
+    application:set_env(riak_kv, tictacaae_exchangepause, 1),
     loop_resync(
         Bucket,
         KeyRange,
@@ -280,6 +287,7 @@ resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
         Loops
     ),
     enable_tree_reduction(),
+    application:set_env(riak_kv, tictacaae_exchangepause, CurrentPause),
     case SyncConfig of
         {all, LocalNVal, RemoteNVal} ->
             set_allsync(LocalNVal, RemoteNVal);
@@ -977,19 +985,20 @@ get_exchange_options(MaxResults, WorkType, KeyFilter) ->
             {max_results, MaxResults},
             {scan_timeout, ?CRASH_TIMEOUT div 2},
             {purpose, WorkType},
+            {log_levels, riak_kv_tictacaae_repairs:aae_loglevels()},
             {key_filter, KeyFilter}
         ],
     WRF =
         case application:get_env(riak_kv, ttaaefs_reduction) of
             {ok, Scale} when is_float(Scale), Scale >= 0.0, Scale =< 1.0 ->
-                [{worthwile_reduction, Scale}];
+                [{worthwhile_reduction, Scale}];
             _ ->
                 []
         end,
     WRC =
         case application:get_env(riak_kv, ttaaefs_reduction_cached) of
             {ok, Count} when is_integer(Count), Count >= 0 ->
-                [{worthwile_reduction_cached, Count}];
+                [{worthwhile_reduction_cached, Count}];
             _ ->
                 []
         end,
@@ -1111,7 +1120,7 @@ loop_resync(Bucket, KeyRange, DateRange, SegRangeList, Timeout, Loops) ->
         lists:foldl(
             fun(SegRange, {NextLoopAcc, TotalRepairs}) ->
                 ok =
-                    riak_kv_ttaaefs_manager:set_range_v2(
+                    set_range_v2(
                         Bucket,
                         KeyRange,
                         DateRange,
@@ -1123,7 +1132,7 @@ loop_resync(Bucket, KeyRange, DateRange, SegRangeList, Timeout, Loops) ->
                     {ReqID, {clock_compare, N}} ->
                         {[SegRange | NextLoopAcc], TotalRepairs + N};
                     {ReqID, {tree_compare, 0}} ->
-                        ?LOG_INFO(
+                        ?LOG_DEBUG(
                             "Single segment range complete in resync_bucket"
                         ),
                         {NextLoopAcc, TotalRepairs};
@@ -1204,7 +1213,8 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                 fun(RepairList) ->
                     riak_kv_replrtq_src:replrtq_ttaaefs(
                         State#state.queue_name,
-                        RepairList),
+                        RepairList
+                    ),
                     RepairList
                 end,
             RemoteRepairFun =
