@@ -146,7 +146,9 @@
     fun(() -> node_info()).
 -type repair_id() :: {pid(), non_neg_integer()}.
 -type sync_config() ::
-    {all, pos_integer(), pos_integer()} | {bucket, list(riak_object:bucket())}.
+    {all, pos_integer(), pos_integer()}
+    | {bucket, list(riak_object:bucket())}
+    | disabled.
 
 -export_type([work_item/0, repair_id/0]).
 
@@ -199,7 +201,7 @@ set_queuename(QueueName) ->
 %% @doc
 %% Set the manager to do full sync (e.g. using cached trees).  This will leave
 %% automated sync disabled.  To re-enable the sync use resume/1
--spec set_allsync(pos_integer(), pos_integer()) -> {previous, sync_config()}.
+-spec set_allsync(pos_integer(), pos_integer()) -> ok.
 set_allsync(LocalNVal, RemoteNVal) ->
     gen_server:call(?MODULE, {set_allsync, LocalNVal, RemoteNVal}).
 
@@ -210,7 +212,7 @@ enable_ssl(Enable, Credentials) ->
 %% @doc
 %% Set the manager to sync or a list of buckets.  This will leave
 %% automated sync disabled.  To re-enable the sync use resume/1
--spec set_bucketsync(list(riak_object:bucket())) -> {previous, sync_config()}.
+-spec set_bucketsync(list(riak_object:bucket())) -> ok.
 set_bucketsync(BucketList) ->
     gen_server:call(?MODULE, {set_bucketsync, BucketList}).
 
@@ -238,6 +240,10 @@ enable_tree_reduction() ->
 resync_bucket(Bucket) ->
     resync_bucket(Bucket, all, all,128, 60 * 60 * 1000, 4).
 
+-spec get_current_scope() -> sync_config().
+get_current_scope() ->
+    gen_server:call(?MODULE, get_current_scope, infinity).
+
 %% @doc
 %% Resync an out-of sync bucket, a Width of the segment space at a time.  The
 %% Width should be between 1 and 2048 (higher numbers that that will lose 
@@ -262,7 +268,8 @@ resync_bucket(Bucket) ->
 resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
     ShuffledSegRangeList = shuffle(generate_seg_lists(Width)),
     pause(),
-    {previous, SyncConfig} = set_bucketsync([Bucket]),
+    SyncConfig = get_current_scope(), 
+    set_bucketsync([Bucket]),
     disable_tree_reduction(),
     loop_resync(
         Bucket,
@@ -277,7 +284,9 @@ resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
         {all, LocalNVal, RemoteNVal} ->
             set_allsync(LocalNVal, RemoteNVal);
         {bucket, BucketList} ->
-            set_bucketsync(BucketList)
+            set_bucketsync(BucketList);
+        disabled ->
+            ?LOG_WARNING("Scope left enabled by resync_bucket script")
     end,
     ok.
 
@@ -460,21 +469,8 @@ handle_call({set_sink, Protocol, PeerIP, PeerPort}, _From, State) ->
 handle_call({set_queuename, QueueName}, _From, State) ->
     {reply, ok, State#state{queue_name = QueueName}};
 handle_call({set_allsync, LocalNVal, RemoteNVal}, _From, State) ->
-    Reply =
-        case State#state.scope of
-            all ->
-                {
-                    previous,
-                    {all, State#state.local_nval, State#state.remote_nval}
-                };
-            bucket ->
-                {
-                    previous,
-                    {bucket, State#state.bucket_list}
-                }
-        end,
     {reply,
-        Reply,
+        ok,
         State#state{
             scope = all,
             local_nval = LocalNVal,
@@ -489,26 +485,24 @@ handle_call({enable_ssl, Enable, Credentials}, _From, State) ->
             {reply, ok, State#state{ssl_credentials = undefined}}
     end;
 handle_call({set_bucketsync, BucketList}, _From, State) ->
-    Reply =
-        case State#state.scope of
-            all ->
-                {
-                    previous,
-                    {all, State#state.local_nval, State#state.remote_nval}
-                };
-            bucket ->
-                {
-                    previous,
-                    {bucket, State#state.bucket_list}
-                }
-        end,
     {reply,
-        Reply,
+        ok,
         State#state{
             scope = bucket,
             bucket_list = BucketList
         }
-    }.
+    };
+handle_call(get_current_scope, _From, State) ->
+    Reply =
+        case State#state.scope of
+            all ->
+                {all, State#state.local_nval, State#state.remote_nval};
+            bucket ->
+                {bucket, State#state.bucket_list};
+            disabled ->
+                disabled
+        end,
+    {reply, Reply, State}.
 
 handle_cast({reply_complete, ReqID, Result}, State) ->
     LastExchangeStart = State#state.last_exchange_start,
@@ -670,8 +664,8 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                         {
                             all,
                             all,
-                            PrevMega * ?MEGA + PrevSecs,
-                            NowSecs
+                            {PrevMega * ?MEGA + PrevSecs, NowSecs},
+                            all
                         }
                 end;
             SetRange ->
@@ -943,9 +937,14 @@ clear_range() ->
     application:set_env(riak_kv, ttaaefs_check_range, none).
 
 -spec get_range() ->
-        none|{riak_object:bucket()|all, 
-                {riak_object:key(), riak_object:key()}|all,
-                pos_integer(), pos_integer()}.
+        none
+        |
+            {
+                riak_object:bucket() | all, 
+                {riak_object:key(), riak_object:key()} | all,
+                {pos_integer(), pos_integer()} | all,
+                {segments, list(non_neg_integer()), tree_size()} | all
+            }.
 get_range() ->
     application:get_env(riak_kv, ttaaefs_check_range, none).
 
