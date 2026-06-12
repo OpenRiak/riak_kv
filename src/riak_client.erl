@@ -43,6 +43,7 @@
 -export([query/2, query_result_request/2]).
 -export([aae_fold/1, aae_fold/2]).
 -export([ttaaefs_fullsync/1, ttaaefs_fullsync/2, ttaaefs_fullsync/3]).
+-export([resync_bucket/1]).
 -export([hotbackup/4]).
 -export([stream_get_index/4,stream_get_index/3]).
 -export([set_bucket/3,get_bucket/2,reset_bucket/2]).
@@ -948,6 +949,19 @@ aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
             {error, "Invalid AAE fold definition"}
     end.
 
+
+%% @doc
+%% Resync a bucket with some sane defaults.
+-spec resync_bucket(riak_object:bucket()) -> ok.
+resync_bucket(Bucket) ->
+    riak_kv_ttaaefs_manager:resync_bucket(
+        Bucket,
+        all,
+        all,
+        128,
+        60 * 60 * 1000,
+        4
+    ).
 
 -spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item())
         -> ok | {error, term()}.

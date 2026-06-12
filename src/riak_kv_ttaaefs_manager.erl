@@ -57,7 +57,6 @@
         disable_tree_repairs/0,
         disable_tree_reduction/0,
         enable_tree_reduction/0,
-        resync_bucket/1,
         resync_bucket/6
     ]
 ).
@@ -234,12 +233,6 @@ disable_tree_reduction() ->
 enable_tree_reduction() ->
     application:unset_env(riak_kv, ttaaefs_reduction).
 
-%% @doc
-%% Resync a bucket with some sane defaults.
--spec resync_bucket(riak_object:bucket()) -> ok.
-resync_bucket(Bucket) ->
-    resync_bucket(Bucket, all, all,128, 60 * 60 * 1000, 4).
-
 -spec get_current_scope() -> sync_config().
 get_current_scope() ->
     gen_server:call(?MODULE, get_current_scope, infinity).
@@ -278,6 +271,11 @@ resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
             ?EXCHANGE_PAUSE_MS
         ),
     application:set_env(riak_kv, tictacaae_exchangepause, 1),
+    ?LOG_INFO(
+        "Attempt to resync bucket stared with ~w loops and ~w segment ranges",
+        [Loops, length(ShuffledSegRangeList)]
+    ),
+    SW = os:system_time(second),
     loop_resync(
         Bucket,
         KeyRange,
@@ -285,6 +283,10 @@ resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
         ShuffledSegRangeList,
         Timeout,
         Loops
+    ),
+    ?LOG_INFO(
+        "Resync attempt completed in duration=~w seconds",
+        [os:system_time(second) - SW]
     ),
     enable_tree_reduction(),
     application:set_env(riak_kv, tictacaae_exchangepause, CurrentPause),
@@ -1155,8 +1157,10 @@ loop_resync(Bucket, KeyRange, DateRange, SegRangeList, Timeout, Loops) ->
             SegRangeList
         ),
     ?LOG_INFO(
-        "Full loop=~w completed with repair_count=~w with ~w ranges left",
-        [Loops, LoopRepairs, length(SegRangeList)]
+        "Full loop completed"
+        " with repair_count=~w and unfixed_ranges=~w left to resolve"
+        " with loops_remaining=~w",
+        [LoopRepairs, length(UpdRangeList), Loops - 1]
     ),
     loop_resync(Bucket, KeyRange, DateRange, UpdRangeList, Timeout, Loops - 1).
 
