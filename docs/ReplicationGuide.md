@@ -614,10 +614,10 @@ A bucket re-sync will suspend the local full-sync process on the node from which
 The re-sync bucket can be called via [remote_console](./OperationsAndTroubleshootingGuide.md#remote-console):
 
 ```console
-riak_client:resync_bucket({<<"BucketTypeName">>, <<"BucketName">>}).
+riak_client:resync_bucket({<<"BucketType">>, <<"BucketName">>}).
 ```
 
-or, for untyped buckets.
+Or, for untyped buckets:
 
 ```console
 riak_client:resync_bucket(<<"BucketName">>).

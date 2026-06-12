@@ -73,6 +73,7 @@ ttaaefs
 aaefold
 quickdocs
 keyname
+resync
 
 # Riak configuration terms
 cacert
