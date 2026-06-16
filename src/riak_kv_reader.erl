@@ -134,7 +134,8 @@ action({B, K}, _Redo) ->
                     Opts =
                         [
                             {r, all},
-                            {deletedvclock, true}
+                            {deletedvclock, true},
+                            {return_tombstone, true}
                         ],
                     GetResult = riak_client:get(B, K, Opts, C),
                     maybe_repl({B, K}, GetResult);
@@ -155,9 +156,9 @@ redo() -> true.
 -type get_result() :: {ok, riak_object:riak_object()}|{error, term()}.
 
 -spec maybe_repl(read_reference(), get_result()) -> ok.
-maybe_repl({B, K}, {error, {deleted, TombClock}}) ->
+maybe_repl({B, K}, {ok, {deleted, TombClock, TombStone}}) ->
     riak_kv_stat:update(replicated_repairs),
-    riak_kv_replrtq_src:replrtq_coordput({B, K, TombClock, to_fetch});
+    riak_kv_replrtq_src:replrtq_coordput({B, K, TombClock, {tomb, TombStone}});
 maybe_repl(_, {ok, _RObj}) ->
     ok;
 maybe_repl(_, UnexpectedResult) ->

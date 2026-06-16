@@ -349,6 +349,12 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
             NFOk0 = get_option(notfound_ok, Options, default),
             NotFoundOk = riak_kv_util:expand_value(notfound_ok, NFOk0, BucketProps),
             DeletedVClock = get_option(deletedvclock, Options, false),
+            ReturnTombstone =
+                get_option(
+                    return_tombstone,
+                    Options,
+                    StateData#state.return_tombstone
+                ),
             ReturnBody = get_option(return_body, Options, true),
             GetCore =
                 riak_kv_get_core:init(
@@ -359,9 +365,15 @@ validate(timeout, StateData=#state{from = {raw, ReqId, _Pid}, options = Options,
                     NodeConfirms,
                     ReturnBody
                 ),
-            new_state_timeout(execute, StateData#state{get_core = GetCore,
-                                                       timeout = Timeout,
-                                                       req_id = ReqId});
+            new_state_timeout(
+                execute,
+                StateData#state{
+                    get_core = GetCore,
+                    timeout = Timeout,
+                    req_id = ReqId,
+                    return_tombstone = ReturnTombstone
+                }
+            );
         Error ->
             StateData2 = client_reply(Error, StateData),
             {stop, normal, StateData2}
