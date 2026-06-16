@@ -253,8 +253,8 @@
     %% Parallel AAE store rebuilds
 
 
--define(REAPER_BATCH_SIZE, 1024).
--define(ERASER_BATCH_SIZE, 1024).
+-define(REAPER_BATCH_SIZE, 128).
+-define(ERASER_BATCH_SIZE, 128).
 
 -define(INIT_REBUILD_BLOCKTIME, 1000).
 

@@ -21,8 +21,9 @@
 %% @doc Queue any read request originating from this node.  This is intended
 %% for background read requests to trigger read repair. 
 
-
 -module(riak_kv_reader).
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([start_link/1]).
@@ -130,7 +131,12 @@ action({B, K}, _Redo) ->
             riak_kv_stat:update(prompted_repairs),
             case application:get_env(riak_kv, replicate_repair_tomb, false) of
                 true ->
-                    GetResult = riak_client:get(B, K, [{r, all}], C),
+                    Opts =
+                        [
+                            {r, all},
+                            {deletedvclock, true}
+                        ],
+                    GetResult = riak_client:get(B, K, Opts, C),
                     maybe_repl({B, K}, GetResult);
                 false ->
                     _ = riak_client:get(B, K, C),
@@ -149,15 +155,11 @@ redo() -> true.
 -type get_result() :: {ok, riak_object:riak_object()}|{error, term()}.
 
 -spec maybe_repl(read_reference(), get_result()) -> ok.
-maybe_repl({B, K}, {ok, RObj}) ->
-    case riak_kv_util:is_x_deleted(RObj) of
-        true ->
-            riak_kv_stat:update(replicated_repairs),
-            riak_kv_replrtq_src:replrtq_coordput(
-                {B, K, riak_object:vclock(RObj), {tomb, RObj}}
-            );
-        false ->
-            ok
-    end;
-maybe_repl(_, _) ->
+maybe_repl({B, K}, {error, {deleted, TombClock}}) ->
+    riak_kv_stat:update(replicated_repairs),
+    riak_kv_replrtq_src:replrtq_coordput({B, K, TombClock, to_fetch});
+maybe_repl(_, {ok, _RObj}) ->
+    ok;
+maybe_repl(_, UnexpectedResult) ->
+    ?LOG_INFO("Fetch of prompted repair returned ~0p", [UnexpectedResult]),
     ok.

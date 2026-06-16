@@ -307,7 +307,7 @@ do_update({read_repairs, Preflist}) ->
 do_update(prompted_repairs) ->
     ok = exometer:update([?PFX, ?APP, node, gets, prompted_repairs], 1);
 do_update(replicated_repairs) ->
-    ok = exometer:update([?PFX, ?APP, node, dets, replicated_repairs], 1);
+    ok = exometer:update([?PFX, ?APP, node, gets, replicated_repairs], 1);
 do_update({tictac_aae, ExchangeState}) ->
     ok = exometer:update([?PFX, ?APP, node, tictacaae, ExchangeState], 1);
 do_update({tictac_aae, ExchangeType, RepairCount}) ->
