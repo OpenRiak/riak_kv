@@ -1064,7 +1064,11 @@ set_vclock(Object=#r_object{}, VClock) -> Object#r_object{vclock=VClock}.
 %% write showed local amnesia
 -spec new_actor_epoch(riak_object(), vclock:vclock_node()) -> riak_object().
 new_actor_epoch(Object=#r_object{vclock=VC}, ClientId) ->
-    NewClock = vclock:increment(ClientId, VC),
+    % This converts to and back needlessly, but amnesia is an irregular
+    % scenario, so not in the critical path for performance optimisations
+    LMD = vclock:last_modified(VC),
+    TS = calendar:datetime_to_gregorian_seconds(LMD),
+    NewClock = vclock:increment(ClientId, TS, VC),
     Object#r_object{vclock=NewClock}.
 
 %% @doc  Increment the entry for ClientId in O's vclock.
@@ -2177,9 +2181,22 @@ bucket_prop_needers_test_() ->
             fun find_bestobject_headget_confusion_reconcile/0},
         {"Test Summary Bin Extract", fun summary_binary_extract/0},
         {"Next Gen Repl Encode/Decode", fun nextgenrepl/0},
-        {"Simple Head/Get merge", fun simple_merge_head_and_get/0}
+        {"Simple Head/Get merge", fun simple_merge_head_and_get/0},
+        {"Confirm new actor epoch does not advance LMD", fun new_actor_epoch_lmd/0}
     ]
     }.
+
+new_actor_epoch_lmd() ->
+    {_O,O2} = update_test(),
+    LMD2 = vclock:last_modified(vclock(O2)),
+    timer:sleep(1001),
+    O3 = riak_object:increment_vclock(O2, self()),
+    timer:sleep(1001),
+    LMD3 = vclock:last_modified(vclock(O3)),
+    O4 = new_actor_epoch(O3, fake_actor),
+    LMD4 = vclock:last_modified(vclock(O4)),
+    ?assert(LMD3 > LMD2),
+    ?assert(LMD4 == LMD3).
 
 ancestor() ->
     Actor = self(),
