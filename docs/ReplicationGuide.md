@@ -607,7 +607,7 @@ Full-sync reconciliation is designed to be fast and efficient for confirming tha
 
 For small buckets (in terms of object count), simply re-replicating the bucket could be the easiest solution, especially where it is clear the replication failure is uni-directional.  For larger buckets, and for handling bi-directional deltas, then it is possible to manually intervene to re-sync a bucket.
 
-The re-sync can be triggered from any node, from either cluster (assuming that bi-directional replication is configured).  The re-sync is cluster-wide, it is not a re-sync of data local to the node. The re-sync can handle, as with other nextgenrepl features, clusters with different configurations (e.g. `n_val` settings).
+The re-sync can be triggered from any node, from either cluster - assuming that bi-directional replication is configured.  The re-sync is cluster-wide, it is not a re-sync of data local to the node. The re-sync can handle, as with other nextgenrepl features, clusters with different configurations (e.g. `n_val` settings).
 
 A bucket re-sync will suspend the local full-sync process on the node from which it is triggered, and roll through segment slices of the bucket performing bucket-specific `range_check` operations.  As each loop covers only a single slice of the segment space, this is much quicker to repair than the standard full-sync per-bucket check, which needs to read the whole bucket space to build AAE trees for comparison.
 
@@ -629,7 +629,7 @@ riak_client:resync_bucket(<<"BucketName">>).
 As well as the helper function in `riak_client`, there is a configurable `riak_kv_ttaaefs_manager:resync_bucket/6` function exported.  For much larger buckets, this configurable version can be used to optimise the process e.g. use a smaller width (the size of the slice of the segment space), fix a specific key range or within a modified date range.
 
 { .note }
-> It is possible to have multiple nodes running resync_bucket concurrently (to sync different buckets, or different key ranges within a bucket).  The limiting factor to horizontal scaling of resync_bucket is usually the size of [AF3 worker pool](./OtherAPI.md#node-worker-pools).  Once all workers in the pool are continuously busy, no further scaling can be achieved, without running larger pools (on all clusters).
+> It is possible to have multiple nodes running resync_bucket concurrently - to sync different buckets, or different key ranges within a bucket.  The limiting factor to horizontal scaling of resync_bucket is usually the size of [AF3 worker pool](./OtherAPI.md#node-worker-pools).  Once all workers in the pool are continuously busy, no further scaling can be achieved, without running larger pools (on all clusters).
 
 #### Participate in Coverage
 
