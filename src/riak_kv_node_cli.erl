@@ -32,29 +32,64 @@ register_cli() ->
 
 register_all_usage() ->
     clique:register_usage(["riak-admin", "node"], node_usage()),
-    clique:register_usage(["riak-admin", "node", "repair"], node_repair_usage()).
+    clique:register_usage(["riak-admin", "node", "repair"], node_repair_usage()),
+    clique:register_usage(["riak-admin", "node", "repair", "start"], node_repair_start_usage()),
+    clique:register_usage(["riak-admin", "node", "repair", "status"], node_repair_status_usage()),
+    clique:register_usage(["riak-admin", "node", "repair", "stop", '*'], node_repair_stop_usage()).
 
 register_all_commands() ->
     lists:foreach(
       fun(Args) -> apply(clique, register_command, Args) end,
-      [node_repair_specs()
+      [node_repair_status_specs(),
+       node_repair_start_specs(),
+       node_repair_stop_specs()
       ]).
 
 node_usage() ->
-    ["riak admin node { repair }\n",
-     "See individual subcommand usage for options and arguments.\n",
-     "\n",
-     "Unless given specifically with -n NODE, commands are executed on the current node.\n",
-     "NODE can be \"all\".\n"
+    ["riak admin node repair { start | status | stop REASON } [OPTIONS]\n",
+     "See individual subcommand usage for options and arguments.\n"
+    ].
+node_repair_usage() ->
+    node_usage().
+
+node_repair_status_usage() ->
+    ["riak admin node repair status [-n|--node NODE|all] [-f|--format table|json]\n",
+     "Print status of any ongoing partition repairs on NODE.\n"
     ].
 
-node_repair_usage() ->
-    ["riak admin node repair\n",
-     "Triggers a partition repair on all partitions on node(s).\n",
-     "\n",
-     "Unless given specifically with -n NODE, commands are executed on the current node.\n",
-     "NODE can be \"all\".\n"
+node_repair_start_usage() ->
+    ["riak admin node repair start [-n|--node NODE]\n",
+     "Start partition repair on NODE.\n"
     ].
+
+node_repair_stop_usage() ->
+    ["riak admin node repair stop [-n|--node NODE|all] REASON\n",
+     "Kill all an ongoing partition repair on NODE, with REASON.\n"
+    ].
+
+-define(NODEOPT, {node, [{shortname, "n"},
+                         {longname, "node"},
+                         {typecast, fun to_node/1}]}).
+-define(FMTOPTION, {format, [{shortname, "f"},
+                             {longname, "format"},
+                             {typecast, fun to_fmt/1}]}).
+
+node_repair_status_specs() ->
+    [["riak-admin", "node", "repair", "status"],
+     [], [?NODEOPT, ?FMTOPTION],
+     fun(A, B, C) -> main(fun node_repair_status_cmd/3, A, B, C) end
+    ].
+node_repair_start_specs() ->
+    [["riak-admin", "node", "repair", "start"],
+     [], [?NODEOPT],
+     fun(A, B, C) -> main(fun node_repair_start_cmd/3, A, B, C) end
+    ].
+node_repair_stop_specs() ->
+    [["riak-admin", "node", "repair", "stop", '*'],
+     [], [?NODEOPT],
+     fun(A, B, C) -> main(fun node_repair_stop_cmd/3, A, B, C) end
+    ].
+
 
 main(Fun, A, B, C) ->
     try
@@ -63,43 +98,142 @@ main(Fun, A, B, C) ->
         Class:Reason:Stack ->
             logger:error("node repair: handler failed: ~p:~p stack=~p",
                          [Class, Reason, Stack]),
-            clique_status:text(io_lib:format("ERROR: ~p:~p", [Class, Reason]))
+            [alert("Error: ~p:~p", [Class, Reason])]
     end.
 
--define(NODEOPT, {node, [{shortname, "n"},
-                         {longname, "node"},
-                         {typecast, fun to_node/1}]}).
+node_repair_status_cmd(_Cmd, _Args, Opts) ->
+    Nodes =
+        case [A || {node, A} <- Opts] of
+            [all] ->
+                [node() | nodes()];
+            [] ->
+                [node()];
+            NN ->
+                NN
+        end,
+    Fmt = extract_fmt_option(Opts),
 
-target_nodes(Opts) ->
-    NN = [N || {node, N} <- Opts],
-    case lists:member(all, NN) of
-        true ->
-            Ns = [node() | nodes()],
-            Ns;
-        false when NN /= [] ->
-            NN;
-        _ ->
-            Ns = [node()],
-            Ns
+    Res = get_node_repair_status(Nodes),
+
+    case Fmt of
+        table ->
+            Table =
+                [begin
+                     Rows =
+                         [[{mod, Mod}, {idx, Idx}, {pid, list_to_binary(pid_to_list(Pid))}]
+                          || {Mod, Idx, Pid} <- NRes],
+                     case Rows of
+                         [] ->
+                             text("No active node repairs on ~s\n", [Node]);
+                         _ ->
+                             [text("Node repairs on ~s", [Node]), table(Rows)]
+                     end
+                 end || {Node, NRes} <- Res],
+            lists:flatten(Table);
+        json ->
+            [text("~s", [riak_kv_wm_json:encode(
+                           [#{node => Node,
+                              status => [jsonify_status(S) || S <- Statuses]}
+                            || {Node, Statuses} <- Res])])]
     end.
 
-node_repair_specs() ->
-    [["riak-admin", "node", "repair"],
-     [], [?NODEOPT],
-     fun(A, B, C) -> main(fun node_repair_cmd/3, A, B, C) end
-    ].
+get_node_repair_status(Nodes) ->
+    [begin
+         Vnodes = erpc:call(Node, riak_core_vnode_manager, all_vnodes, []),
+         Statuses = [{Mod, Idx, Pid,
+                      erpc:call(Node, riak_core_vnode_manager, repair_status, [{Mod, Idx}])}
+                     || {Mod, Idx, Pid} <- Vnodes],
+         {Node, [{Mod, Idx, Pid} || {Mod, Idx, Pid, Status} <- Statuses, Status /= not_found]}
+     end || Node <- Nodes].
 
-node_repair_cmd(_Cmd, _Args, Opts) ->
-    Nodes = target_nodes(Opts),
+nodes_running_repair() ->
+    AllSS = get_node_repair_status([node() | nodes()]),
+    [N || {N, SS} <- AllSS, SS /= []].
 
-    [{text,
-      lists:flatten(
-        io_lib:format("~p -> ~p",
-                      [N, rpc:call(N, riak_client, repair_node, [])]))}
-     || N <- Nodes].
+jsonify_status({Mod, Idx, Pid}) ->
+    #{mod => Mod,
+      idx => Idx,
+      pid => list_to_binary(pid_to_list(Pid))}.
+
+node_repair_start_cmd(_Cmd, _Args, Opts) ->
+    Node =
+        case [A || {node, A} <- Opts] of
+            [all] -> invalid;
+            [] -> node();
+            [N] -> N;
+            _ -> invalid
+        end,
+    case Node of
+        invalid ->
+            [alert("Error: node repair can be started on one node at a time")];
+        Node ->
+            case nodes_running_repair() of
+                [] ->
+                    case erpc:call(Node, riak_client, repair_node, []) of
+                        ok ->
+                            [text("Node repair started on ~s.", [Node])];
+                        {error, BadRpcReason} ->
+                            [alert("Error: failed to start node repair on ~s: ~p", [Node, BadRpcReason])]
+                    end;
+                NwAA ->
+                    [alert("There are repairs currently ongoing on node~s ~s.\n"
+                           "Wait until these are completed before starting a new node repair.",
+                           [ending(NwAA), string:join([atom_to_list(N) || N <- NwAA], ",")])]
+            end
+    end.
+
+node_repair_stop_cmd([_, _, _, _, Reason], _, Opts) ->
+    Nodes =
+        case [A || {node, A} <- Opts] of
+            [all] ->
+                [node() | nodes()];
+            [] ->
+                [node()];
+            NN ->
+                NN
+        end,
+    AllNodesWithRepairs = nodes_running_repair(),
+    Items =
+        [begin
+             case lists:member(Node, AllNodesWithRepairs) of
+                 false ->
+                     io_lib:format("\n* ~s: No active repairs", [Node]);
+                 true ->
+                     case erpc:call(Node, riak_core_vnode_manager, kill_repairs, [Reason]) of
+                         ok ->
+                             io_lib:format("\n* ~s: Node repair stopped", [Node]);
+                         {error, BadRpcReason} ->
+                             io_lib:format("\n* ~s: Failed to stop node repair on: ~p", [Node, BadRpcReason])
+                     end
+             end
+         end || Node <- Nodes],
+    [clique_status:list("Stopping repairs", Items)].
+
+
+extract_fmt_option(Opts) ->
+    case [A || {format, A} <- Opts] of
+        [] -> table;
+        ["table"] -> table;
+        ["json"] -> json;
+        _ -> invalid
+    end.
 
 to_node("all") ->
     all;
 to_node(A) ->
     clique_typecast:to_node(A).
 
+to_fmt(A) ->
+    A.
+
+text(F, A) ->
+    clique_status:text(lists:flatten(io_lib:format(F, A))).
+alert(S) ->
+    alert(S, []).
+alert(F, A) ->
+    clique_status:alert([text(F, A)]).
+table(A) ->
+    clique_status:table(A).
+
+ending([_]) -> "";
+ending(_) -> "s".

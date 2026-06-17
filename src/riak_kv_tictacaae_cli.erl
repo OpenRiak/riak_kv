@@ -679,7 +679,7 @@ fold_cmd([_, _, _ | Items], Keys, Options) ->
                           },
                       {ok, BB} = riak_client:aae_fold(Query),
                       Printable = [printable_bin(B) || B <- BB],
-                      io:format(FD, "~s\n", [mochijson2:encode(Printable)])
+                      io:format(FD, "~s\n", [riak_kv_wm_json:encode(Printable)])
               end);
 
         ["find-keys"] ->
@@ -697,7 +697,7 @@ fold_cmd([_, _, _ | Items], Keys, Options) ->
                       Printable = [#{<<"key">> => printable_bin(K),
                                      <<"sibling_count">> => SibCnt
                                     } || {_B, K, SibCnt} <- KK],
-                      io:format(FD, "~s\n", [mochijson2:encode(Printable)])
+                      io:format(FD, "~s\n", [riak_kv_wm_json:encode(Printable)])
               end);
 
         ["count-keys"] ->
@@ -730,7 +730,7 @@ fold_cmd([_, _, _ | Items], Keys, Options) ->
                       Printable = [#{bucket => printable_bin(B),
                                      key => printable_bin(K),
                                      vclock => printable_vclock(VC)} || {B, K, VC} <- TT],
-                      io:format(FD, "~s\n", [mochijson2:encode(Printable)])
+                      io:format(FD, "~s\n", [riak_kv_wm_json:encode(Printable)])
               end);
 
         ["count-tombstones"] ->
@@ -779,7 +779,7 @@ fold_cmd([_, _, _ | Items], Keys, Options) ->
                       TS = proplists:get_value(total_size, SS),
                       Sizes = proplists:get_value(sizes, SS),
                       Siblings = proplists:get_value(siblings, SS),
-                      io:format(FD, "~s\n", [mochijson2:encode(
+                      io:format(FD, "~s\n", [riak_kv_wm_json:encode(
                                                #{total_count => TC,
                                                  total_size => TS,
                                                  sizes => [#{min => Min,
