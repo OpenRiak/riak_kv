@@ -220,9 +220,6 @@ set_bucketsync(BucketList) ->
 %% this function.  If the range being covered is static (i.e. no mutating 
 %% objects are covered, a needless verification of merge_tree_range can be
 %% avoided with this option).
-%% 
-%% This is a runtime change only, it cannot be permanently enabled across
-%% restarts.
 -spec disable_tree_reduction() -> ok.
 disable_tree_reduction() ->
     application:set_env(riak_kv, ttaaefs_reduction, 1.0).
