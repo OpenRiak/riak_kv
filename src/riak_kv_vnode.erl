@@ -256,7 +256,7 @@
 %% higher batch size will lead to more results being queued on the node
 %% coordinating the query rather than being distributed.
 %% 
-%% e.g. with RS = 1024 than a result set of < 40K overall would all be queued
+%% e.g. with RS = 1024 a result set of < 40K overall would all be queued
 %% on one node with a setting of 128.  This would be 320K with a setting of
 %% 1024.
 %% 

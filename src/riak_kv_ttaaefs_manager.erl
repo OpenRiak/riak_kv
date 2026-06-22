@@ -1096,7 +1096,7 @@ generate_seg_lists(W) when W > 1 ->
 
 %% @doc
 %% Shuffle a list, inefficiently and inaccuratly.  Can do better when shuffle
-%% function is introduced and OTP.  The inefficiency and inaccuracy are
+%% function is introduced in OTP.  The inefficiency and inaccuracy are
 %% irrelevant in this use case.
 shuffle(L) ->
     RandRange = length(L) * 2,
