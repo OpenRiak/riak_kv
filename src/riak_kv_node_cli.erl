@@ -105,7 +105,7 @@ node_repair_status_cmd(_Cmd, _Args, Opts) ->
     Nodes =
         case [A || {node, A} <- Opts] of
             [all] ->
-                [node() | nodes()];
+                get_nodes();
             [] ->
                 [node()];
             NN ->
@@ -120,7 +120,7 @@ node_repair_status_cmd(_Cmd, _Args, Opts) ->
             Table =
                 [begin
                      Rows =
-                         [[{mod, Mod}, {idx, Idx}, {pid, list_to_binary(pid_to_list(Pid))}]
+                         [[{mod, Mod}, {idx, integer_to_binary(Idx)}, {pid, list_to_binary(pid_to_list(Pid))}]
                           || {Mod, Idx, Pid} <- NRes],
                      case Rows of
                          [] ->
@@ -147,7 +147,7 @@ get_node_repair_status(Nodes) ->
      end || Node <- Nodes].
 
 nodes_running_repair() ->
-    AllSS = get_node_repair_status([node() | nodes()]),
+    AllSS = get_node_repair_status(get_nodes()),
     [N || {N, SS} <- AllSS, SS /= []].
 
 jsonify_status({Mod, Idx, Pid}) ->
@@ -186,7 +186,7 @@ node_repair_stop_cmd([_, _, _, _, Reason], _, Opts) ->
     Nodes =
         case [A || {node, A} <- Opts] of
             [all] ->
-                [node() | nodes()];
+                get_nodes();
             [] ->
                 [node()];
             NN ->
@@ -208,6 +208,15 @@ node_repair_stop_cmd([_, _, _, _, Reason], _, Opts) ->
              end
          end || Node <- Nodes],
     [clique_status:list("Stopping repairs", Items)].
+
+get_nodes() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Members = riak_core_ring:all_member_status(Ring),
+    [N || {N, Valid} <- Members, is_really(Valid)].
+is_really(A) when A == joining;
+                  A == valid;
+                  A == leaving -> true;
+is_really(_) -> false.
 
 
 extract_fmt_option(Opts) ->
