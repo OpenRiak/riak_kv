@@ -64,7 +64,7 @@ node_repair_start_usage() ->
 
 node_repair_stop_usage() ->
     ["riak admin node repair stop [-n|--node NODE|all] REASON\n",
-     "Kill all an ongoing partition repair on NODE, with REASON.\n"
+     "Kill all ongoing partition repair on NODE, with REASON.\n"
     ].
 
 -define(NODEOPT, {node, [{shortname, "n"},
@@ -120,13 +120,13 @@ node_repair_status_cmd(_Cmd, _Args, Opts) ->
             Table =
                 [begin
                      Rows =
-                         [[{mod, Mod}, {idx, integer_to_binary(Idx)}, {pid, list_to_binary(pid_to_list(Pid))}]
-                          || {Mod, Idx, Pid} <- NRes],
+                         [[{mod, Mod}, {idx, integer_to_binary(Idx)}]
+                          || {Mod, Idx} <- NRes],
                      case Rows of
                          [] ->
                              text("No active node repairs on ~s\n", [Node]);
                          _ ->
-                             [text("Node repairs on ~s", [Node]), table(Rows)]
+                             [text("Vnode repairs triggered by node repair on ~s", [Node]), table(Rows)]
                      end
                  end || {Node, NRes} <- Res],
             lists:flatten(Table);
