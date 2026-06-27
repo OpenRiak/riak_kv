@@ -140,20 +140,19 @@ node_repair_status_cmd(_Cmd, _Args, Opts) ->
 get_node_repair_status(Nodes) ->
     [begin
          Vnodes = erpc:call(Node, riak_core_vnode_manager, all_vnodes, []),
-         Statuses = [{Mod, Idx, Pid,
+         Statuses = [{Mod, Idx,
                       erpc:call(Node, riak_core_vnode_manager, repair_status, [{Mod, Idx}])}
-                     || {Mod, Idx, Pid} <- Vnodes],
-         {Node, [{Mod, Idx, Pid} || {Mod, Idx, Pid, Status} <- Statuses, Status /= not_found]}
+                     || {Mod, Idx, _Pid} <- Vnodes],
+         {Node, [{Mod, Idx} || {Mod, Idx, Status} <- Statuses, Status /= not_found]}
      end || Node <- Nodes].
 
 nodes_running_repair() ->
     AllSS = get_node_repair_status(get_nodes()),
     [N || {N, SS} <- AllSS, SS /= []].
 
-jsonify_status({Mod, Idx, Pid}) ->
+jsonify_status({Mod, Idx}) ->
     #{mod => Mod,
-      idx => Idx,
-      pid => list_to_binary(pid_to_list(Pid))}.
+      idx => Idx}.
 
 node_repair_start_cmd(_Cmd, _Args, Opts) ->
     Node =
