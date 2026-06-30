@@ -44,15 +44,22 @@
             enable_ssl/2,
             process_workitem/3]).
 
--export([set_range/4,
-            clear_range/0,
-            get_range/0,
-            autocheck_suppress/0,
-            autocheck_suppress/1,
-            maybe_repair_trees/2,
-            trigger_tree_repairs/0,
-            disable_tree_repairs/0
-        ]).
+-export(
+    [
+        set_range/4,
+        set_range_v2/4,
+        clear_range/0,
+        get_range/0,
+        autocheck_suppress/0,
+        autocheck_suppress/1,
+        maybe_repair_trees/2,
+        trigger_tree_repairs/0,
+        disable_tree_repairs/0,
+        disable_tree_reduction/0,
+        enable_tree_reduction/0,
+        resync_bucket/6
+    ]
+).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -137,6 +144,10 @@
 -type slot_info_fun() ::
     fun(() -> node_info()).
 -type repair_id() :: {pid(), non_neg_integer()}.
+-type sync_config() ::
+    {all, pos_integer(), pos_integer()}
+    | {bucket, list(riak_object:bucket())}
+    | disabled.
 
 -export_type([work_item/0, repair_id/0]).
 
@@ -203,6 +214,88 @@ enable_ssl(Enable, Credentials) ->
 -spec set_bucketsync(list(riak_object:bucket())) -> ok.
 set_bucketsync(BucketList) ->
     gen_server:call(?MODULE, {set_bucketsync, BucketList}).
+
+%% @doc
+%% When performing per-bucket merges, the reduction check can be disabled with
+%% this function.  If the range being covered is static (i.e. no mutating 
+%% objects are covered, a needless verification of merge_tree_range can be
+%% avoided with this option).
+-spec disable_tree_reduction() -> ok.
+disable_tree_reduction() ->
+    application:set_env(riak_kv, ttaaefs_reduction, 1.0).
+
+%% @doc
+%% Reverse the disabling of tree reduction
+-spec enable_tree_reduction() -> ok.
+enable_tree_reduction() ->
+    application:unset_env(riak_kv, ttaaefs_reduction).
+
+-spec get_current_scope() -> sync_config().
+get_current_scope() ->
+    gen_server:call(?MODULE, get_current_scope, infinity).
+
+%% @doc
+%% Resync an out-of sync bucket, a Width of the segment space at a time.  The
+%% Width should be between 1 and 2048 (higher numbers that that will lose 
+%% efficiency), lower numbers are less likely to error due to timeout.  Width
+%% should be a factor of 2.
+-spec resync_bucket(
+    riak_object:bucket(),
+    {riak_object:key(), riak_object:key()} | all,
+    {calendar:datetime(), calendar:datetime()} | all,
+    1..2048,
+        % The lower the number the faster each query.
+        % Should be at least max_results, reduces the scope of each
+        % query in a loop
+    pos_integer(),
+        % Timeout for an individual sync attempt within the loop
+    pos_integer()
+        % how many times to loop, to complete sync if all segments are
+        % mismatched will need to be at least:
+        % Width div (MaxResults * RangeBoost)
+) ->
+    ok.
+resync_bucket(Bucket, KeyRange, DateRange, Width, Timeout, Loops) ->
+    ShuffledSegRangeList = shuffle(generate_seg_lists(Width)),
+    pause(),
+    SyncConfig = get_current_scope(), 
+    set_bucketsync([Bucket]),
+    disable_tree_reduction(),
+    CurrentPause =
+        application:get_env(
+            riak_kv,
+            tictacaae_exchangepause,
+            ?EXCHANGE_PAUSE_MS
+        ),
+    application:set_env(riak_kv, tictacaae_exchangepause, 1),
+    ?LOG_INFO(
+        "Attempt to resync bucket stared with ~w loops and ~w segment ranges",
+        [Loops, length(ShuffledSegRangeList)]
+    ),
+    SW = os:system_time(second),
+    loop_resync(
+        Bucket,
+        KeyRange,
+        DateRange,
+        ShuffledSegRangeList,
+        Timeout,
+        Loops
+    ),
+    ?LOG_INFO(
+        "Resync attempt completed in duration=~w seconds",
+        [os:system_time(second) - SW]
+    ),
+    enable_tree_reduction(),
+    application:set_env(riak_kv, tictacaae_exchangepause, CurrentPause),
+    case SyncConfig of
+        {all, LocalNVal, RemoteNVal} ->
+            set_allsync(LocalNVal, RemoteNVal);
+        {bucket, BucketList} ->
+            set_bucketsync(BucketList);
+        disabled ->
+            ?LOG_WARNING("Scope left enabled by resync_bucket script")
+    end,
+    ok.
 
 
 %%%============================================================================
@@ -385,9 +478,12 @@ handle_call({set_queuename, QueueName}, _From, State) ->
 handle_call({set_allsync, LocalNVal, RemoteNVal}, _From, State) ->
     {reply,
         ok,
-        State#state{scope = all,
-                    local_nval = LocalNVal,
-                    remote_nval = RemoteNVal}};
+        State#state{
+            scope = all,
+            local_nval = LocalNVal,
+            remote_nval = RemoteNVal
+        }
+    };
 handle_call({enable_ssl, Enable, Credentials}, _From, State) ->
     case Enable of
         true ->
@@ -398,8 +494,22 @@ handle_call({enable_ssl, Enable, Credentials}, _From, State) ->
 handle_call({set_bucketsync, BucketList}, _From, State) ->
     {reply,
         ok,
-        State#state{scope = bucket,
-                    bucket_list = BucketList}}.
+        State#state{
+            scope = bucket,
+            bucket_list = BucketList
+        }
+    };
+handle_call(get_current_scope, _From, State) ->
+    Reply =
+        case State#state.scope of
+            all ->
+                {all, State#state.local_nval, State#state.remote_nval};
+            bucket ->
+                {bucket, State#state.bucket_list};
+            disabled ->
+                disabled
+        end,
+    {reply, Reply, State}.
 
 handle_cast({reply_complete, ReqID, Result}, State) ->
     LastExchangeStart = State#state.last_exchange_start,
@@ -558,10 +668,12 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                         % and the low time of the next
                         {MegaSecs, Secs, _MicroSecs} = os:timestamp(),
                         NowSecs = MegaSecs * ?MEGA  + Secs + 5,
-                        {all,
+                        {
                             all,
-                            PrevMega * ?MEGA + PrevSecs,
-                            NowSecs}
+                            all,
+                            {PrevMega * ?MEGA + PrevSecs, NowSecs},
+                            all
+                        }
                 end;
             SetRange ->
                 SetRange
@@ -575,23 +687,32 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                     From ! {ReqID, {range_check, 0}}
             end,
             {noreply, State, ?LOOP_TIMEOUT};
-        {Bucket, KeyRange, LowerTime, UpperTime} ->
+        {Bucket, KeyRange, LMDRange, SegFilter} ->
             clear_range(),
             case State#state.scope of
                 all ->
                     Filter =
-                        {filter, Bucket, all, large, all,
-                        {LowerTime, UpperTime}, pre_hash},
+                        {
+                            filter,
+                            Bucket,
+                            all,
+                            large,
+                            all,
+                            LMDRange,
+                            pre_hash
+                        },
                     {State0, Timeout} =
-                        sync_clusters(From,
-                                        ReqID,
-                                        State#state.local_nval,
-                                        State#state.remote_nval,
-                                        Filter,
-                                        undefined, 
-                                        full,
-                                        State,
-                                        range_check),
+                        sync_clusters(
+                            From,
+                            ReqID,
+                            State#state.local_nval,
+                            State#state.remote_nval,
+                            Filter,
+                            undefined, 
+                            full,
+                            State,
+                            range_check
+                        ),
                     {noreply, State0, Timeout};
                 bucket ->
                     {B, NextBucketList} =
@@ -603,12 +724,27 @@ handle_cast({range_check, ReqID, From, _Now}, State) ->
                                 {Bucket, State#state.bucket_list}
                         end,
                     Filter =
-                        {filter, B, KeyRange, small, all,
-                        {LowerTime, UpperTime}, pre_hash},
+                        {
+                            filter,
+                            B,
+                            KeyRange,
+                            get_range_treesize(),
+                            SegFilter,
+                            LMDRange,
+                            pre_hash
+                        },
                     {State0, Timeout} =
-                        sync_clusters(From, ReqID, range, range, Filter,
-                                        NextBucketList, partial, State,
-                                        range_check),
+                        sync_clusters(
+                            From,
+                            ReqID,
+                            range,
+                            range,
+                            Filter,
+                            NextBucketList,
+                            partial,
+                            State,
+                            range_check
+                        ),
                     {noreply, State0, Timeout}
             end
     end;
@@ -637,7 +773,7 @@ handle_cast({auto_check, ReqID, From, Now}, State) ->
             % Whenever there is a range defined of the last check was
             % successful, a range check is the optimal way of proceeding
             ?LOG_INFO(
-                "Auto check prompts range_check reqid=~w due to clause ~p",
+                "Auto check prompts range_check reqid=~w due to clause ~0p",
                 [ReqID, Clause]),
             process_workitem(range_check, ReqID, From, Now)
     end,
@@ -713,36 +849,159 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Environment state management functions
 %%%============================================================================
 
-%% @doc
-%% Set a specific range to be the target for subsequent range_check queries
--spec set_range(riak_object:bucket()|all,
-                        {riak_object:key(), riak_object:key()}|all,
-                        calendar:datetime(),
-                        calendar:datetime())
-                    -> ok.
-set_range(Bucket, KeyRange, LowDate, HighDate) ->
-    EpochTime =
-        calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}}),
-    LowTS = 
-        calendar:datetime_to_gregorian_seconds(LowDate) - EpochTime,
-    HighTS =
-        calendar:datetime_to_gregorian_seconds(HighDate) - EpochTime,
-    true = HighTS >= LowTS,
-    true = LowTS > 0,
-    application:set_env(riak_kv, ttaaefs_check_range,
-                        {Bucket, KeyRange, LowTS - 1, HighTS + 1}).
+%% @doc Legacy set_range API ... some operators may have scripts that should
+%% not break
+-spec set_range(
+    riak_object:bucket()|all,
+    {riak_object:key(), riak_object:key()}|all,
+    calendar:datetime(),
+    calendar:datetime()
+) ->
+    ok.
+set_range(Bucket, KeyRange, LowDateTime, HighDateTime) ->
+    set_range_v2(Bucket, KeyRange, {LowDateTime, HighDateTime}, all).
+
+-type tree_size() :: small|medium|large|xlarge.
+    % Only tree sizes which are compatible with segment acceleration are
+    % supported.  Sizes < 2 ^ 15 are not supported.
+
+%% @doc Set a specific range to be the target for subsequent range_check
+%% queries. A segment range can be used in scripts for resolving bucket sync
+%% issues, where that bucket cannot be readily broken into key ranges.  A
+%% segment range will reduce the cost of the merge_tree_range query used to
+%% find segments that will then be fixed.  A {tree_compare, 0} means that
+%% The tree is fixed for just this segment range - and my be broken for other
+%% ranges.
+-spec set_range_v2(
+    riak_object:bucket()|all,
+    {riak_object:key(), riak_object:key()} | all,
+    {calendar:datetime(), calendar:datetime()} | all,
+    {tree_size(), non_neg_integer(), non_neg_integer()}
+        | {tree_size(), list(non_neg_integer())}
+        | all
+) -> 
+    ok.
+set_range_v2(Bucket, KeyRange, DateRange, SegmentRange) ->
+    UsableDateRange =
+        case DateRange of
+            all ->
+                all;
+            {LowDate, HighDate} ->
+                EpochTime =
+                    calendar:datetime_to_gregorian_seconds(
+                        {{1970, 1, 1}, {0, 0, 0}}
+                    ),
+                LowTS = 
+                    calendar:datetime_to_gregorian_seconds(LowDate)
+                    - EpochTime,
+                HighTS =
+                    calendar:datetime_to_gregorian_seconds(HighDate)
+                    - EpochTime,
+                true = HighTS >= LowTS,
+                true = LowTS > 0,
+                {LowTS, HighTS}
+        end,
+    SegmentFilter =
+        case SegmentRange of
+            all ->
+                all;
+            {TreeSize, LowSeg, HighSeg}
+                when
+                    is_integer(LowSeg),
+                    is_integer(HighSeg),
+                    LowSeg >= 0,
+                    HighSeg >= 0,
+                    LowSeg =< HighSeg ->
+                MaxSeg =
+                    case TreeSize of
+                        small ->
+                            256 * 256;
+                        medium ->
+                            1024 * 256;
+                        large ->
+                            4096 * 256;
+                        xlarge ->
+                            16384 * 256
+                    end,
+                true = HighSeg < MaxSeg,
+                {segments, lists:seq(LowSeg, HighSeg), TreeSize};
+            {TreeSize, IntList} when is_list(IntList) ->
+                {segments, IntList, TreeSize} 
+        end,
+    application:set_env(
+        riak_kv,
+        ttaaefs_check_range,
+        {
+            Bucket,
+            KeyRange,
+            UsableDateRange,
+            SegmentFilter
+        }
+    ).
 
 -spec clear_range() -> ok.
 clear_range() ->
     application:set_env(riak_kv, ttaaefs_check_range, none).
 
 -spec get_range() ->
-        none|{riak_object:bucket()|all, 
-                {riak_object:key(), riak_object:key()}|all,
-                pos_integer(), pos_integer()}.
+        none
+        |
+            {
+                riak_object:bucket() | all, 
+                {riak_object:key(), riak_object:key()} | all,
+                {pos_integer(), pos_integer()} | all,
+                {segments, list(non_neg_integer()), tree_size()} | all
+            }.
 get_range() ->
     application:get_env(riak_kv, ttaaefs_check_range, none).
 
+-spec get_range_treesize() -> small|medium|large|xlarge.
+%% Get Configured tree range size.  Tree sizes smaller than small are not
+%% supported as a segment space =< 2 ^ 15 is not compatible with segment
+%% acceleration of folds
+get_range_treesize() ->
+    case application:get_env(riak_kv, ttaaefs_range_tree_size) of
+        {ok, Size} when
+            Size == small;
+            Size == medium;
+            Size == large;
+            Size == xlarge ->
+            Size;
+        _ ->
+            small
+    end.
+
+get_exchange_options(MaxResults, WorkType, KeyFilter) ->
+    ExchangePause =
+        application:get_env(
+            riak_kv,
+            tictacaae_exchangepause,
+            ?EXCHANGE_PAUSE_MS
+        ),
+    InitOpts =
+        [
+            {transition_pause_ms, ExchangePause},
+            {max_results, MaxResults},
+            {scan_timeout, ?CRASH_TIMEOUT div 2},
+            {purpose, WorkType},
+            {log_levels, riak_kv_tictacaae_repairs:aae_loglevels()},
+            {key_filter, KeyFilter}
+        ],
+    WRF =
+        case application:get_env(riak_kv, ttaaefs_reduction) of
+            {ok, Scale} when is_float(Scale), Scale >= 0.0, Scale =< 1.0 ->
+                [{worthwhile_reduction, Scale}];
+            _ ->
+                []
+        end,
+    WRC =
+        case application:get_env(riak_kv, ttaaefs_reduction_cached) of
+            {ok, Count} when is_integer(Count), Count >= 0 ->
+                [{worthwhile_reduction_cached, Count}];
+            _ ->
+                []
+        end,
+    WRF ++ WRC ++ InitOpts.
 
 -spec autocheck_suppress() -> ok.
 autocheck_suppress() ->
@@ -815,6 +1074,94 @@ maybe_repair_trees(LastRepairID, _Filtered) ->
 %%%============================================================================
 
 %% @doc
+%% Generate an efficient segment list with W segments per member of the list.
+%% The segment acceleration looks at the first 15 bits of the segment only, but
+%% a small tree has 16 bit segments - so each list should minimise the number
+%% of segment matches by coupling the segments when the first bit (of 16) is
+%% 0 and 1
+generate_seg_lists(1) ->
+    lists:map(fun(S) -> [S] end, lists:seq(0, 16#FFFF));
+generate_seg_lists(W) when W > 1 ->
+    HalfW = W div 2,
+    lists:map(
+        fun(I) -> 
+            lists:seq(I, I + HalfW - 1)
+            ++ lists:seq(I + 16#8000, I + 16#8000 + HalfW - 1)
+        end,
+        lists:seq(0, 16#7FFF, HalfW)
+    ).
+
+%% @doc
+%% Shuffle a list, inefficiently and inaccuratly.  Can do better when shuffle
+%% function is introduced in OTP.  The inefficiency and inaccuracy are
+%% irrelevant in this use case.
+shuffle(L) ->
+    RandRange = length(L) * 2,
+    lists:map(
+        fun({_R, SE}) -> SE end,
+        lists:keysort(
+            1,
+            lists:map(fun(E) -> {rand:uniform(RandRange), E} end, L)
+        )
+    ).
+
+%% @doc
+%% Loop ove a list of segments Loops times.  If a segment shows as being
+%% in-sync, drop it from future loops.
+loop_resync(_Bucket, _KeyRange, _DateRange, SegRangeList, _Timeout, 0) ->
+    ?LOG_INFO(
+        "All loops complete with ~w ranges unfixed",
+        [length(SegRangeList)]
+    ),
+    ok;
+loop_resync(Bucket, KeyRange, DateRange, SegRangeList, Timeout, Loops) ->
+    {UpdRangeList, LoopRepairs} =
+        lists:foldl(
+            fun(SegRange, {NextLoopAcc, TotalRepairs}) ->
+                ok =
+                    set_range_v2(
+                        Bucket,
+                        KeyRange,
+                        DateRange,
+                        {small, SegRange}
+                    ),
+                ReqID = erlang:phash2({self(), os:timestamp()}),
+                process_workitem(range_check, ReqID, os:timestamp()),
+                receive
+                    {ReqID, {clock_compare, N}} ->
+                        {[SegRange | NextLoopAcc], TotalRepairs + N};
+                    {ReqID, {tree_compare, 0}} ->
+                        ?LOG_DEBUG(
+                            "Single segment range complete in resync_bucket"
+                        ),
+                        {NextLoopAcc, TotalRepairs};
+                    {ReqID, Error} ->
+                        ?LOG_WARNING(
+                            "Unexpected result in resync_bucket ~0p",
+                            Error
+                        ),
+                        {[SegRange | NextLoopAcc], TotalRepairs}
+                after
+                    Timeout ->
+                        ?LOG_WARNING(
+                            "loop_resync has timeout ~w exceeeded",
+                            Timeout
+                        ),
+                        {NextLoopAcc, TotalRepairs}
+                end
+            end,
+            {[], 0},
+            SegRangeList
+        ),
+    ?LOG_INFO(
+        "Full loop completed"
+        " with repair_count=~w and unfixed_ranges=~w left to resolve"
+        " with loops_remaining=~w",
+        [LoopRepairs, length(UpdRangeList), Loops - 1]
+    ),
+    loop_resync(Bucket, KeyRange, DateRange, UpdRangeList, Timeout, Loops - 1).
+
+%% @doc
 %% Sync two clusters - return an updated loop state and a timeout
 -spec sync_clusters(pid(), integer()|no_reply,
                 nval(), nval(), tuple(), list()|undefined, work_scope(),
@@ -867,7 +1214,8 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                 fun(RepairList) ->
                     riak_kv_replrtq_src:replrtq_ttaaefs(
                         State#state.queue_name,
-                        RepairList),
+                        RepairList
+                    ),
                     RepairList
                 end,
             RemoteRepairFun =
@@ -913,9 +1261,6 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                     MaxResults,
                     {ReqID0, Ref, WorkType}),
 
-            ExchangePause =
-                app_helper:get_env(
-                    riak_kv, tictacaae_exchangepause, ?EXCHANGE_PAUSE_MS),
             {ok, ExPid, ExID} =
                 aae_exchange:start(
                     Ref,
@@ -924,13 +1269,7 @@ sync_clusters(From, ReqID, LNVal, RNVal, Filter, NextBucketList,
                     RepairFun,
                     ReplyFun,
                     Filter, 
-                    [
-                        {transition_pause_ms, ExchangePause},
-                        {max_results, MaxResults},
-                        {scan_timeout, ?CRASH_TIMEOUT div 2},
-                        {purpose, WorkType},
-                        {key_filter, KeyFilter}
-                    ]
+                    get_exchange_options(MaxResults, WorkType, KeyFilter)
                 ),
             
             ?LOG_INFO(
@@ -1737,5 +2076,53 @@ schedule_seconds_test() ->
         schedule_seconds(2, SliceNumber, 2, NodeCount, SliceCount),
     ?assertEqual(1500, SecsFromStartTime2).
 
+seglist_test() ->
+    CheckAllSegments =
+        fun(SL) ->
+            SFSL = lists:sort(lists:flatten(SL)),
+            Expected = lists:seq(0, 16#FFFF),
+            ?assertMatch(Expected, SFSL)
+        end,
+    LengthCheck =
+        fun(SL, ExpectedL) ->
+            ?assert(
+                lists:all(
+                    fun(SSL) -> length(SSL) == ExpectedL end,
+                    SL
+                )
+            )
+        end,
+    AlignmentCheck =
+        fun(SL, ExpectedL) ->
+            ?assert(
+                lists:all(
+                    fun(SSL) ->
+                        FL =
+                            lists:usort(
+                                lists:map(
+                                    fun(S) -> S band 16#7FFF end,
+                                    SSL
+                                )
+                            ),
+                        length(FL) == (ExpectedL div 2)
+                    end,
+                    SL
+                )
+            )
+        end,
+    SL1 = generate_seg_lists(1),
+    CheckAllSegments(SL1),
+    ?assertMatch(65536, length(SL1)),
+    LengthCheck(SL1, 1),
+    SL2 = generate_seg_lists(2),
+    CheckAllSegments(SL2),
+    ?assertMatch(32768, length(SL2)),
+    LengthCheck(SL2, 2),
+    AlignmentCheck(SL2, 2),
+    SL8 = generate_seg_lists(8),
+    CheckAllSegments(SL8),
+    ?assertMatch(8192, length(SL8)),
+    LengthCheck(SL8, 8),
+    AlignmentCheck(SL8, 8).
 
 -endif.

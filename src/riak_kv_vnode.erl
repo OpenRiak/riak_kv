@@ -234,9 +234,18 @@
     %% Best efforts (aka scavenger) pool.  
     %% Parallel AAE store rebuilds
 
-
--define(REAPER_BATCH_SIZE, 1024).
--define(ERASER_BATCH_SIZE, 1024).
+%% Larger batches are potentially more efficient, but as RingSize increases, a
+%% higher batch size will lead to more results being queued on the node
+%% coordinating the query rather than being distributed.
+%% 
+%% e.g. with RS = 1024 a result set of < 40K overall would all be queued
+%% on one node with a setting of 128.  This would be 320K with a setting of
+%% 1024.
+%% 
+%% This is a compromise, 1024 was used previously, but seeing result sets of
+%% o(100K) not being distributed was unexpected, so that has been reduced.
+-define(REAPER_BATCH_SIZE, 128).
+-define(ERASER_BATCH_SIZE, 128).
 
 -define(INIT_REBUILD_BLOCKTIME, 1000).
 
@@ -4578,11 +4587,22 @@ maybe_new_actor_epoch(IncomingObject, State=#state{counter=#counter_state{use=fa
     %% why would you risk this??
     {VId, State, IncomingObject};
 maybe_new_actor_epoch(IncomingObject, State=#state{vnodeid=VId}) ->
-    case highest_actor(VId, IncomingObject) of
-        {VId, 0, 0} ->
+    %% This disabling of new_actor_epoch amnesia handling is possible but not
+    %% recommended, or intended to be documented.  There may be extreme
+    %% scenarios e.g. where there are millions of tombstones that are
+    %% inconsistent between clusters, where disabling this protection is a
+    %% necessary compromise to allow for a more timely resolution of the delta
+    %% (as new actor handling would otherwise require the delta to be reflected
+    %% back to resolve - i.e. every tombstone would need to be sync'd twice)
+    ProtectionDisabled =
+        application:get_env(riak_kv, temp_disable_newactor_amnesia, false),
+    case {ProtectionDisabled, highest_actor(VId, IncomingObject)} of
+        {true, _} ->
+            {VId, State, IncomingObject};
+        {_, {VId, 0, 0}} ->
             %% This actor has not acted on this object
             {VId, State, IncomingObject};
-        {_InId, InEpoch, InCntr} ->
+        {_, {_InId, InEpoch, InCntr}} ->
             log_key_amnesia(VId, IncomingObject, InEpoch, InCntr, false),
             {EpochActor, State2} = new_key_epoch(State),
             Obj2 = riak_object:new_actor_epoch(IncomingObject, EpochActor),

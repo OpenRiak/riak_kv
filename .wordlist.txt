@@ -73,6 +73,7 @@ ttaaefs
 aaefold
 quickdocs
 keyname
+resync
 
 # Riak configuration terms
 cacert
@@ -199,6 +200,7 @@ af
 be
 ef
 config
+ETag
 
 # Erlang/OTP
 erlang
