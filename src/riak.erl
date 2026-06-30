@@ -26,7 +26,8 @@
 -export([client_connect/1,client_connect/2,
          client_test/1,
          local_client/0,local_client/1,
-         join/1]).
+         join/1,
+         deadmanshand_restart/0]).
 -export([code_hash/0]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -162,6 +163,25 @@ code_hash() ->
                          [C || {_, C, _} <- [code:get_object_code(M) || M <- AllMods]]
                         )),
     riak_core_util:integer_to_list(MD5Sum, 62).
+
+
+%% Helper function called from riak_admin_api_wm_ctl_cluster, as an
+%% action to initiate riak restart.  Actual restart (strictly, `riak
+%% stop` followed by `riak start`) is performed by an external script,
+%% run as a systemd service alongside riak. See
+%% rel/files/riak-deadmanshand.
+-spec deadmanshand_restart() -> ok.
+deadmanshand_restart() ->
+    P =
+        case lists:keyfind("RELEASE_PROG", 1, os:env()) of
+            {_, "/usr" ++ _} ->
+                "/run/riak/";
+            _ ->
+                ""
+        end,
+    _ = file:write_file(P ++ "RESTART_RIAK", <<>>),
+    ok.
+
 
 
 %%

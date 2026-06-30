@@ -52,7 +52,13 @@
         shuffle_list/1,
         kv_ready/0,
         ngr_initial_timeout/0,
-        sys_monitor_count/0
+        sys_monitor_count/0,
+        node_info_for_riak_control/0,
+        system_info/0,
+        collect_all_app_env/0,
+        apply_app_env/1,
+        get_advanced_config/0,
+        write_advanced_config/1
     ]).
 -export([report_hashtree_tokens/0, reset_hashtree_tokens/2]).
 -export([reset_aae_key_filter/0]).
@@ -750,6 +756,124 @@ sys_monitor_count() ->
         end,
         0, processes()
     ).
+
+
+
+
+%% @doc Return current nodes information, to be sent to riak_control
+%% over http (see riak_kv_wm_cluster)
+-spec node_info_for_riak_control() -> proplists:proplist().
+node_info_for_riak_control() ->
+    {Total, Used} = node_memory_usage(),
+    Handoffs = node_handoff_status(),
+    VNodes = riak_core_vnode_manager:all_vnodes(),
+    ErlangMemory = proplists:get_value(total,erlang:memory()),
+    [{reachable, true},
+     {mem_total, Total},
+     {mem_used, Used},
+     {mem_erlang, ErlangMemory},
+     {vnodes, VNodes},
+     {handoffs, Handoffs},
+     {system_info, system_info()}
+    ].
+
+node_memory_usage() ->
+    Mem = memsup:get_system_memory_data(),
+    Total = proplists:get_value(total_memory, Mem),
+    Free = proplists:get_value(free_memory, Mem),
+    Buffered =
+        case lists:keyfind(buffered_memory, 1, Mem) of
+            {_, BufferedMem} -> BufferedMem;
+            false -> 0
+        end,
+    Cached =
+        case lists:keyfind(cached_memory, 1, Mem) of
+            {_, CachedMem} -> CachedMem;
+            false -> 0
+        end,
+    {Total, Total - (Free + Cached + Buffered)}.
+
+format_transfer({status_v2, Handoff}) ->
+    Mod = proplists:get_value(mod, Handoff),
+    SrcPartition = proplists:get_value(src_partition, Handoff),
+    SrcNode = proplists:get_value(src_node, Handoff),
+    {Mod, SrcPartition, SrcNode}.
+
+node_handoff_status() ->
+    Transfers = riak_core_handoff_manager:status({direction, outbound}),
+    [format_transfer(T) || T <- lists:flatten(Transfers)].
+
+system_info() ->
+    {MS, _} = erlang:statistics(wall_clock),
+    St = MS div 1000,
+    S = St rem 60,
+    Mt = St div 60,
+    M = Mt rem 60,
+    Ht = Mt div 60,
+    H = Ht rem 24,
+    Dt = Ht div 24,
+    D = Dt,
+    Str = case {D, H, M} of
+              {A, _, _} when A > 0 -> io_lib:format("~b day~s, ~b hour~s, ~b minute~s, ~b sec", [D, s(D), H, s(H), M, s(M), S]);
+              {_, A, _} when A > 0 -> io_lib:format("~b hour~s, ~b minute~s, ~b sec", [H, s(H), M, s(M), S]);
+              {_, _, A} when A > 0 -> io_lib:format("~b minute~s, ~b sec", [M, s(M), S]);
+              _ -> io_lib:format("~b sec", [S])
+          end,
+    #{riak_version => list_to_binary(riak_version()),
+      system_version => list_to_binary(lists:droplast(erlang:system_info(system_version))),
+      nodename => node(),
+      uptime => St,
+      uptime_str => iolist_to_binary(Str)
+     }.
+
+s(1) -> "";
+s(_) -> "s".
+
+riak_version() ->
+    element(2, lists:keyfind("riak", 1, release_handler:which_releases())).
+
+-spec collect_all_app_env() -> proplists:proplist().
+collect_all_app_env() ->
+    Apps = [A || {A, _, _} <- application:which_applications()],
+    lists:filter(
+      fun({_, E}) -> E /= [] end,
+      [{App, application:get_all_env(App)} || App <- Apps]
+     ).
+
+-spec apply_app_env(proplists:proplist()) -> ok.
+apply_app_env(AppEE) ->
+    lists:map(
+      fun({App, EE}) ->
+              [application:set_env(App, K, V) || {K, V} <- EE]
+      end,
+      AppEE),
+    ok.
+
+-spec get_advanced_config() ->
+          {ok, proplists:proplist()} | {error, bad_config | file:posix() | badarg | terminated | system_limit}.
+get_advanced_config() ->
+    case file:consult(which_advanced_config()) of
+        {error, {_Line, _Mod, _Term} = FE} ->
+            ?LOG_WARNING("advanced.config is not consultable: ~s", [file:format_error(FE)]),
+            {error, bad_config};
+        {ok, [Config]} ->
+            {ok, Config};
+        Other ->
+            Other
+    end.
+
+-spec write_advanced_config(iolist()|binary()) ->
+          ok | {error, file:posix() | badarg | terminated | system_limit}.
+write_advanced_config(Blob) ->
+    file:write_file(which_advanced_config(), Blob).
+
+which_advanced_config() ->
+    case os:getenv("USER") of
+        "riak" ->
+            "/etc/riak/advanced.config";
+        _ ->
+            "etc/advanced.config"
+    end.
 
 
 %% ===================================================================
