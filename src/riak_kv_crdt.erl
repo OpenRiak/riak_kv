@@ -36,7 +36,6 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
 -include_lib("riak_kv_types.hrl").
 -include("riak_kv_capability.hrl").

@@ -52,19 +52,24 @@
                   vnodes.
 -type details() :: [detail()].
 
--type option() :: {r, pos_integer()} |         %% Minimum number of successful responses
-                  {pr, non_neg_integer()} |    %% Minimum number of primary vnodes participating
-                  {basic_quorum, boolean()} |  %% Whether to use basic quorum (return early
-                                               %% in some failure cases.
-                  {notfound_ok, boolean()}  |  %% Count notfound responses as successful.
-                  {timeout, pos_integer() | infinity} | %% Timeout for vnode responses
-                  {details, details()} |       %% Return extra details as a 3rd element
-                  {details, true} |
-                  details |
-                  {sloppy_quorum, boolean()} | %% default = true
-                  {n_val, pos_integer()} |     %% default = bucket props
-                  {crdt_op, true | undefined}. %% default = undefined
-
+-type option() :: 
+    {r, pos_integer()} |         %% Minimum number of successful responses
+    {pr, non_neg_integer()} |    %% Minimum number of primary vnodes participating
+    {basic_quorum, boolean()} |  %% Whether to use basic quorum (return early
+                                %% in some failure cases.
+    {notfound_ok, boolean()}  |  %% Count notfound responses as successful.
+    {timeout, pos_integer() | infinity} | %% Timeout for vnode responses
+    {details, details()} |       %% Return extra details as a 3rd element
+    {details, true} |
+    details |
+    {sloppy_quorum, boolean()} | %% default = true
+    {n_val, pos_integer()} |     %% default = bucket props
+    {crdt_op, true | undefined} | %% default = undefined
+    {node_confirms, non_neg_integer()} |
+    {deletedvclock, boolean()} |
+    {basic_quorum, boolean()} |
+    {return_body, boolean()}.
+                
 -type options() :: [option()].
 -type req_id() :: non_neg_integer().
 -type request_type() :: head | get | update.

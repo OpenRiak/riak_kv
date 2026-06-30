@@ -425,7 +425,7 @@ safe_decode(B64Ref) ->
         riak_kv_query_server:partial_result_map().
 encode_results(Results, RspCount, RcvCount, Complete, AccOpt) ->
     #{
-        riak_kv_wm_query:get_result_key(AccOpt) => Results,
+        riak_kv_ag_query:get_result_key(AccOpt) => Results,
         ?RSPCOUNT_KEY => RspCount,
         ?RCVCOUNT_KEY => RcvCount,
         ?QCOMPLETE_KEY => Complete
@@ -497,7 +497,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
     {ok, QFB, QFR} = unlink_new(RootPath, 2000, Bucket, AccOpt),
     ExpectedInitResult =
         #{
-            riak_kv_wm_query:get_result_key(AccOpt) => [],
+            riak_kv_ag_query:get_result_key(AccOpt) => [],
             ?RSPCOUNT_KEY => 0,
             ?RCVCOUNT_KEY => 0,
             ?QCOMPLETE_KEY => false
@@ -513,7 +513,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
     send_keys_in_batches(BatchSize, InitialKeys, QFB),
     ExpectedEmptyResult =
         #{
-            riak_kv_wm_query:get_result_key(AccOpt) => [],
+            riak_kv_ag_query:get_result_key(AccOpt) => [],
             ?RSPCOUNT_KEY => 0,
             ?RCVCOUNT_KEY => MaxCount div 2,
             ?QCOMPLETE_KEY => false
@@ -525,7 +525,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
     ?assertMatch(InitialKeys, InitialRsp),
     ExpectedHWResult =
         #{
-            riak_kv_wm_query:get_result_key(AccOpt) => [],
+            riak_kv_ag_query:get_result_key(AccOpt) => [],
             ?RSPCOUNT_KEY => MaxCount div 2,
             ?RCVCOUNT_KEY => MaxCount div 2,
             ?QCOMPLETE_KEY => false
@@ -548,7 +548,7 @@ fetch_all_tester(MaxCount, AccOpt) ->
     ?assertMatch(AllKeys, TotalRsp),
     ExpectedFinalResult =
         #{
-            riak_kv_wm_query:get_result_key(AccOpt) => [],
+            riak_kv_ag_query:get_result_key(AccOpt) => [],
             ?RSPCOUNT_KEY => MaxCount,
             ?RCVCOUNT_KEY => MaxCount,
             ?QCOMPLETE_KEY => true
@@ -585,7 +585,7 @@ fetch_keys_in_batches(MaxResults, Acc, QFR, Bucket, AccOpt) ->
     UpdAcc =
         lists:reverse(
             maps:get(
-                riak_kv_wm_query:get_result_key(AccOpt),
+                riak_kv_ag_query:get_result_key(AccOpt),
                 ResultMap
             )
         ) ++ Acc,

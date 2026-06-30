@@ -40,8 +40,6 @@
     ]
 ).
 
--include("riak_kv_wm_raw.hrl").
-
 -export([start/2, stop/1, get_status/0, to_report/1]).
 
 -export([first_partition/2, wait_for_aae_pid/2, wait_for_repair/3,

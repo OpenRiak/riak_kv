@@ -52,9 +52,7 @@
 -module(riak_kv_pb_object).
 
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
--include_lib("kernel/include/logger.hrl").
 -include("riak_kv_capability.hrl").
-
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
@@ -325,62 +323,18 @@ process(
             %% Don't return the key since we're not generating one
             ReturnKey = undefined
     end,
-    CondPutMode =
-        application:get_env(riak_kv, conditional_put_mode, api_only),
-    MakeTokenRequest = CondPutMode =/= api_only,
 
     {CheckResult, CondPutOpts, SessionToken} =    
-        case {IfNotModified, IfNoneMatch, MakeTokenRequest} of
-            {undefined, undefined, _} ->
-                {ok, [], none};
-            {NotMod, NoneMatch, true} ->
-                GetOpts =
-                    make_options(
-                        [
-                            {basic_quorum, true},
-                            {return_body, false},
-                            {deleted_vclock, true}
-                        ]),
-                TokenResult =
-                    riak_kv_token_session:session_request_retry({B, K}),
-                case TokenResult of
-                    {true, Token} ->
-                        Condition =
-                            case NotMod of
-                                undefined ->
-                                    {undefined, true, GetOpts};
-                                _ ->
-                                    InClock = erlify_rpbvc(PbVC),
-                                    {{true, InClock}, undefined, GetOpts}
-                            end,
-                        {ok, [{condition_check, Condition}], Token};
-                    _ ->
-                        ?LOG_WARNING(
-                            "Fallback to weak check as no token available "
-                            "for ~p ~p",
-                            [B, K]
-                        ),
-                        {CheckR, PutOpts} =
-                            riak_kv_put_fsm:conditional_check(
-                                riak_client:get(B, K, GetOpts, C),
-                                {NotMod, erlify_rpbvc(PbVC)},
-                                NoneMatch
-                            ),
-                        {CheckR, PutOpts, none}
-                end;
-            {NotMod, NoneMatch, false} ->
-                GetOpts =
-                    make_option(n_val, N_val) ++
-                    make_option(sloppy_quorum, SloppyQuorum) ++
-                    make_option(timeout, Timeout),
-                {CheckR, PutOpts} =
-                    riak_kv_put_fsm:conditional_check(
-                        riak_client:get(B, K, GetOpts, C),
-                        {NotMod, erlify_rpbvc(PbVC)},
-                        NoneMatch
-                    ),
-                {CheckR, PutOpts, none}
-        end,
+        riak_kv_put_core:ready_conditional_check(
+            IfNotModified,
+            IfNoneMatch,
+            undefined,
+            fun() -> erlify_rpbvc(PbVC) end,
+            B,
+            K,
+            C
+        ),
+    
     case CheckResult of
         {error, Reason} ->
             riak_kv_token_session:session_release(SessionToken),

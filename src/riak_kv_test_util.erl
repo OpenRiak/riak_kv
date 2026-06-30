@@ -296,10 +296,10 @@ dep_apps(Test, Extra) ->
             ok
     end,
     [
-        Silencer, exometer_core, runtime_tools,
-        mochiweb, webmachine, sidejob, poolboy, basho_stats, bitcask,
-        eleveldb, riak_core, riak_api, riak_dt, riak_pb,
-        riak_kv, DefaultSetupFun, Extra
+        sasl, Silencer, exometer_core, runtime_tools,
+        sidejob, poolboy, basho_stats, bitcask,
+        eleveldb, riak_core, riak_api, riak_dt, riak_pb, riak_kv,
+        DefaultSetupFun, Extra
     ].
 
 

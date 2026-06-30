@@ -50,7 +50,7 @@
          waiting_local_vnode/2,
          waiting_remote_vnode/2,
          postcommit/2, finish/2]).
--export([conditional_check/3]).
+-export([conditional_check/4]).
 
 -ifdef(TEST).
 -export([test_link/4]).
@@ -69,6 +69,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include("riak_kv_types.hrl").
 -include("riak_kv_capability.hrl").
+-include_lib("riak_kv/include/riak_object.hrl").
 
 -type detail_info() :: timing.
 -type detail() :: true |
@@ -312,7 +313,7 @@ prepare(timeout, State = #state{robj = RObj, options=Options}) ->
         case ConditionCheck of
             false ->
                 ok;
-            {NotMod, NoneMatch, GetOpts} ->
+            {NotMod, NoneMatch, IfMatch, GetOpts} ->
                 Key = riak_object:key(RObj),
                 {GetCheck, _PutOpts} =
                     riak_kv_put_fsm:conditional_check(
@@ -323,7 +324,8 @@ prepare(timeout, State = #state{robj = RObj, options=Options}) ->
                             riak_client:new(node(), condition_check)
                         ),
                         NotMod,
-                        NoneMatch
+                        NoneMatch,
+                        IfMatch
                     ),
                 GetCheck
         end,
@@ -1173,11 +1175,16 @@ get_soft_limit_option(Options) ->
 
 -spec conditional_check(
     {ok, riak_object:riak_object()}|{error, term()},
-    {boolean()|undefined, vclock:vclock()},
-    boolean()|undefined) -> {ok|{error, term()}, list()}. 
-conditional_check({ok, _}, _NotMod, NoneMatch) when NoneMatch ->
+    {true|undefined, vclock:vclock()},
+    true|undefined,
+    list(binary())|undefined
+) -> 
+    {ok|{error, term()}, list()}. 
+conditional_check({ok, _}, _NotMod, true, _IfMatch) ->
     {{error, "match_found"}, []};
-conditional_check({ok, PreFetchO}, {NotMod, InClock}, _NoneMatch) when NotMod ->
+conditional_check({error, notfound}, _NotMod, true, _IfMatch) ->
+    {ok, [{if_none_match, true}]};
+conditional_check({ok, PreFetchO}, {true, InClock}, _NoneMatch, _IfMatch) ->
     CurrClock = riak_object:vclock(PreFetchO),
     case vclock:equal(InClock, CurrClock) of
         true ->
@@ -1185,12 +1192,31 @@ conditional_check({ok, PreFetchO}, {NotMod, InClock}, _NoneMatch) when NotMod ->
         _ ->
             {{error, "modified"}, []}
     end;
-conditional_check({error, notfound}, _NotMod, NoneMatch) when NoneMatch ->
-    {ok, [{if_none_match, true}]};
-conditional_check({error, notfound}, {NotMod, _}, _NoneMatch) when NotMod ->
+conditional_check({error, notfound}, {true, _}, _NoneMatch, _IfMatch) ->
     {{error, "notfound"}, []};
-conditional_check({error, PreFetchError}, _NotMod, _NoneMatch) ->
+conditional_check({ok, PreFetch0}, _NotMod, _NoneMatch, IfMatch) when IfMatch =/= undefined ->
+    VTag =
+        case riak_object:get_metadatas(PreFetch0) of
+            [MD] ->
+                list_to_binary(riak_object:metadata_fetch(?MD_VTAG, MD));
+            Sibs when length(Sibs) > 1 ->
+                riak_kv_web_common:make_clock_etag(riak_object:vclock(PreFetch0))
+        end,
+    case
+        lists:member(
+            VTag,
+            lists:map(fun(IfM) -> string:trim(IfM, both, [$"]) end, IfMatch)
+        ) of
+        true ->
+            {ok, []};
+        false ->
+            {{error, not_matched}, []}
+    end;
+conditional_check({error, notfound}, _NotMod, _NoneMatch, IfMatch) when IfMatch =/= undefined ->
+    {{error, "modified"}, []};
+conditional_check({error, PreFetchError}, _NotMod, _NoneMatch, _IfMatch) ->
     {{error, {format, PreFetchError}}, []}.
+
 
 %% @private the local node is not in the preflist, or is overloaded,
 %% forward to another node

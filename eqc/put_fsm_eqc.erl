@@ -44,7 +44,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("include/riak_kv_vnode.hrl").
--include("../src/riak_kv_wm_raw.hrl").
+-include("include/riak_object.hrl").
 
 -define(REQ_ID, 1234).
 -define(DEFAULT_BUCKET_PROPS,

@@ -26,7 +26,6 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
--include("riak_kv_wm_raw.hrl").
 -include("riak_object.hrl").
 -include("riak_kv_capability.hrl").
 
@@ -42,7 +41,8 @@
         index_spec/0,
         riak_object_meta/0,
         old_object/0,
-        hook_old_object/0
+        hook_old_object/0,
+        repl_ref/0
     ]
 ).
 
@@ -106,6 +106,8 @@
 -type index_value() :: integer() | binary().
 -type index_spec() :: {index_op(), binary(), index_value()}.
 -type binary_version() :: v0 | v1.
+-type repl_ref() ::
+    {reap, {bucket(), key(), vclock:vclock(), erlang:timestamp()}}.
 
 -define(MAX_KEY_SIZE, 65536).
 
@@ -119,12 +121,11 @@
 -export([actor_counter/2]).
 -export([key/1, get_metadata/1, get_metadatas/1, get_values/1, get_value/1, get_dotted_values/1]).
 -export([hash/1, hash/2, hash/4, approximate_size/2, proxy_size/1]).
--export([vclock_encoding_method/0, vclock/1, vclock_header/1, encode_vclock/1, decode_vclock/1]).
+-export([vclock_encoding_method/0, vclock/1, encode_vclock/1, decode_vclock/1]).
 -export([encode_vclock/2, decode_vclock/2]).
 -export([update/5, update_value/2, update_metadata/2, bucket/1, bucket_only/1, type/1, value_count/1]).
 -export([get_update_metadata/1, get_update_value/1, get_contents/1]).
 -export([merge/2, apply_updates/1, syntactic_merge/2]).
--export([to_json/1, from_json/1]).
 -export([index_data/1, diff_index_data/2]).
 -export([index_specs/1, diff_index_specs/2]).
 -export([to_binary/2, from_binary/3, to_binary_version/4, binary_version/1]).
@@ -298,7 +299,11 @@ metadata_fetch(Key, MetaAsMap) when is_map(MetaAsMap) ->
 metadata_fetch(Key, Meta) ->
     dict:fetch(Key, Meta).
 
--spec metadata_find(metadata_key(), riak_object_meta()) -> metadata_value().
+-spec metadata_find(
+    metadata_key(),
+    riak_object_meta()
+) -> 
+    {ok, metadata_value()}|error.
 metadata_find(Key, MetaAsMap) when is_map(MetaAsMap) ->
     maps:find(Key, MetaAsMap);
 metadata_find(Key, Meta) ->
@@ -1232,26 +1237,6 @@ assemble_index_specs(Indexes, IndexOp) ->
 set_contents(Object=#r_object{}, MVs) when is_list(MVs) ->
     Object#r_object{contents=[#r_content{metadata=M,value=V} || {M, V} <- MVs]}.
 
--spec vclock_header(riak_object()) -> {Name::string(), Value::string()}.
-%% @doc Transform the Erlang representation of the document's vclock
-%%      into something suitable for an HTTP header
-vclock_header(Doc) ->
-    VClock = riak_object:vclock(Doc),
-    EncodedVClock = binary_to_list(base64:encode(encode_vclock(VClock))),
-    {?HEAD_VCLOCK, EncodedVClock}.
-
-%% @doc Converts a riak_object into its JSON equivalent
-%% @deprecated use `riak_object_json:encode' directly
--spec to_json(riak_object()) -> {struct, list(any())}.
-to_json(Obj) ->
-    ?LOG_WARNING("Change uses of riak_object:to_json/1 to riak_object_json:encode/1"),
-    riak_object_json:encode(Obj).
-
-%% @deprecated Use `riak_object_json:decode' now.
-from_json(JsonObj) ->
-    ?LOG_WARNING("Change uses of riak_object:from_json/1 to riak_object_json:decode/1"),
-    riak_object_json:decode(JsonObj).
-
 is_updated(_Object=#r_object{updatemetadata=M,updatevalue=V}) ->
     case metadata_find(clean, M) of
         error -> true;
@@ -1375,11 +1360,6 @@ to_binary_version(Vsn, _B, _K, Obj = #r_object{}) ->
 -spec binary_version(binary()) -> binary_version().
 binary_version(<<131,_/binary>>) -> v0;
 binary_version(<<?MAGIC:8/integer, 1:8/integer, _/binary>>) -> v1.
-
--type repl_ref() ::
-    {reap,
-        {riak_object:bucket(), riak_object:key(),
-            vclock:vclock(), erlang:timestamp()}}.
 
 %% @doc Encode for nextgen_repl
 -spec nextgenrepl_encode(

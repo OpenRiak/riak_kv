@@ -38,7 +38,8 @@
          upgrade_query/1,
          object_key_in_range/3,
          index_key_in_range/3,
-         add_timeout_opt/2
+         add_timeout_opt/2,
+         decode_continuation/1
         ]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -47,7 +48,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include("riak_kv_wm_raw.hrl").
+-include("riak_object.hrl").
 -include("riak_kv_index.hrl").
 -include("riak_kv_capability.hrl").
 -define(TIMEOUT, 30000).

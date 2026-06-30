@@ -12,8 +12,6 @@
                   riak_api,
                   riak_core,
                   sidejob,
-                  mochiweb,
-                  webmachine,
                   os_mon,
                   riak_dt,
                   riak_pb,

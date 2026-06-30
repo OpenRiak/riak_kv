@@ -240,9 +240,10 @@ start(_Type, _StartArgs) ->
 
             ok = riak_kv_cli_registry:register_cli(),
 
-            %% Add routes to webmachine
-            [ webmachine_router:add_route(R)
-              || R <- lists:reverse(riak_kv_web:dispatch_table()) ],
+            %% Add routes for web API
+            ok = riak_kv_web_common:add_routes(),
+            ok = riak_kv_web_common:compile_splitters(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
@@ -259,10 +260,10 @@ prep_stop(_State) ->
         ok = riak_api_pb_service:deregister(?SERVICES),
         ?LOG_INFO("Unregistered pb services"),
 
-        %% Gracefully unregister riak_kv webmachine endpoints.
-        [ webmachine_router:remove_route(R) || R <-
-            riak_kv_web:dispatch_table() ],
-        ?LOG_INFO("unregistered webmachine routes"),
+        %% Gracefully unregister riak_kv web endpoints.
+        %% TODO
+        
+
         wait_for_put_fsms(),
         ?LOG_INFO("all active put FSMs completed"),
         ok
