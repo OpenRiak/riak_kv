@@ -26,6 +26,8 @@
 
 -export([register_cli/0]).
 
+-export([get_aae_progress_report/0]).
+
 register_cli() ->
     register_all_usage(),
     register_all_commands().
@@ -499,7 +501,7 @@ treestatus_cmd([_, _, _], _, Options) ->
 get_aae_progress_report() ->
     VVSS =
         lists:append(
-          [case sys:get_state(P) of
+          [case sys:get_state(P, 30000) of
                {active, _CoreVnodeState =
                     {state, Idx, riak_kv_vnode, VSx, _, _, _, _, _, _, _, _}} ->
                    [{Idx, VSx}];
