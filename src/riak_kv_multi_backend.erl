@@ -371,11 +371,43 @@ is_empty(#state{backends=Backends}) ->
           end,
     lists:all(Fun, Backends).
 
-%% @doc Not currently supporting data size
+%% @doc Returns sum of data sizes from multiple backends, as long
+%% as those backends return the same type.
 %% @todo Come up with a way to reflect mixed backend data sizes,
 %% as level reports in bytes, bitcask in # of keys.
--spec data_size(state()) -> undefined.
-data_size(_) ->
+-spec data_size(state()) ->
+        undefined |
+        {non_neg_integer(), objects} |
+        {non_neg_integer(), bytes} |
+        {fun(() -> {non_neg_integer(), objects}|undefined), dynamic}.
+data_size(#state{backends=[]}) ->
+    undefined;
+data_size(#state{backends=Backends}) ->
+    data_size2([Mod:data_size(ModState) || {_N, Mod, ModState} <- Backends]).
+
+data_size2(DataSizes) ->
+    case hd(DataSizes) of
+        {_, CurrType} ->
+            data_size_acc(DataSizes, {0, CurrType});
+        _ -> undefined
+    end.
+
+data_size_acc([], Acc) ->
+    Acc;
+data_size_acc([undefined|_], _) ->
+    undefined;
+%% Update the accumulator's type from dynamic to whatever Val returns
+data_size_acc([{Val, _}|Tail], {CurrVal, dynamic}) when is_function(Val) ->
+    case Val() of
+        undefined -> undefined;
+        {_, NewType} = RetVal -> data_size_acc([RetVal|Tail], {CurrVal, NewType})
+    end;
+data_size_acc([{Val, _}|Tail], Acc) when is_function(Val) ->
+    data_size_acc([Val()|Tail], Acc);
+data_size_acc([{Val, Type}|Tail], {CurrVal, Type}) ->
+    data_size_acc(Tail, {CurrVal + Val, Type});
+%% This will primarily catch data_size_acc({_, Type}, {_, DiffType})
+data_size_acc(_, _) ->
     undefined.
 
 %% @doc Get the status information for this backend
@@ -817,6 +849,83 @@ async_fold_config() ->
     ].
 
 -endif. % EQC
+
+data_size_test_() ->
+    [{timeout, 1, fun data_size_returns_undefined_when_no_backends_exist/0},
+     {timeout, 1, fun dynamic_data_size_returns/0},
+     {timeout, 1, fun bitcask_data_size_returns/0},
+     {timeout, 4, fun mixed_data_sizes_return_undefined/0},
+     {timeout, 1, fun data_size2_accumulates_correctly/0}
+    ].
+
+%% This should not be possible because it's impossible to start
+%% a multi-backend without any back-ends configured.
+data_size_returns_undefined_when_no_backends_exist() ->
+    ?assertEqual(undefined, riak_kv_multi_backend:data_size(#state{backends=[]})),
+    ok.
+
+dynamic_data_size_returns() ->
+    Partition = 1,
+    Config = [
+     {storage_backend, riak_kv_multi_backend},
+     {multi_backend_default, second_backend},
+     {multi_backend, [
+                      {first_backend, riak_kv_memory_backend, []},
+                      {second_backend, riak_kv_memory_backend, []}
+                     ]}
+    ],
+
+    {ok, State} = riak_kv_multi_backend:start(Partition, Config),
+    ?assertEqual({0, objects}, riak_kv_multi_backend:data_size(State)),
+    stop(State).
+
+bitcask_data_size_returns() ->
+    BPath = riak_core_test_util:get_test_dir("bitcask-backend"),
+
+    application:load(bitcask),
+    ?assertCmd("rm -rf " ++ BPath ++ "/*"),
+    application:set_env(bitcask, data_root, BPath),
+
+    Partition = 1,
+    Config = [
+     {storage_backend, riak_kv_multi_backend},
+     {multi_backend_default, second_backend},
+     {multi_backend, [
+                      {first_backend, riak_kv_bitcask_backend, []},
+                      {second_backend, riak_kv_bitcask_backend, []}
+                     ]}
+    ],
+
+    {ok, State} = riak_kv_multi_backend:start(Partition, Config),
+    ?assertEqual({0, objects}, riak_kv_multi_backend:data_size(State)),
+    stop(State).
+
+mixed_data_sizes_return_undefined() ->
+    BPath = riak_core_test_util:get_test_dir("bitcask-backend"),
+
+    application:load(bitcask),
+    ?assertCmd("rm -rf " ++ BPath ++ "/*"),
+    application:set_env(bitcask, data_root, BPath),
+
+    Partition = 1,
+    Config = [
+     {storage_backend, riak_kv_multi_backend},
+     {multi_backend_default, second_backend},
+     {multi_backend, [
+                      {first_backend, riak_kv_eleveldb_backend, []},
+                      {second_backend, riak_kv_bitcask_backend, []}
+                     ]}
+    ],
+
+    {ok, State} = riak_kv_multi_backend:start(Partition, Config),
+    ?assertEqual(undefined, riak_kv_multi_backend:data_size(State)),
+    stop(State).
+
+data_size2_accumulates_correctly() ->
+    Nums = [100, 200, 300],
+    DataType = object,
+    DataSizes = lists:map(fun(N) -> {N, DataType} end, Nums),
+    ?assertEqual(data_size2(DataSizes), {lists:sum(Nums), DataType}).
 
 %% Check extra callback messages are ignored by backends
 extra_callback_test() ->
