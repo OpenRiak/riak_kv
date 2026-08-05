@@ -37,8 +37,8 @@
 
 %% API
 -export([start_link/0,
-         update/1, perform_update/1, register_stats/0, unregister_vnode_stats/1, produce_stats/0,
-         leveldb_read_block_errors/0, stat_update_error/3, stop/0]).
+         update/1, perform_update/1, register_stats/0, register_backend_stat/3, unregister_vnode_stats/1,
+         produce_stats/0, leveldb_read_block_errors/0, stat_update_error/3, stop/0]).
 -export([track_bucket/1, untrack_bucket/1]).
 -export([active_gets/0, active_puts/0]).
 -export([value/1]).
@@ -71,6 +71,15 @@ unregister_vnode_stats(Index) ->
 register_stat(Name, Type) ->
     do_register_stat(Name, Type).
 %% gen_server:call(?SERVER, {register, Name, Type}).
+
+register_backend_stat(BackendInstanceName, MetricName, MetricType) ->
+    P = riak_core_stat:prefix(),
+    Name = [P, ?APP, MetricName, BackendInstanceName],
+    AliasName0 = lists:concat(lists:join("_", [BackendInstanceName, MetricName])),
+    AliasName = list_to_atom(AliasName0),
+    exometer:re_register(Name, MetricType, [
+        {aliases, [{value, AliasName}]}
+    ]).
 
 update(Arg) ->
     maybe_dispatch_to_sidejob(erlang:module_loaded(riak_kv_stat_sj), Arg).
@@ -359,6 +368,9 @@ do_update({controller_queue, QueueTime}) ->
     ok = create_or_update([?PFX, ?APP, tictacaae_controller_queue], QueueTime, histogram);
 do_update(write_once_merge) ->
     exometer:update([?PFX, ?APP, write_once_merge], 1);
+do_update({BackendInstanceName, {expired_keys, NumKeys, Bytes}}) ->
+    exometer:update([?PFX, ?APP, expired_keys, BackendInstanceName], NumKeys),
+    exometer:update([?PFX, ?APP, expired_bytes, BackendInstanceName], Bytes);
 do_update({fsm_spawned, Type}) when Type =:= gets; Type =:= puts ->
     exometer:update([?PFX, ?APP, node, Type, fsm, active], 1);
 do_update({fsm_exit, Type}) when Type =:= gets; Type =:= puts  ->
@@ -532,7 +544,6 @@ do_put_bucket(true, {Bucket, Microsecs, Stages, Type}=Args) ->
 	    do_put_bucket(true, Args)
     end.
 
-
 %% Path is list that provides a conceptual path to a stat
 %% folsom uses the tuple as flat name
 %% but some ets query magic means we can get stats by APP, Stat, DimensionX
@@ -565,8 +576,8 @@ do_repairs(Preflist) ->
 create_or_update(Name, UpdateVal, Type) ->
     exometer:update_or_create(Name, UpdateVal, Type, []).
 
-%% @doc list of {Name, Type} for static
-%% stats that we can register at start up
+%% @doc list of {Name, Type, Options, Aliases} for stats
+%% that we can register at start up
 stats() ->
     Pfx = riak_core_stat:prefix(),
 
