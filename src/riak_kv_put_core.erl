@@ -35,7 +35,7 @@
                   {dw, riak_object:riak_object()} |
                   {error, any()}.
 
--type reply() :: ok | 
+-type reply() :: ok |
                  {ok, riak_object:riak_object()} |
                  {error, notfound} |
                  {error, any()}.
@@ -81,7 +81,7 @@ init(N, W, PW, NodeConfirms, DW, AllowMult, ReturnBody, IdxType) ->
              returnbody = ReturnBody,
              idx_type = IdxType}.
 
-%% @priv
+%% @private
 -spec calculate_fail_threshold(pos_integer(), non_neg_integer()) -> non_neg_integer().
 calculate_fail_threshold(N, Q) ->
     N-Q+1.
@@ -176,7 +176,7 @@ check_overload(Response, PutCore = #putcore{results=Results}) ->
 %% Get final value - if returnbody did not need the result it allows delaying
 %% running reconcile until after the client reply is sent.
 -spec final(putcore()) -> {riak_object:riak_object()|undefined, putcore()}.
-final(PutCore = #putcore{final_obj = FinalObj, 
+final(PutCore = #putcore{final_obj = FinalObj,
                          results = Results, allowmult = AllowMult}) ->
     case FinalObj of
         undefined ->

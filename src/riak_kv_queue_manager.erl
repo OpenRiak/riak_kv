@@ -69,7 +69,7 @@
 %% - Redo Timeout
 %% - Queue Limit
 %% - Overflow Limit
-%% The redo timeout is a backoff (in ms) to be used when `redo() = true` and
+%% The redo timeout is a backoff (in ms) to be used when `redo() = true' and
 %% applying the action function to a reference has resulted in abort. No
 %% further work will be applied until the timeout has expired (i.e. wait for
 %% the fault to potentially clear).
@@ -82,12 +82,12 @@
 %% The queue manager needs to define an action function to be applied to the
 %% queued references.  The action function takes as inputs the reference, and
 %% also a redo boolean().
-%% A redo value of `true` is used to indicate that the function should
+%% A redo value of `true' is used to indicate that the function should
 %% validate pre-requisites for successful completion before applying the
-%% action - and report an abort (i.e. responding `false`) on failure, in order
+%% action - and report an abort (i.e. responding `false') on failure, in order
 %% for a redo of the queued item to be performed.
-%% With a redo value of `false` the action should be performed, and always
-%% respond `true`, and hence no redo will be triggered. 
+%% With a redo value of `false' the action should be performed, and always
+%% respond `true', and hence no redo will be triggered.
 
 -callback redo() -> boolean().
 %% A callback function to return the default value of the redo boolean() to be
@@ -217,14 +217,14 @@ handle_cast({request, Reference, Priority}, State) ->
 
 handle_info(timeout, State) ->
     Mod = State#state.callback_mod,
-    ActionFun = 
+    ActionFun =
         case State#state.action_fun of
             none ->
                 fun(Ref) -> Mod:action(Ref, State#state.redo) end;
             OverrideActionFun ->
                 fun(Ref) -> OverrideActionFun(Ref, State#state.redo) end
         end,
-    RequeueFun = 
+    RequeueFun =
         fun(Ref) ->
             gen_server:cast(self(), {request, Ref, ?REDO_PRIORITY})
         end,
@@ -282,7 +282,7 @@ create_queue(RootPath, Module)->
         riak_kv_overflow_queue:new(
             ?PRIORITY_LIST, RootPath, QueueLimit, OverflowLimit),
     {OverflowQueue, RedoTimeout}.
-    
+
 
 %%%============================================================================
 %%% Unit tests

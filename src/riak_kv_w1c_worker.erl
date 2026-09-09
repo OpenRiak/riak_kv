@@ -20,7 +20,7 @@
 
 -behaviour(gen_server).
 
--compile({nowarn_deprecated_function, 
+-compile({nowarn_deprecated_function,
             [{gen_fsm, send_event, 2}]}).
 
 
@@ -75,7 +75,7 @@ workers() ->
 start_link(Name) ->
     gen_server:start_link({local, Name}, ?MODULE, [], []).
 
-%% @spec put(RObj :: riak_object:riak_object(), riak_object:options(), riak_object:riak_client()) ->
+%% @spec put(RObj :: riak_object:riak_object(), riak_object:options()) ->
 %%        ok |
 %%       {error, timeout} |
 %%       {error, term()}
