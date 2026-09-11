@@ -525,33 +525,22 @@ calc_mean(Time, Count) ->
 %% Optionally the tokenised string may include a queue name, if more than the
 %% default queue name is to be used.  The queue name should be a prefix e.g.:
 %% "q1_ttaaefs:192.168.10.1:8097:pb|passive:192.168.10.2:8097:pb etc"
--spec tokenise_peers(queue_name(), string())
-                        -> list({queue_name(), list(peer_info())}).
+-spec tokenise_peers(
+    queue_name(), string()) -> list({queue_name(), list(peer_info())}).
 tokenise_peers(DefaultQueue, PeersString) ->
     PeerL0 = string:tokens(PeersString, "|"),
     SplitHostPortFun =
         fun(PeerString, Acc) ->
-            {QueueName, Host, Port, Protocol} =
-                case string:tokens(PeerString, ":") of
+            PeerDetails =
+                case split_peerstring(PeerString) of
                     [H, P, ProtStr] ->
                         format_peer(DefaultQueue, H, P, ProtStr);
                     [QN, H, P, ProtStr] ->
-                        format_peer(list_to_atom(QN), H, P, ProtStr)
+                        format_peer(list_to_atom(QN), H, P, ProtStr);
+                    Unexpected ->
+                        Unexpected
                 end,
-            case lists:keytake(QueueName, 1, Acc) of
-                {value, {QueueName, PeerList}, Acc0} ->
-                    Peer =
-                        {length(PeerList) + 1,
-                            ?STARTING_DELAYMS,
-                            Host, Port, Protocol},
-                    lists:ukeysort(1, [{QueueName, PeerList ++ [Peer]}|Acc0]);
-                false ->
-                    Peer =
-                        {1,
-                            ?STARTING_DELAYMS,
-                            Host, Port, Protocol},
-                    lists:ukeysort(1, [{QueueName, [Peer]}|Acc])
-            end
+            accumulate_peer(PeerDetails, Acc)
         end,
     lists:foldl(SplitHostPortFun, [], PeerL0).
 
@@ -560,6 +549,49 @@ format_peer(QN, H, P, "http") ->
 format_peer(QN, H, P, "pb") ->
     {QN, H, list_to_integer(P), pb}.
 
+-spec accumulate_peer(
+    {atom(), string(), pos_integer(), pb|http}|{error, string()},
+    list({queue_name(), list(peer_info())})) ->
+        list({queue_name(), list(peer_info())}).
+accumulate_peer({QueueName, Host, Port, Protocol}, Acc) ->
+    case lists:keytake(QueueName, 1, Acc) of
+        {value, {QueueName, PeerList}, Acc0} ->
+            Peer =
+                {length(PeerList) + 1,
+                    ?STARTING_DELAYMS,
+                    Host, Port, Protocol},
+            lists:ukeysort(1, [{QueueName, PeerList ++ [Peer]}|Acc0]);
+        false ->
+            Peer =
+                {1,
+                    ?STARTING_DELAYMS,
+                    Host, Port, Protocol},
+            lists:ukeysort(1, [{QueueName, [Peer]}|Acc])
+    end;
+accumulate_peer(_, Acc) ->
+    Acc.
+
+-spec split_peerstring(string()) -> list(string()) | {error, string()}.
+split_peerstring(PeerString) ->
+    try
+        [PreProtcString, Protc] = string:split(PeerString, ":", trailing),
+        [PrePortString, Port] = string:split(PreProtcString, ":", trailing),
+        case inet:parse_address(PrePortString) of
+            {ok, _} ->
+                [PrePortString, Port, Protc];
+            {error, _} ->
+                [QueueName, Address] = string:split(PrePortString, ":", leading),
+                {ok, _} = inet:parse_address(Address),
+                [QueueName, Address, Port, Protc]
+        end
+    catch
+        _Type:Exception:_Stk ->
+            ?LOG_WARNING(
+                "Failed to parse peer string ~s due to ~0p",
+                [PeerString, Exception]
+            ),
+            {error, "Parse error"}
+    end.
 
 %% @doc
 %% Calculates the queue of work items and the minimum length of queue to be
@@ -952,6 +984,31 @@ tokenise_test() ->
         % time
     ?assertMatch([{qa, [Peer1B]}, {qb, [Peer2B, Peer3B]}],
                     tokenise_peers(qa, String2)).
+
+tokenise_ipv6_test() ->
+    String1 =
+        "active:::1:12008:http|"
+        "active:6b27:97f5:8fb8:5b22:062a:1d99:e28a:190a:12009:pb|"
+        "active:127.0.0.1:12009:pb|"
+        "active:1270~1:12010:pb|" % invalid
+        "127.0.0.1:12011:pb|" % no queue name
+        "::1:12012:pb",
+    Peer1A = {1, ?STARTING_DELAYMS, "::1", 12008, http},
+    Peer2A =
+        {
+            2,
+            ?STARTING_DELAYMS,
+            "6b27:97f5:8fb8:5b22:062a:1d99:e28a:190a",
+            12009,
+            pb
+        },
+    Peer3A = {3, ?STARTING_DELAYMS, "127.0.0.1", 12009, pb},
+    Peer4A = {1, ?STARTING_DELAYMS, "127.0.0.1", 12011, pb},
+    Peer5A = {2, ?STARTING_DELAYMS, "::1", 12012, pb},
+    ?assertMatch(
+        [{active, [Peer1A, Peer2A, Peer3A]}, {q1_ttaaefs, [Peer4A, Peer5A]}],
+        tokenise_peers(q1_ttaaefs, String1)
+    ).
 
 determine_workitems_test() ->
     Peer1 = {1, ?STARTING_DELAYMS, "127.0.0.1", 12008, http},
