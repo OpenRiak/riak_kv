@@ -1529,7 +1529,8 @@
 %% src.  All src nodes will need to have entries consumed - so it is
 %% recommended that each src node is referred to in multiple sink node
 %% configurations.
-%% The list of peers is tokenised as host:port:protocol
+%% The list of peers is tokenised as host:port:protocol - with host required
+%% to be an IP address.
 %% In exceptional circumstances this definition can be extended to
 %% queuename:host:port:protocol - but restricting the definitions of queuename
 %% to the single queue specified in replrtq_sinkqueue is strongly recommended.
