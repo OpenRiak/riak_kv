@@ -259,7 +259,7 @@ peers_gen() ->
     ?LET(N, choose(1, 8), peers_gen(N)).
 
 peers_gen(N) ->
-    vector(N, {{url(), ?LET(P, nat(), P + 8000), http}, peer_config_gen()}).
+    vector(N, {{ip(), ?LET(P, nat(), P + 8000), http}, peer_config_gen()}).
 
 elements_or([], Other) -> Other;
 elements_or(Xs, Other) -> weighted_default({4, elements(Xs)}, {1, Other}).
@@ -270,11 +270,18 @@ maybe_active_queue_gen(S) ->
 maybe_suspended_queue_gen(S) ->
     elements_or(suspended_sinks(S), elements(queue_names())).
 
-url() ->
+ip() ->
     noshrink(
-    ?LET({[Name], Suf}, {eqc_erlang_program:words(1),
-                         elements(["com", "org", "co.uk", "edu", "de"])},
-    return(Name ++ "." ++ Suf))).
+        ?LET(
+            {A, B, C, D},
+            {choose(1, 127), choose(1, 127), choose(1, 127), choose(1, 127)},
+            return(
+                integer_to_list(A) ++ "." ++ 
+                integer_to_list(B) ++ "." ++
+                integer_to_list(C) ++ "." ++
+                integer_to_list(D))
+        )
+    ).
 
 peer_config_gen() ->
     {frequency([{7, active}, {2, inactive}, {1, error}]),
