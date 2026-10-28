@@ -667,7 +667,7 @@ multi_backend_test_() ->
     BPath = riak_core_test_util:get_test_dir("bitcask-backend"),
     {foreach,
      fun() ->
-             crypto:start(),
+             application:start(crypto),
 
              %% start the ring manager
              {ok, P1} = riak_core_ring_events:start_link(),
@@ -683,7 +683,7 @@ multi_backend_test_() ->
              [P1, P2]
      end,
      fun([P1, P2]) ->
-             crypto:stop(),
+             application:stop(crypto),
              ?assertCmd("rm -rf " ++ BPath ++ "/*"),
              unlink(P1),
              unlink(P2),
@@ -779,7 +779,7 @@ prop_multi_backend_async_fold() ->
 
 setup() ->
     %% Start the ring manager...
-    crypto:start(),
+    application:start(crypto),
     CDPath = riak_core_test_util:get_test_dir("core/data"),
     CLPath = riak_core_test_util:get_test_dir("core/log"),
     application:set_env(riak_core, platform_data_dir, CDPath),
@@ -795,7 +795,7 @@ setup() ->
     riak_core_bucket:set_bucket(<<"b2">>, [{backend, second_backend}]),
 
     fun() ->
-            crypto:stop(),
+            application:stop(crypto),
             application:stop(riak_core),
 
             unlink(P1),

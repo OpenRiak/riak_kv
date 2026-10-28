@@ -838,7 +838,7 @@ deleted_test() ->
     true = is_x_deleted(O1).
 
 make_vtag_test() ->
-    crypto:start(),
+    application:start(crypto),
     ?assertNot(make_vtag(os:timestamp()) =:=
                make_vtag(os:timestamp())).
 
