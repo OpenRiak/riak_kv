@@ -26,6 +26,22 @@
 -module(riak_kv_put_fsm).
 -behaviour(gen_fsm).
 
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, start_link, 3},
+            {gen_fsm, start, 3},
+            {gen_fsm, sync_send_event, 2},
+            {gen_fsm, sync_send_event, 3},
+            {gen_fsm, send_event, 2},
+            {gen_fsm, sync_send_all_state_event, 2},
+            {gen_fsm, sync_send_all_state_event, 3},
+            {gen_fsm, send_all_state_event, 2},
+            {gen_fsm, reply, 2},
+            {gen_fsm, send_event_after, 2},
+            {gen_fsm, cancel_timer, 1}]
+          },
+          nowarn_deprecated_callback
+         ]).
+
 -export([start/3,start/6,start/7]).
 -export([start_link/3,start_link/6,start_link/7]).
 -export([set_put_coordinator_failure_timeout/1,
@@ -43,11 +59,6 @@
 -endif.
 
 -export_type([option/0, options/0, detail/0, detail_info/0]).
-
--compile({nowarn_deprecated_function, [
-    {gen_fsm, start_link, 3},
-    {gen_fsm, send_event, 2}
-]}).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

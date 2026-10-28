@@ -21,11 +21,21 @@
 -module(riak_kv_exchange_fsm).
 -behaviour(gen_fsm).
 
--compile({nowarn_deprecated_function, 
-            [{gen_fsm, start, 3},
-                {gen_fsm, send_event, 2},
-                {gen_fsm, send_event_after, 2},
-                {gen_fsm, cancel_timer, 1}]}).
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, start_link, 3},
+            {gen_fsm, start, 3},
+            {gen_fsm, sync_send_event, 2},
+            {gen_fsm, sync_send_event, 3},
+            {gen_fsm, send_event, 2},
+            {gen_fsm, sync_send_all_state_event, 2},
+            {gen_fsm, sync_send_all_state_event, 3},
+            {gen_fsm, send_all_state_event, 2},
+            {gen_fsm, reply, 2},
+            {gen_fsm, send_event_after, 2},
+            {gen_fsm, cancel_timer, 1}]
+          },
+          nowarn_deprecated_callback
+         ]).
 
 %% API
 -export([start/5]).
