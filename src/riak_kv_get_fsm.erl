@@ -25,6 +25,23 @@
 %%
 -module(riak_kv_get_fsm).
 -behaviour(gen_fsm).
+
+-compile([{nowarn_deprecated_function,
+           [{gen_fsm, start_link, 3},
+            {gen_fsm, start, 3},
+            {gen_fsm, sync_send_event, 2},
+            {gen_fsm, sync_send_event, 3},
+            {gen_fsm, send_event, 2},
+            {gen_fsm, sync_send_all_state_event, 2},
+            {gen_fsm, sync_send_all_state_event, 3},
+            {gen_fsm, send_all_state_event, 2},
+            {gen_fsm, reply, 2},
+            {gen_fsm, send_event_after, 2},
+            {gen_fsm, cancel_timer, 1}]
+          },
+          nowarn_deprecated_callback
+         ]).
+
 -export([start/6, start_link/6, start/4, start_link/4]).
 -export([init/1, handle_event/3, handle_sync_event/4,
          handle_info/3, terminate/3, code_change/4]).
@@ -144,9 +161,6 @@ start_link(From, Bucket, Key, GetOptions) -> start(From, Bucket, Key, GetOptions
 %% ===================================================================
 
 -ifdef(TEST).
-
--compile({nowarn_deprecated_function, 
-            [{gen_fsm, start_link, 3}]}).
 
 %% Create a get FSM for testing.  StateProps must include
 %% starttime - start time in gregorian seconds
