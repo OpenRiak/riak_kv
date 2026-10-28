@@ -31,7 +31,7 @@
         handle_info/2,
         terminate/2,
         code_change/3,
-        format_status/2]).
+        format_status/1]).
 
 -export(
     [
@@ -258,10 +258,18 @@ handle_info(log_queue, State) ->
     erlang:send_after(?LOG_TICK, self(), log_queue),
     {noreply, State#state{attempts = 0, aborts = 0, queue = UpdQueue}, 0}.
 
-format_status(normal, [_PDict, S]) ->
-    S;
-format_status(terminate, [_PDict, S]) ->
-    S#state{queue = riak_kv_overflow_queue:format_state(S#state.queue)}.
+format_status(Status) ->
+    case maps:get(reason, Status, normal) of
+        terminate ->
+            State = maps:get(state, Status),
+            maps:update(
+              state,
+              State#state{queue = riak_kv_overflow_queue:format_state(
+                                    State#state.queue)},
+              Status);
+        normal ->
+            Status
+    end.
 
 terminate(_Reason, State) ->
     riak_kv_overflow_queue:close(State#state.file_path, State#state.queue),
@@ -292,14 +300,21 @@ create_queue(RootPath, Module)->
 -ifdef(TEST).
 
 format_status_test() ->
+    StateFromSysStatus =
+        fun({status, _Pid, {module, gen_server}, SItemL}) ->
+                SItemL_data = lists:nth(5, SItemL),
+                {data, [{"State", S}]} = lists:nth(3, SItemL_data),
+                S
+        end,
+
     RootPath = riak_core_test_util:get_test_dir("reaper_format_status"),
     {ok, P} = start_job(1, riak_kv_reaper, RootPath),
-    {status, P, {module, gen_server}, SItemL} = sys:get_status(P),
-    S = lists:keyfind(state, 1, lists:nth(5, SItemL)),
-    MQ = riak_kv_overflow_queue:get_mqueue(S#state.queue),
+    S_n = StateFromSysStatus(sys:get_status(P)),
+
+    MQ = riak_kv_overflow_queue:get_mqueue(S_n#state.queue),
     ?assertNotMatch(not_logged, MQ),
-    ST = format_status(terminate, [dict:new(), S]),
-    MQT = riak_kv_overflow_queue:get_mqueue(ST#state.queue),
+    #{state := S_t} = format_status(#{reason => terminate, state => S_n}),
+    MQT = riak_kv_overflow_queue:get_mqueue(S_t#state.queue),
     ?assertMatch(not_logged, MQT),
     ok = stop_job(P).
 
