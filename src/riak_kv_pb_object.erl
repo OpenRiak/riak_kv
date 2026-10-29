@@ -275,6 +275,10 @@ process(#rpbpushreq{queuename = QueueNameBin, keys_value = KVL}, State) ->
                 State}
     end;
 
+process(#rpbmembershipreq{}, State) ->
+    % The queuename field does not change the answer: membership is that of
+    % the cluster.  A request without fields decodes to the bare atom.
+    process(rpbmembershipreq, State);
 process(rpbmembershipreq, State) ->
     MembershipList =
         lists:map(
@@ -661,6 +665,21 @@ empty_bucket_key_test_() ->
       {"RpbGetReq with empty bucket is disallowed",
        ?_assertMatch([0|_], request(#rpbgetreq{bucket = <<>>,
                                                key = <<"foo">>}))}]}.
+
+membership_request_test_() ->
+    Name = "membership_request_test",
+    SetupFun =  fun (load) ->
+                        application:set_env(riak_kv, storage_backend, riak_kv_memory_backend),
+                        application:set_env(riak_api, pb_ip, "127.0.0.1"),
+                        application:set_env(riak_api, pb_port, 32767);
+                    (_) -> ok end,
+    {setup,
+     riak_kv_test_util:common_setup(Name, SetupFun),
+     riak_kv_test_util:common_cleanup(Name, SetupFun),
+     [{"RpbMembershipReq without a body is answered",
+       ?_assertMatch([207|_], request(?CODE(rpbmembershipreq), <<>>))},
+      {"RpbMembershipReq with a queuename is answered",
+       ?_assertMatch([207|_], request(#rpbmembershipreq{queuename = <<"q">>}))}]}.
 
 %% Utility funcs copied from riak_api/test/pb_service_test.erl
 
