@@ -247,6 +247,19 @@ handle_info(
             vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor)}
     };
 handle_info(
+    {{ReqID, Vnode}, {From, _B, {terms, []}}},
+    #state{req_id = ReqID, max_results = MR} = State)
+        when is_integer(MR) ->
+    % A vnode flushes its buffer when its fold completes, so a batch may be
+    % empty.  It adds nothing, and gives no last result to compare with the
+    % current candidates, so it is only acknowledged.
+    riak_kv_vnode:ack_keys(From),
+    {
+        noreply,
+        State#state{
+            vnode_monitor = update_monitor(Vnode, State#state.vnode_monitor)}
+    };
+handle_info(
     {{ReqID, Vnode}, {From, _B, {AccOpt, Results}}}, 
     #state{req_id = ReqID, result_table = none, max_results = MR} = State)
         when AccOpt == terms, is_integer(MR) ->
@@ -722,5 +735,44 @@ buffer_size_test() ->
     ?assertMatch({320, 160}, calculate_buffer_size(171, unlimited)),
     ?assertMatch({16, 8}, calculate_buffer_size(171, 1000)),
     ?assertMatch({29, 14}, calculate_buffer_size(171, 10000)).
+
+%% A vnode flushes its buffer when its fold finishes, so a vnode without
+%% further matches sends an empty batch. With max_results reached (in the
+%% list accumulator or the ETS table) such a batch must be acknowledged and
+%% leave the results unchanged.
+empty_terms_batch_state(ResultTable, Acc) ->
+    #state{
+        req_id = empty_batch_req,
+        vnode_monitor = #{{0, node()} => 0, {1, node()} => 0},
+        acc = Acc,
+        max_results = 2,
+        result_table = ResultTable
+    }.
+
+empty_terms_batch(State) ->
+    Ref = make_ref(),
+    Vnode = {1, node()},
+    Msg = {{empty_batch_req, Vnode}, {{self(), Ref}, <<"B">>, {terms, []}}},
+    {noreply, UpdState} = handle_info(Msg, State),
+    Acked = receive {Ref, ok} -> true after 1000 -> false end,
+    ?assert(Acked),
+    ?assertMatch(#{Vnode := 1}, UpdState#state.vnode_monitor),
+    UpdState.
+
+empty_terms_batch_list_test() ->
+    Results = [{{<<"t1">>, <<"k1">>}}, {{<<"t2">>, <<"k2">>}}],
+    UpdState =
+        empty_terms_batch(
+            empty_terms_batch_state(none, #list_acc{results = Results})),
+    ?assertMatch(#list_acc{results = Results}, UpdState#state.acc),
+    ?assertMatch(none, UpdState#state.result_table).
+
+empty_terms_batch_table_test() ->
+    Table = ets:new(query_results, [?DBTYPE_KEYS, private]),
+    true = ets:insert(Table, [{{<<"t1">>, <<"k1">>}}, {{<<"t2">>, <<"k2">>}}]),
+    UpdState = empty_terms_batch(empty_terms_batch_state(Table, #list_acc{})),
+    ?assertMatch(Table, UpdState#state.result_table),
+    ?assertMatch(2, ets:info(Table, size)),
+    ets:delete(Table).
 
 -endif.
