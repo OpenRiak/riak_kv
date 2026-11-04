@@ -21,7 +21,7 @@
 %%
 %% --------------------------------------------------------------------------
 
-%% @doc <p>The Bucket-Key Preflist (Primaries & Fallbacks) PB service
+%% @doc <p>The Bucket-Key Preflist (Primaries &amp; Fallbacks) PB service
 %% for Riak Core. This service covers the following request messages in the
 %% original protocol:</p>
 %%
