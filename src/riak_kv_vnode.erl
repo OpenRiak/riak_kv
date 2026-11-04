@@ -143,47 +143,51 @@
 
 -type update_hook() :: module() | undefined.
 
--record(state, {idx :: partition(),
-                mod :: module(),
-                async_put :: boolean(),
-                modstate :: term(),
-                mrjobs :: term(),
-                vnodeid :: undefined | binary(),
-                delete_mode :: keep | immediate | pos_integer(),
-                bucket_buf_size :: pos_integer(),
-                index_buf_size :: pos_integer(),
-                key_buf_size :: pos_integer(),
-                async_folding :: boolean(),
-                in_handoff = false :: boolean(),
-                handoff_target :: node(),
-                handoffs_rejected = 0 :: integer(),
-                forward :: node() | [{integer(), node()}],
-                hashtrees :: pid() | undefined,
-                upgrade_hashtree = false :: boolean(),
-                md_cache :: ets:tab(),
-                md_cache_size :: pos_integer(),
-                counter :: #counter_state{},
-                status_mgr_pid :: pid(), %% a process that manages vnode status persistence
-                tictac_aae = false :: boolean(),
-                aae_controller :: undefined|pid(),
-                tictac_exchangequeue = [] 
-                    :: list(riak_kv_entropy_manager:exchange()),
-                tictac_exchangecount = 0 :: integer(),
-                tictac_deltacount = 0 :: integer(),
-                tictac_exchangetime = 0 :: integer(),
-                tictac_startqueue = os:timestamp() :: erlang:timestamp(),
-                tictac_rebuilding = false :: erlang:timestamp()|false,
-                tictac_skiptick = 0 :: non_neg_integer(),
-                tictac_startup = true :: boolean(),
-                aae_tokenbucket = true :: boolean(),
-                worker_pool_strategy = single :: none|single|dscp,
-                vnode_pool_pid :: undefined|pid(),
-                update_hook :: update_hook(),
-                max_aae_queue_time :: non_neg_integer(),
-                enable_nextgenreplsrc = false :: boolean(),
-                sizelimit_nextgenreplsrc = 0 :: non_neg_integer(),
-                tree_repair_id :: undefined|riak_kv_ttaaefs_manager:repair_id()
-               }).
+-record(state,
+    {
+        idx :: partition(),
+        mod :: module(),
+        async_put :: boolean(),
+        modstate :: term(),
+        mrjobs :: term(),
+        vnodeid :: undefined | binary(),
+        delete_mode :: keep | immediate | pos_integer(),
+        bucket_buf_size :: pos_integer(),
+        index_buf_size :: pos_integer(),
+        key_buf_size :: pos_integer(),
+        async_folding :: boolean(),
+        in_handoff = false :: boolean(),
+        handoff_target :: node(),
+        handoffs_rejected = 0 :: integer(),
+        forward :: node() | [{integer(), node()}],
+        hashtrees :: pid() | undefined,
+        upgrade_hashtree = false :: boolean(),
+        md_cache :: ets:tab(),
+        md_cache_size :: pos_integer(),
+        counter :: #counter_state{},
+        status_mgr_pid :: pid(), %% a process that manages vnode status persistence
+        tictac_aae = false :: boolean(),
+        aae_controller :: undefined|pid(),
+        tictac_exchangequeue = [] 
+            :: list(riak_kv_entropy_manager:exchange()),
+        tictac_exchangecount = 0 :: integer(),
+        tictac_deltacount = 0 :: integer(),
+        tictac_exchangetime = 0 :: integer(),
+        tictac_startqueue = os:timestamp() :: erlang:timestamp(),
+        tictac_rebuilding = false :: {erlang:timestamp(), reference()|none}|false,
+        tictac_skiptick = 0 :: non_neg_integer(),
+        tictac_startup = true :: boolean(),
+        aae_tokenbucket = true :: boolean(),
+        worker_pool_strategy = single :: none|single|dscp,
+        vnode_pool_pid :: undefined|pid(),
+        update_hook :: update_hook(),
+        max_aae_queue_time :: non_neg_integer(),
+        enable_nextgenreplsrc = false :: boolean(),
+        sizelimit_nextgenreplsrc = 0 :: non_neg_integer(),
+        tree_repair_id :: undefined|riak_kv_ttaaefs_manager:repair_id(),
+        monitors = [] :: list({reference(), fun((state()) -> state())})
+    }
+).
 
 -type index_op() :: add | remove.
 -type index_value() :: integer() | binary().
@@ -328,6 +332,19 @@ maybe_create_hashtrees(true, State=#state{idx=Index, upgrade_hashtree=Upgrade,
             State#state{upgrade_hashtree=false}
     end.
 
+-spec restart_aae(state()) -> state().
+restart_aae(State) ->
+    ?LOG_WARNING("Restarting AAE due to unexpected error"),
+    case State#state.aae_controller of
+        Pid when is_pid(Pid) ->
+           ok = aae_controller:aae_close(Pid);
+        _ ->
+            ok
+    end,
+    maybe_start_aaecontroller(
+        application:get_env(riak_kv, tictacaae_active, passive),
+        State#state{tictac_rebuilding = false}
+    ).
 
 -spec maybe_start_aaecontroller(active|passive, state()) -> state().
 %% @doc
@@ -437,11 +454,13 @@ maybe_start_aaecontroller(active, State=#state{mod=Mod,
                 0
         end,
 
-    State#state{tictac_aae = true,
-                aae_controller = AAECntrl,
-                modstate = ModState,
-                tictac_rebuilding = false,
-                tictac_skiptick = InitalStep}.
+    State#state{
+        tictac_aae = true,
+        aae_controller = AAECntrl,
+        modstate = ModState,
+        tictac_rebuilding = false,
+        tictac_skiptick = InitalStep
+    }.
 
 
 -spec determine_aaedata_root(integer()) -> list().
@@ -473,11 +492,19 @@ tictac_returnfun(Partition, RebuildType) ->
     Vnode = {Partition, node()},
     StartTime = os:timestamp(),
     ReturnFun = 
-        fun(ok) ->
-            ok = tictacrebuild_complete(Vnode, StartTime, RebuildType)
+        fun(R) ->
+            case R of
+                ok ->
+                    tictacrebuild_complete(Vnode, StartTime, RebuildType);
+                Error ->
+                    ?LOG_WARNING(
+                        "Rebuild terminated with unexpected response ~0p",
+                        [Error]
+                    ),
+                    ok = tictacrebuild_terminated(Vnode, Error)
+            end
         end,
     ReturnFun.
-
 
 -spec tictac_rebuild(binary(), binary(), binary()) -> 
             {riak_kv_util:index_n(), vclock:vclock()}.
@@ -494,7 +521,9 @@ tictac_rebuild(B, K, V) ->
 %% at the same time, so important that the snapshot for the rebuild is taken
 %% only when the fold is initiated.  Otherwise the snapshot may expire whilst
 %% sat on the queue
--spec queue_tictactreerebuild(pid(), partition(), boolean(), state()) -> ok.
+-spec queue_tictactreerebuild(pid(), partition(), boolean(), state()
+) -> 
+    {ok, async|riak_core_node_worker_pool:worker_pool()}.
 queue_tictactreerebuild(AAECntrl, Partition, OnlyIfBroken, State) ->
     Preflists = riak_kv_util:responsible_preflists(Partition),
     Sender = self(),
@@ -535,29 +564,34 @@ queue_tictactreerebuild(AAECntrl, Partition, OnlyIfBroken, State) ->
             end,
             ok
         end,
-    JustReturnFun =
-        fun(ok) ->
-            ReturnFun(ok)
-        end,
     Pool = select_queue(?AF1_QUEUE, State),
-    riak_core_vnode:queue_work(Pool, 
-                                {fold, FoldFun, JustReturnFun},
-                                Sender,
-                                State#state.vnode_pool_pid).
+    riak_core_vnode:queue_work(
+        Pool, 
+        {fold, FoldFun, ReturnFun},
+        Sender,
+        State#state.vnode_pool_pid
+    ),
+    {ok, Pool}.
 
 when_loading_complete(AAECntrl, Preflists, PreflistFun, OnlyIfBroken) ->
     case is_process_alive(AAECntrl) of
         true ->
-            R = aae_controller:aae_rebuildtrees(AAECntrl,
-                                                Preflists, PreflistFun,
-                                                OnlyIfBroken),
+            R = 
+                aae_controller:aae_rebuildtrees(
+                    AAECntrl,
+                    Preflists,
+                    PreflistFun,
+                    OnlyIfBroken
+                ),
             case R of
                 loading ->
                     timer:sleep(?AAE_LOADING_WAIT),
-                    when_loading_complete(AAECntrl,
-                                            Preflists,
-                                            PreflistFun,
-                                            OnlyIfBroken);
+                    when_loading_complete(
+                        AAECntrl,
+                        Preflists,
+                        PreflistFun,
+                        OnlyIfBroken
+                    );
                 _ ->
                     R
             end;
@@ -574,9 +608,10 @@ aae_controller(#state{aae_controller = A}) ->
 
 %% @doc Expose tictac_rebuilding field, for `riak admin aae-progress-report`.
 -spec aae_rebuilding(#state{}) -> erlang:timestamp() | false.
-aae_rebuilding(#state{tictac_rebuilding = A}) ->
-    A.
-
+aae_rebuilding(#state{tictac_rebuilding = false}) ->
+    false;
+aae_rebuilding(#state{tictac_rebuilding = {TS, _Ref}}) ->
+    TS.
 
 %% @doc Reveal the underlying module state for testing
 -spec get_modstate(state()) -> {module(), term()}.
@@ -637,11 +672,21 @@ aae_send(Preflist) ->
 %% @doc
 %% Inform the vnode that an aae rebuild is complete
 tictacrebuild_complete(Vnode, StartTime, ProcessType) ->
-    riak_core_vnode_master:command(Vnode, 
-                                    {rebuild_complete,
-                                        ProcessType,
-                                        StartTime},
-                                    riak_kv_vnode_master).
+    riak_core_vnode_master:command(
+        Vnode, 
+        {rebuild_complete, ProcessType, StartTime},
+        riak_kv_vnode_master
+    ).
+
+-spec tictacrebuild_terminated({partition(), node()},  term()) -> ok.
+%% @doc
+%% Inform the vnode that an aae rebuild is complete
+tictacrebuild_terminated(Vnode, Error) ->
+    riak_core_vnode_master:command(
+        Vnode, 
+        {rebuild_terminated, Error},
+        riak_kv_vnode_master
+    ).
 
 -spec tictacexchange_complete({partition(), node()},
                                 erlang:timestamp(),
@@ -649,11 +694,11 @@ tictacrebuild_complete(Vnode, StartTime, ProcessType) ->
 %% @doc
 %% Inform the vnode that an aae exchange is complete
 tictacexchange_complete(Vnode, StartTime, ExchangeResult) ->
-    riak_core_vnode_master:command(Vnode, 
-                                    {exchange_complete,
-                                        ExchangeResult,
-                                        StartTime},
-                                    riak_kv_vnode_master).
+    riak_core_vnode_master:command(
+        Vnode, 
+        {exchange_complete, ExchangeResult, StartTime},
+        riak_kv_vnode_master
+    ).
 
 -spec aae_prompt_nextrebuild([{partition(), node()}], non_neg_integer()) -> ok.
 %% @doc
@@ -1319,9 +1364,37 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
             timer:now_diff(os:timestamp(), ST) div (1000 * 1000)
         ]
     ),
-    queue_tictactreerebuild(AAECntrl, Partition, false, State),
+    UpdState =
+        case State#state.tictac_rebuilding of
+            {_TS, PrevRef} when is_reference(PrevRef) ->
+                demonitor(PrevRef),
+                State#state{
+                    monitors =
+                        lists:keydelete(PrevRef, 1, State#state.monitors)
+                };
+            _ ->
+                State
+        end,
+    {ok, Pool} = queue_tictactreerebuild(AAECntrl, Partition, false, State),
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
-    {noreply, State};
+    case monitor_queue(Pool) of
+        {ok, Ref} when is_reference(Ref) ->
+            {
+                noreply,
+                UpdState#state{
+                    monitors =
+                        [{Ref, fun restart_aae/1} | State#state.monitors],
+                    tictac_rebuilding =
+                        setelement(
+                            2,
+                            State#state.tictac_rebuilding,
+                            Ref
+                        )
+                    }
+            };
+        _ ->
+            {noreply, UpdState}
+    end;
 
 handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
     % Rebuilding the trees now complete, so change the status of the 
@@ -1329,18 +1402,31 @@ handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
     Partition = State#state.idx,
     case State#state.tictac_rebuilding of
         false ->
-            ?LOG_WARNING("Rebuild complete for Partition=~w but not expected",
-                            [Partition]),
+            ?LOG_WARNING(
+                "Rebuild complete for Partition=~w but not expected",
+                [Partition]
+            ),
             {noreply, State};
-        TS ->
+        {TS, MonitorRef} ->
             ProcessTime = timer:now_diff(os:timestamp(), TS) div (1000 * 1000),
             ?LOG_INFO(
                 "Rebuild process for partition=~w complete in "
                 "duration=~w seconds",
                 [Partition, ProcessTime]
             ),
-            {noreply, State#state{tictac_rebuilding = false}}
+            demonitor(MonitorRef),
+            {
+                noreply,
+                State#state{
+                    tictac_rebuilding = false,
+                    monitors =
+                        lists:keydelete(MonitorRef, 1, State#state.monitors)
+                }
+            }
     end;
+
+handle_command({rebuild_terminated, _Error}, _Sender, State) ->
+    {noreply, restart_aae(State)};
 
 handle_command({exchange_complete, ExchangeResult, ST},
                                                     _Sender, State) ->
@@ -1583,7 +1669,7 @@ handle_command(tictacaae_exchangepoke, _Sender, State) ->
     end;
 
 handle_command(tictacaae_rebuildpoke, _Sender, State=#state{tictac_startup=TS})
-                                when TS == true ->
+        when TS == true ->
     % On startup the first poke should check if the trees need rebuilding, e.g.
     % as the tree was not persisted when shutdown.  This won't rebuild unless
     % the trees have been marked as broken.  Trees are marked as broken in a
@@ -1592,29 +1678,40 @@ handle_command(tictacaae_rebuildpoke, _Sender, State=#state{tictac_startup=TS})
     riak_core_vnode:send_command_after(RTick, tictacaae_rebuildpoke),
     AAECntrl = State#state.aae_controller,
     Partition = State#state.idx,
-    queue_tictactreerebuild(AAECntrl, Partition, true, State),
-    {noreply, State#state{tictac_rebuilding = os:timestamp(),
-                            tictac_startup = false}};
-
-
+    {ok, Pool} = queue_tictactreerebuild(AAECntrl, Partition, true, State),
+    ?LOG_INFO("AAE pid=~w rebuild trees queued only_if_broken", [AAECntrl]),
+    UpdState =
+        case monitor_queue(Pool) of
+            {ok, Ref} when is_reference(Ref) ->
+                State#state{
+                    monitors =
+                        [{Ref, fun restart_aae/1} | State#state.monitors],
+                    tictac_rebuilding = {os:timestamp(), Ref}
+                };
+            _ ->
+                State
+        end,
+    {
+        noreply,
+        UpdState#state{
+            tictac_startup = false
+        }
+    };
 handle_command(tictacaae_rebuildpoke, Sender, State) ->
     NRT = aae_controller:aae_nextrebuild(State#state.aae_controller),
     RTick = app_helper:get_env(riak_kv, tictacaae_rebuildtick),
     riak_core_vnode:send_command_after(RTick, tictacaae_rebuildpoke),
     TimeToRebuild = timer:now_diff(NRT, os:timestamp()),
-    RebuildPending = State#state.tictac_rebuilding =/= false,
     
-    case {TimeToRebuild < 0, RebuildPending} of 
+    case {TimeToRebuild < 0, State#state.tictac_rebuilding} of 
         {false, _} ->
             ?LOG_INFO(
                 "No rebuild as next_rebuild=~w seconds in the future",
                 [TimeToRebuild / (1000 * 1000)]
             ),
             {noreply, State};
-        {true, true} ->
-            HowLong = 
-                timer:now_diff(os:timestamp(), State#state.tictac_rebuilding)
-                    / (1000 * 1000),
+        {true, {ST, _Ref}} ->
+            HowLong = timer:now_diff(os:timestamp(), ST) / (1000 * 1000),
             case HowLong > ?MAX_REBUILD_TIME of
                 true ->
                     ?LOG_WARNING(
@@ -1637,7 +1734,8 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
                 [State#state.aae_controller]
             ),
             ReturnFun = tictac_returnfun(State#state.idx, store),
-            State0 = State#state{tictac_rebuilding = os:timestamp()},
+            StartTime = os:timestamp(),
+            State0 = State#state{tictac_rebuilding = {StartTime, none}},
             case aae_controller:aae_rebuildstore(
                     State#state.aae_controller,
                     fun tictac_rebuild/3,
@@ -1665,8 +1763,30 @@ handle_command(tictacaae_rebuildpoke, Sender, State) ->
                             {async, {fold, AsyncWork, FinishFun0}, Sender, State0};
                         {queue, DeferrableWork} ->
                             % This work should be sent to the core node_worker_pool
-                            {select_queue(?BE_QUEUE, State0), 
-                                {fold, DeferrableWork, FinishFun0}, Sender, State0};
+                            Pool = select_queue(?BE_QUEUE, State0),
+                            UpdState =
+                                case monitor_queue(Pool) of
+                                    {ok, Ref} when is_reference(Ref) ->
+                                        UpdMonitors =
+                                            [
+                                                {Ref, fun restart_aae/1}
+                                                | State#state.monitors
+                                            ],
+                                        State0#state{
+                                            monitors = UpdMonitors,
+                                            tictac_rebuilding =
+                                                {StartTime, Ref}
+                                        };
+                                    _ ->
+                                        State0
+                                end,
+                             
+                            {
+                                Pool, 
+                                {fold, DeferrableWork, FinishFun0},
+                                Sender,
+                                UpdState
+                            };
                         _ ->
                             % This work has already been completed by the vnode, which should
                             % have already sent the results using FinishFun
@@ -2989,8 +3109,29 @@ handle_info({'DOWN', _, _, Pid, _}, State=#state{hashtrees=Pid}) ->
     State2 = State#state{hashtrees=undefined},
     State3 = maybe_create_hashtrees(State2),
     {ok, State3};
-handle_info({'DOWN', _, _, _, _}, State) ->
-    {ok, State};
+handle_info({'DOWN', MonitorRef, _, MonitorObj, MonitorInfo}, State) ->
+    case lists:keyfind(MonitorRef, 1, State#state.monitors) of
+        {MonitorRef, TrapFun} when is_function(TrapFun, 1) ->
+            ?LOG_INFO(
+                "Trap function to be called on state as MonitorObj ~w "
+                "down due to reason ~0p",
+                [MonitorObj, MonitorInfo]
+            ),
+            State1 = TrapFun(State),
+            {
+                ok,
+                State1#state{
+                    monitors =
+                    lists:keydelete(MonitorRef, 1, State#state.monitors)
+                }
+            };
+        _ ->
+            ?LOG_INFO(
+                "Unhandled notification of failure of ~w due to ~0p",
+                [MonitorObj, MonitorInfo]
+            ),
+            {ok, State}
+    end;
 handle_info({final_delete, BKey, DeleteHash}, State) ->
     UpdState = final_delete(BKey, DeleteHash, State),
     {ok, UpdState};
@@ -3746,9 +3887,19 @@ do_get_object(Bucket, Key, Mod, ModState, BinFetchFun) ->
             end
     end.
 
+-spec monitor_queue(async|riak_core_node_worker_pool:worker_pool()
+) -> 
+    {ok, reference()}|no_monitor.
+monitor_queue(async) ->
+    no_monitor;
+monitor_queue(PoolName) ->
+    Ref = monitor(process, PoolName),
+    {ok, Ref}.
 
--spec select_queue(riak_core_node_worker_pool:worker_pool(), state()) ->
-                                async|riak_core_node_worker_pool:worker_pool().
+-spec select_queue(
+    riak_core_node_worker_pool:worker_pool(), state()
+) ->
+    async|riak_core_node_worker_pool:worker_pool().
 %% @doc
 %% Select the use of node_worker_pool or vnode_worker_pool depending on the
 %% worker pool startegy
