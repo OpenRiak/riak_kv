@@ -197,9 +197,9 @@ start_backend_fun(Partition) ->
                         {[Backend | Backends],
                          Errors}
                 end
-            catch _:Error ->
+            catch _:Error:Stacktrace ->
                     {Backends,
-                     [{Module, Error} | Errors]}
+                     [{Module, {Error, Stacktrace}} | Errors]}
             end
     end.
 
@@ -213,8 +213,8 @@ start_backend(Name, Module, Partition, Config) ->
                 {Module, Reason}
         end
     catch
-        _:Reason1 ->
-             {Module, Reason1}
+        _:Error:Stacktrace ->
+             {Module, {Error, Stacktrace}}
     end.
 
 %% @doc Stop the backends
@@ -759,8 +759,11 @@ multi_backend_test_() ->
                fun() ->
                        %% Attempt to start the backend with a
                        %% nonexistent backend specified
-                       ?assertEqual({error, [{riak_kv_devnull_backend, undef}]},
-                                    start(42, bad_backend_config()))
+                       ?assertMatch(
+                          {error, [{riak_kv_devnull_backend,
+                                    {undef, [{riak_kv_devnull_backend, start,
+                                              [42, []], _} | _]}}]},
+                          start(42, bad_backend_config()))
                end
               }
       end
