@@ -35,7 +35,7 @@
         handle_continue/2,
         terminate/2,
         code_change/3,
-        format_status/2]).
+        format_status/1]).
 
 -export([start_link/0,
     start_link/1,
@@ -702,12 +702,18 @@ handle_continue({repl, ReplEntry, [QueueName|OtherQueues]}, State) ->
                 {continue, {repl, ReplEntry, OtherQueues}}}
     end.
 
-format_status(normal, [_PDict, State]) ->
-    State;
-format_status(terminate, [_PDict, State]) ->
-    State#state{
-        queue_local = not_logged,
-        queue_overflow = not_logged}.
+format_status(Status) ->
+    case maps:get(reason, Status, normal) of
+        terminate ->
+            State = maps:get(state, Status),
+            maps:update(
+              state,
+              State#state{queue_local = not_logged,
+                          queue_overflow = not_logged},
+              Status);
+        normal ->
+            Status
+    end.
 
 terminate(_Reason, State) ->
     lists:foreach(
@@ -900,15 +906,21 @@ start_rtq() ->
     gen_server:start({local, ?MODULE}, ?MODULE, [FilePath], []).
 
 format_status_test() ->
+    StateFromSysStatus =
+        fun({status, _Pid, {module, gen_server}, SItemL}) ->
+                SItemL_data = lists:nth(5, SItemL),
+                {data, [{"State", S}]} = lists:nth(3, SItemL_data),
+                S
+        end,
+
     start_rtq(),
-    {status, _, {module, gen_server}, SItemL} =
-        sys:get_status(riak_kv_replrtq_src),
-    S = lists:keyfind(state, 1, lists:nth(5, SItemL)),
-    ?assert(is_list(S#state.queue_local)),
-    ?assert(is_list(S#state.queue_overflow)),
-    ST = format_status(terminate, [dict:new(), S]),
-    ?assertMatch(not_logged, ST#state.queue_local),
-    ?assertMatch(not_logged, ST#state.queue_overflow),
+    S_n = StateFromSysStatus(sys:get_status(riak_kv_replrtq_src)),
+    ?assert(is_list(S_n#state.queue_local)),
+    ?assert(is_list(S_n#state.queue_overflow)),
+
+    #{state := S_t} = format_status(#{reason => terminate, state => S_n}),
+    ?assertMatch(not_logged, S_t#state.queue_local),
+    ?assertMatch(not_logged, S_t#state.queue_overflow),
     stop().
 
 basic_singlequeue_test() ->
