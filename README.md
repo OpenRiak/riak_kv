@@ -16,15 +16,15 @@ Riak KV is designed to be deployed in both single-cluster and multi-cluster envi
 
 Riak is built on top of the [Erlang/OTP platform](https://github.com/erlang/otp).  Supported versions for this release are:
 
-![OTP Recommended](https://img.shields.io/badge/OTP_Recommended_Version-_OTP_26_-green)
+![OTP Recommended](https://img.shields.io/badge/OTP_Recommended_Version-_OTP_28_-green)
 
-![OTP Supported](https://img.shields.io/badge/OTP_Backwards_Compatible-_OTP_24_-blue)
+![OTP Supported](https://img.shields.io/badge/OTP_Backwards_Compatible-_OTP_26_-blue)
 
 For later OTP versions, an alternative `openriak-<release>` branch will be required.  See [the roadmap discussion](https://github.com/orgs/OpenRiak/discussions/19) for further details.
 
 ## Quick Start
 
-You should have [Erlang/OTP 26](https://erlang.org/downloads.html) to compile and run this version Riak KV. The [Riak application](https://github.com/OpenRiak/riak) is the parent application for Riak KV, providing a set of scripts to build, package, deploy and run a Riak KV store.
+You should have [Erlang/OTP 28](https://erlang.org/downloads.html) to compile and run this version Riak KV. The [Riak application](https://github.com/OpenRiak/riak) is the parent application for Riak KV, providing a set of scripts to build, package, deploy and run a Riak KV store.
 
 ## Quick Docs
 
@@ -53,4 +53,4 @@ For discussions on Riak development see https://github.com/orgs/OpenRiak/discuss
 ./rebar3 as test eqc --testing_budget 600
 ```
 
-For a more complete set of tests, update riak_kv in the full Riak application and run any appropriate [Riak riak_test groups](https://github.com/OpenRiak/riak_test/tree/openriak-3.4/groups)
+For a more complete set of tests, update riak_kv in the full Riak application and run any appropriate [Riak riak_test groups](https://github.com/OpenRiak/riak_test/tree/openriak-3.6/groups)

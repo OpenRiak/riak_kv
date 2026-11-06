@@ -4,7 +4,7 @@ nav_order: 0
 layout: home
 ---
 
-# OpenRiak QuickDocs 3.4
+# OpenRiak QuickDocs 3.6
 
 This site provides overview documentation for the OpenRiak community release of Riak.
 
