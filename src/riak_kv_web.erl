@@ -30,7 +30,7 @@
 %%</dd></dl>
 -module(riak_kv_web).
 
--export([dispatch_table/0]).
+-export([dispatch_table/0, priority_table/0]).
 -include("riak_kv_wm_raw.hrl").
 -include("riak_kv_types.hrl").
 
@@ -46,6 +46,47 @@ dispatch_table() ->
         riak_kv_wm_stats, StatsProps},
        {["ping"], riak_kv_wm_ping, []}]).
 
+priority_table() ->
+    [
+        {
+            ["types", bucket_type, "buckets", bucket, "keys", key],
+            riak_kv_wm_object,
+            [{api_version, 3}, {prefix, "riak"}, {riak, local}]
+        },
+        {
+            ["buckets", bucket, "keys", key],
+            riak_kv_wm_object,
+            [
+                {bucket_type, <<"default">>},
+                {api_version, 2},
+                {prefix, "riak"},
+                {riak, local}
+            ]
+        },
+        {
+            ["queuename", queuename],
+            riak_kv_wm_queue,
+            [{api_version, 3},{prefix, "riak"}, {riak, local}]
+        },
+
+        {
+            ["types", bucket_type, "buckets", bucket, "keys"],
+            fun is_post/1,
+            riak_kv_wm_object,
+            [{api_version, 3}, {prefix, "riak"}, {riak, local}]
+        },
+        {
+            ["buckets", bucket, "keys"],
+            fun is_post/1,
+            riak_kv_wm_object,
+            [
+                {bucket_type, <<"default">>},
+                {api_version, 2},
+                {prefix, "riak"},
+                {riak, local}]
+        }
+    ].
+
 raw_dispatch() ->
     case app_helper:get_env(riak_kv, raw_name) of
         undefined -> raw_dispatch("riak");
@@ -60,41 +101,24 @@ raw_dispatch(Name) ->
               {[], APIv2Props}
              ],
 
-    [
-     %% OLD API, remove in v2.2
-     {[Name],
-      riak_kv_wm_buckets, Props1},
-
-     {[Name, bucket], fun is_post/1,
-      riak_kv_wm_object, Props1},
-
-     {[Name, bucket], fun is_props/1,
-      riak_kv_wm_props, Props1},
-
-     {[Name, bucket], fun is_keylist/1,
-      riak_kv_wm_keylist, [{allow_props_param, true}|Props1]},
-
-     {[Name, bucket, key],
-      riak_kv_wm_object, Props1},
-
-     {[Name, bucket, key, '*'],
-      riak_kv_wm_link_walker, Props1}
-
-    ] ++
-
-   [ {["types", bucket_type, "props"], riak_kv_wm_bucket_type,
-      [{api_version, 3}|raw_props(Name)]},
-     {["types", bucket_type, "buckets", bucket, "datatypes"], fun is_post/1,
-      riak_kv_wm_crdt, [{api_version, 3}]},
-     {["types", bucket_type, "buckets", bucket, "datatypes", key],
-      riak_kv_wm_crdt, [{api_version, 3}]}] ++
+    [ 
+        {["types", bucket_type, "buckets", bucket, "datatypes", key],
+            riak_kv_wm_crdt, [{api_version, 3}]},
+        {["types", bucket_type, "buckets", bucket, "datatypes"], fun is_post/1,
+            riak_kv_wm_crdt, [{api_version, 3}]},
+        {["types", bucket_type, "props"], riak_kv_wm_bucket_type,
+        [{api_version, 3}|raw_props(Name)]}]
+        
+        ++
 
         [ %% v1.4 counters @TODO REMOVE at v2.2
           %% NOTE: no (default) bucket prefix only
           {["buckets", bucket, "counters", key],
            riak_kv_wm_counter,
            APIv2Props}
-        ] ++
+        ]
+
+        ++
 
    lists:flatten([
     [
@@ -175,7 +199,31 @@ raw_dispatch(Name) ->
     {["membership_request"],
         riak_kv_wm_queue, Props}
 
-    ] || {Prefix, Props} <- Props2 ]).
+    ] || {Prefix, Props} <- Props2 ])
+        
+        ++
+
+     [
+     %% OLD API, remove in v2.2
+     {[Name],
+      riak_kv_wm_buckets, Props1},
+
+     {[Name, bucket], fun is_post/1,
+      riak_kv_wm_object, Props1},
+
+     {[Name, bucket], fun is_props/1,
+      riak_kv_wm_props, Props1},
+
+     {[Name, bucket], fun is_keylist/1,
+      riak_kv_wm_keylist, [{allow_props_param, true}|Props1]},
+
+     {[Name, bucket, key],
+      riak_kv_wm_object, Props1},
+
+     {[Name, bucket, key, '*'],
+      riak_kv_wm_link_walker, Props1}
+
+    ].
 
 is_post(Req) ->
     wrq:method(Req) == 'POST'.

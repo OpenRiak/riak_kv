@@ -262,6 +262,10 @@ start(_Type, _StartArgs) ->
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_kv_web:dispatch_table()) ],
+            webmachine_router:set_priority_routes(
+                riak_kv_web:priority_table()
+            ),
+            
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
