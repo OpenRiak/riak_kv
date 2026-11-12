@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         otp: [24, 26]
-        os: [ubuntu-latest]
+        os: [ubuntu-24.04]
 
     steps:
       - uses: lukka/get-cmake@latest
