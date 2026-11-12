@@ -221,7 +221,7 @@ add_snkqueue(
 
 %% @doc
 %% Return the current list of peers being used by this snk host, and the
-%% settings currently being used for this host and he workers per peer. 
+%% settings currently being used for this host and the workers per peer. 
 %% Returns undefined if there are currently no peers defined.
 -spec current_peers(queue_name()) -> list(peer_info())|suspended|disabled.
 current_peers(QueueName) ->

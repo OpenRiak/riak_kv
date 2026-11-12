@@ -1471,7 +1471,7 @@
 %% @doc Queue definitions
 %% Queues should be defined using a pipe '|' delimited string, of two
 %% colon ':' delimited elements.  The first part of each queue definition is
-%% the ascii name of the queue, the second part indicated the filter to be
+%% the ASCII name of the queue; the second part indicates the filter to be
 %% applied which should be either:
 %% - any (all real-time modifications to be replicated via this queue)
 %% - block_rtq (no real-time modifications to be replicated)
@@ -1483,7 +1483,7 @@
 %% type.
 %% If a list of buckets or types need to be supported, then either multiple
 %% queues need to be defined, or non-persistent extended definitions can be
-%% made at runtime used the riak_kv_replrtq_src API.
+%% made at runtime using the riak_kv_replrtq_src API.
 %% Example configurtaion might be:
 %% cluster_a:any|cluster_b:block_rtq|cluster_c:bucketprefix.user
 {mapping, "replrtq_srcqueue", "riak_kv.replrtq_srcqueue", [
@@ -1738,7 +1738,7 @@
 %% that interval.  Setting large values is not recommended, as this may lead to
 %% a significant number of concurrent timers, especially when running large
 %% erase jobs.  Any positive value may be set via advanced.config, but here
-%% timout is limited to 5 minutes.
+%% timeout is limited to 5 minutes.
 {mapping, "delete_mode", "riak_kv.delete_mode", [
   {default, 3000},
   {datatype, [integer, {atom, keep}, {atom, immediate}]},
