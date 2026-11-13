@@ -56,6 +56,8 @@
          aae_repair_status/1,
          aae_tree_status/1]).
 
+-include("riak_kv_types.hrl").  %% for MOD_MAP
+-include("riak_kv_wm_raw.hrl").  %% for ?JSON_DATATYPE
 -include_lib("kernel/include/logger.hrl").
 
 
@@ -475,8 +477,10 @@ bucket_type_status([TypeStr]) ->
     Type = unicode:characters_to_binary(TypeStr, utf8, utf8),
     Return = bucket_type_print_status(Type, riak_core_bucket_type:status(Type)),
     bucket_type_print_props(bucket_type_raw_props(Type)),
-    Return.
-
+    case Return of
+        {error, _} -> {rpc_error, 1};
+        _ -> Return
+    end.
 
 bucket_type_raw_props(<<"default">>) ->
     riak_core_bucket_props:defaults();
@@ -533,10 +537,19 @@ bucket_type_create([TypeStr, PropsStr]) ->
     bucket_type_create(Type, catch mochijson2:decode(PropsStr)).
 
 bucket_type_create(Type, {struct, Fields}) ->
+    ExistingDatatypes = [atom_to_binary(A) || {A, _} <- ?MOD_MAP],
     case proplists:get_value(<<"props">>, Fields) of
         {struct, Props} ->
-            ErlProps = [riak_kv_wm_utils:erlify_bucket_prop(P) || P <- Props],
-            bucket_type_print_create_result(Type, riak_core_bucket_type:create(Type, ErlProps));
+            case lists:member(
+                   proplists:get_value(?JSON_DATATYPE, Props), ExistingDatatypes) of
+                true ->
+                    ErlProps = [riak_kv_wm_utils:erlify_bucket_prop(P) || P <- Props],
+                    bucket_type_print_create_result(
+                      Type, riak_core_bucket_type:create(Type, ErlProps));
+                false ->
+                    io:format("Cannot create bucket type ~ts: invalid data type~n", [Type]),
+                    error
+            end;
         _ ->
             io:format("Cannot create bucket type ~ts: no props field found in json~n", [Type]),
             error

@@ -710,9 +710,7 @@ status(#state{bookie = Bookie}) ->
 
 %% @doc Get an estimate of the data_size for this leveled backend
 -spec data_size(state()) ->
-    undefined |
-    {non_neg_integer(), objects} |
-    {fun(() -> {non_neg_integer(), objects}), dynamic}.
+    {fun(() -> {non_neg_integer(), objects}), async}.
 data_size(#state{bookie=Bookie}) ->
     TictacTreeSize = 1024 * 1024,
     SegmentCount = 64,
@@ -739,7 +737,7 @@ data_size(#state{bookie=Bookie}) ->
                 ),
             {DataSizeGuesser(), objects}
         end,
-    {F, dynamic}.
+    {F, async}.
 
 
 %% @doc Register an asynchronous callback

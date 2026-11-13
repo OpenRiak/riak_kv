@@ -65,6 +65,8 @@
     {async, fun(() -> fold_acc())} |
     {queue, fun(() -> fold_acc())} |
     {error, term()}.
+-type data_size_fun() ::
+    fun(() -> {non_neg_integer(), bytes | objects} | undefined).
 
 -callback api_version() -> {ok, number()}.
 
@@ -151,12 +153,12 @@
         file:name_all()
     ) -> {queue, fun(() -> any())}|{error, term()}.
 
--callback
-    data_size(state()) ->
-        undefined |
-        {non_neg_integer(), objects} |
-        {non_neg_integer(), bytes} |
-        {fun(() -> {non_neg_integer(), objects}|undefined), dynamic}.
+-callback 
+    data_size(
+        state()) ->
+            {non_neg_integer(), bytes | objects} |
+            {data_size_fun(), dynamic | async} |
+            undefined.
 
 -callback
     complex_query(
