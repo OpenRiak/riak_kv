@@ -346,6 +346,19 @@ restart_aae(State) ->
         State#state{tictac_rebuilding = false}
     ).
 
+-spec clear_aae_monitor(state()) -> state().
+clear_aae_monitor(State) ->
+    case State#state.tictac_rebuilding of
+        {_TS, PrevRef} when is_reference(PrevRef) ->
+            demonitor(PrevRef),
+            State#state{
+                monitors =
+                    lists:keydelete(PrevRef, 1, State#state.monitors)
+            };
+        _ ->
+            State
+    end.
+
 -spec maybe_start_aaecontroller(active|passive, state()) -> state().
 %% @doc
 %% Start an AAE controller if riak_kv has been configured to use cached
@@ -1364,17 +1377,7 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
             timer:now_diff(os:timestamp(), ST) div (1000 * 1000)
         ]
     ),
-    UpdState =
-        case State#state.tictac_rebuilding of
-            {_TS, PrevRef} when is_reference(PrevRef) ->
-                demonitor(PrevRef),
-                State#state{
-                    monitors =
-                        lists:keydelete(PrevRef, 1, State#state.monitors)
-                };
-            _ ->
-                State
-        end,
+    UpdState = clear_aae_monitor(State),
     {ok, Pool} = queue_tictactreerebuild(AAECntrl, Partition, false, State),
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
     case monitor_queue(Pool) of
@@ -1406,33 +1409,27 @@ handle_command({rebuild_complete, trees, _ST}, _Sender, State) ->
     % Rebuilding the trees now complete, so change the status of the 
     % rebuilding state so other rebuilds may be prompted
     Partition = State#state.idx,
-    case State#state.tictac_rebuilding of
+    UpdState = clear_aae_monitor(State),
+    case UpdState#state.tictac_rebuilding of
         false ->
             ?LOG_WARNING(
                 "Rebuild complete for Partition=~w but not expected",
                 [Partition]
             ),
-            {noreply, State};
-        {TS, MonitorRef} ->
+            {noreply, UpdState};
+        {TS, _MonitorRef} ->
             ProcessTime = timer:now_diff(os:timestamp(), TS) div (1000 * 1000),
             ?LOG_INFO(
                 "Rebuild process for partition=~w complete in "
                 "duration=~w seconds",
                 [Partition, ProcessTime]
             ),
-            demonitor(MonitorRef),
-            {
-                noreply,
-                State#state{
-                    tictac_rebuilding = false,
-                    monitors =
-                        lists:keydelete(MonitorRef, 1, State#state.monitors)
-                }
-            }
+            {noreply, UpdState#state{tictac_rebuilding = false}}
     end;
 
 handle_command({rebuild_terminated, _Error}, _Sender, State) ->
-    {noreply, restart_aae(State)};
+    UpdState = clear_aae_monitor(State),
+    {noreply, restart_aae(UpdState)};
 
 handle_command({exchange_complete, ExchangeResult, ST},
                                                     _Sender, State) ->
