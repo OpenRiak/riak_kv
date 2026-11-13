@@ -25,6 +25,7 @@
 -behaviour(application).
 -export([start/2, prep_stop/1, stop/1]).
 -export([check_kv_health/1]).
+-export([get_worker_pools/0]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -83,25 +84,7 @@ start(_Type, _StartArgs) ->
             ok
     end,
 
-    WorkerPools =
-        case app_helper:get_env(riak_kv, worker_pool_strategy, none) of
-            none ->
-                [];
-            single ->
-                NWPS = app_helper:get_env(riak_kv, node_worker_pool_size),
-                [{node_worker_pool, {riak_kv_worker, NWPS, [], [], node_worker_pool}}];
-            dscp ->
-                AF1 = app_helper:get_env(riak_kv, af1_worker_pool_size),
-                AF2 = app_helper:get_env(riak_kv, af2_worker_pool_size),
-                AF3 = app_helper:get_env(riak_kv, af3_worker_pool_size),
-                AF4 = app_helper:get_env(riak_kv, af4_worker_pool_size),
-                BE = app_helper:get_env(riak_kv, be_worker_pool_size),
-                [{dscp_worker_pool, {riak_kv_worker, AF1, [], [], riak_core_node_worker_pool:af1()}},
-                 {dscp_worker_pool, {riak_kv_worker, AF2, [], [], riak_core_node_worker_pool:af2()}},
-                 {dscp_worker_pool, {riak_kv_worker, AF3, [], [], riak_core_node_worker_pool:af3()}},
-                 {dscp_worker_pool, {riak_kv_worker, AF4, [], [], riak_core_node_worker_pool:af4()}},
-                 {dscp_worker_pool, {riak_kv_worker, BE, [], [], riak_core_node_worker_pool:be()}}]
-        end,
+    WorkerPools = get_worker_pools(),
 
     %% Append defaults for riak_kv buckets to the bucket defaults
     %% TODO: Need to revisit this. Buckets are typically created
@@ -354,6 +337,26 @@ check_kv_health(_Pid) ->
             ok
     end,
     Passed.
+
+get_worker_pools() ->
+    case app_helper:get_env(riak_kv, worker_pool_strategy, none) of
+        none ->
+            [];
+        single ->
+            NWPS = app_helper:get_env(riak_kv, node_worker_pool_size),
+            [{node_worker_pool, {riak_kv_worker, NWPS, [], [], node_worker_pool}}];
+        dscp ->
+            AF1 = app_helper:get_env(riak_kv, af1_worker_pool_size),
+            AF2 = app_helper:get_env(riak_kv, af2_worker_pool_size),
+            AF3 = app_helper:get_env(riak_kv, af3_worker_pool_size),
+            AF4 = app_helper:get_env(riak_kv, af4_worker_pool_size),
+            BE = app_helper:get_env(riak_kv, be_worker_pool_size),
+            [{dscp_worker_pool, {riak_kv_worker, AF1, [], [], riak_core_node_worker_pool:af1()}},
+                {dscp_worker_pool, {riak_kv_worker, AF2, [], [], riak_core_node_worker_pool:af2()}},
+                {dscp_worker_pool, {riak_kv_worker, AF3, [], [], riak_core_node_worker_pool:af3()}},
+                {dscp_worker_pool, {riak_kv_worker, AF4, [], [], riak_core_node_worker_pool:af4()}},
+                {dscp_worker_pool, {riak_kv_worker, BE, [], [], riak_core_node_worker_pool:be()}}]
+    end.
 
 wait_for_put_fsms(N) ->
     case riak_kv_util:exact_puts_active() of
