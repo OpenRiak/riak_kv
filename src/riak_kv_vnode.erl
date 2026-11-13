@@ -1379,18 +1379,24 @@ handle_command({rebuild_complete, store, ST}, _Sender, State) ->
     ?LOG_INFO("AAE pid=~w rebuild trees queued", [AAECntrl]),
     case monitor_queue(Pool) of
         {ok, Ref} when is_reference(Ref) ->
+            UpdRebuildTracker =
+                case UpdState#state.tictac_rebuilding of
+                    {PTS, _AltRef} ->
+                        {PTS, Ref};
+                    _ ->
+                        ?LOG_WARNING(
+                            "Unexpected - Tictac tree rebuild had no timestamp "
+                            "setting timestamp to now"
+                        ),
+                        {os:timestamp(), Ref}
+                end,
             {
                 noreply,
                 UpdState#state{
                     monitors =
-                        [{Ref, fun restart_aae/1} | State#state.monitors],
-                    tictac_rebuilding =
-                        setelement(
-                            2,
-                            State#state.tictac_rebuilding,
-                            Ref
-                        )
-                    }
+                        [{Ref, fun restart_aae/1} | UpdState#state.monitors],
+                    tictac_rebuilding = UpdRebuildTracker
+                }
             };
         _ ->
             {noreply, UpdState}
@@ -1689,7 +1695,7 @@ handle_command(tictacaae_rebuildpoke, _Sender, State=#state{tictac_startup=TS})
                     tictac_rebuilding = {os:timestamp(), Ref}
                 };
             _ ->
-                State
+                State#state{tictac_rebuilding = {os:timestamp(), none}}
         end,
     {
         noreply,
