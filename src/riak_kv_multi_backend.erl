@@ -1,8 +1,10 @@
 %% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
 %% -------------------------------------------------------------------
 %%
+%% riak_multi_backend: switching between multiple storage engines
+%%
 %% Copyright (c) 2007-2016 Basho Technologies, Inc.
-%% Copyright (c) 2023-2025 Workday, Inc.
+%% Copyright (c) 2023-2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file

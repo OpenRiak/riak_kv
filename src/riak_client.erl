@@ -3,7 +3,8 @@
 %%
 %% riak_client: object used for access into the riak system
 %%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2024 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -30,6 +31,9 @@
 -export([new/2]).
 -export([get/3,get/4,get/5]).
 -export([put/2,put/3,put/4,put/5,put/6]).
+-export([clone/7]).
+-export([copy/5,copy/6,copy/7]).
+-export([move/5,move/6,move/7]).
 -export([delete/3,delete/4,delete/5,reap/3,reap/4]).
 -export([delete_vclock/4,delete_vclock/5,delete_vclock/6]).
 -export([list_keys/2,list_keys/3,list_keys/4]).
@@ -62,38 +66,263 @@
 -include("riak_kv_capability.hrl").
 
 -compile({no_auto_import,[put/2]}).
-%% @type default_timeout() = 60000
+
+-include_lib("kernel/include/logger.hrl").
+
 -define(DEFAULT_TIMEOUT, 60000).
 -define(DEFAULT_FOLD_TIMEOUT, 3600000).
+-define(DEFAULT_CLONE_TIMEOUT, (?DEFAULT_TIMEOUT * 2)).
 
-%% TODO: This type needs to be better specified and validated against
-%%       any dependents on riak_kv.
+%% Declared this way to keep both the compiler and dialyzer happy.
+%% Should find a better way, since this annotation is deprecated.
+%% @type default_timeout() = 60000
+
+%% TODO: This type needs to be better specified and validated against dependents.
 %%
-%%       We want this term to be opaque, but can't because Dialyzer
-%%       doesn't like the way it's specified.
+%% The proper type specification SHOULD be:
+%% ```
+%%  -opaque client_this() :: {node(), client_id()}.
+%% '''
+%% instead of the two-element list, which isn't a legal type specification.
 %%
-%%       opaque type riak_client() is underspecified and therefore meaningless
+%% We should then be able to declare
+%% ```
+%%  -opaque riak_client() :: {?MODULE, client_this()}.
+%% '''
+%% without running afoul of Dialyzer.
+%%
+%% It goes without saying that this change will require extensive testing to
+%% find (illegal) uses of the list-based structure.
+%%
+%% Until then declare riak_client() as a term(), which effectively makes it
+%% opaque.
+%%
+%%-opaque client_this() :: {node(), client_id()}.
+%%-opaque riak_client() :: {?MODULE, client_this()}.
+
+-type client_id() :: term().
 -type riak_client() :: term().
 
--export_type([riak_client/0]).
+-type req_id() :: term().
 
-%% @spec new(Node, ClientId) -> riak_client()
+-export_type([
+    client_id/0, req_id/0, riak_client/0,
+    clone_options/0,
+    copy_options/0, move_options/0,
+    del_option/0, del_options/0,
+    get_option/0, get_options/0,
+    put_option/0, put_options/0,
+    n_val/0, sym_quorum/0,
+    pd_val/0, rw_val/0,
+    pd_quorum/0, rw_quorum/0
+]).
+
+-type n_val() :: pos_integer().                 %% `n_val' value.
+-type rw_val() :: pos_integer().                %% `r', `w', or `rw' value.
+-type pd_val() :: non_neg_integer().            %% `pr', `pw', or `dw' value.
+-type sym_quorum() :: one | quorum | all | default. %% Symbolic quorum option.
+-type rw_quorum() :: rw_val() | sym_quorum().   %% `r', `w', or `rw' option.
+-type pd_quorum() :: pd_val() | sym_quorum().   %% `pr', `pw', or `dw' option.
+
+-type del_option() :: riak_kv_delete:option() | {timeout, timeout()}.
+-type del_options() :: list(del_option()).
+
+-type get_option() :: riak_kv_get_fsm:option().
+-type get_options() :: list(get_option()).
+
+-type put_option() ::
+    riak_kv_put_fsm:option() | returnhead | {returnhead, boolean()}.
+-type put_options() :: list(put_option()).
+
+-type detail_keys() :: list(timing | vnodes| boolean()).
+%% All of the detail keys recognized by any operation.
+
+-type clone_options() :: #{
+    r               =>  rw_quorum(),    %% Get/Del Read quorum.
+    pr              =>  pd_quorum(),    %% Get/Del Primary Read quorum.
+    w               =>  rw_quorum(),    %% Put/Del Write quorum.
+    pw              =>  pd_quorum(),    %% Put/Del Primary Write quorum.
+    dw              =>  pd_quorum(),    %% Put/Del Durable Write quorum.
+    rw              =>  rw_quorum(),    %% Del Replicas to delete before returning.
+    n_val           =>  n_val(),        %% Get/Put/Del Alternate NVal.
+    basic_quorum    =>  boolean(),      %% Get Bail out early on failure.
+    sloppy_quorum   =>  boolean(),      %% Get/Put/Del Allow alternate partition(s).
+    notfound_ok     =>  boolean(),      %% Get @link riak_kv_get_fsm:options/0}
+    asis            =>  boolean(),      %% Put @link riak_kv_put_fsm:options/0}
+    sync_on_write   =>  atom(),         %% Put @link riak_kv_put_fsm:options/0}
+    timeout         =>  timeout(),      %% Total timeout for all operations.
+    recv_timeout    =>  timeout(),      %% Get/Put/Del Receive timeout.
+    del_src         =>  boolean(),      %% Move - delete source on successful copy.
+    provmeta        =>  store | strip,  %% Add(Replace)/Remove Provenance Metadata.
+    returnbody      =>  boolean(),      %% Return the full result object, not just metadata.
+    details         =>  detail_keys()   %% Return operation details from phases supporting them.
+}.
+
+-type copy_options() :: #{
+    r               =>  rw_quorum(),    %% Get/Del Read quorum.
+    pr              =>  pd_quorum(),    %% Get/Del Primary Read quorum.
+    w               =>  rw_quorum(),    %% Put/Del Write quorum.
+    pw              =>  pd_quorum(),    %% Put/Del Primary Write quorum.
+    dw              =>  pd_quorum(),    %% Put/Del Durable Write quorum.
+    n_val           =>  n_val(),        %% Get/Put/Del Alternate NVal.
+    basic_quorum    =>  boolean(),      %% Get Bail out early on failure.
+    sloppy_quorum   =>  boolean(),      %% Get/Put/Del Allow alternate partition(s).
+    notfound_ok     =>  boolean(),      %% Get @link riak_kv_get_fsm:options/0}
+    asis            =>  boolean(),      %% Put @link riak_kv_put_fsm:options/0}
+    sync_on_write   =>  atom(),         %% Put @link riak_kv_put_fsm:options/0}
+    timeout         =>  timeout(),      %% Total timeout for all operations.
+    recv_timeout    =>  timeout(),      %% Get/Put/Del Receive timeout.
+    provmeta        =>  store | strip,  %% Add(Replace)/Remove Provenance Metadata.
+    returnbody      =>  boolean(),      %% Return the full result object, not just metadata.
+    details         =>  detail_keys()   %% Return operation details from phases supporting them.
+}.
+%% Subset of clone_options() for dialyzer precision.
+
+-type move_options() :: #{
+    r               =>  rw_quorum(),    %% Get/Del Read quorum.
+    pr              =>  pd_quorum(),    %% Get/Del Primary Read quorum.
+    w               =>  rw_quorum(),    %% Put/Del Write quorum.
+    pw              =>  pd_quorum(),    %% Put/Del Primary Write quorum.
+    dw              =>  pd_quorum(),    %% Put/Del Durable Write quorum.
+    rw              =>  rw_quorum(),    %% Del Replicas to delete before returning.
+    n_val           =>  n_val(),        %% Get/Put/Del Alternate NVal.
+    basic_quorum    =>  boolean(),      %% Get Bail out early on failure.
+    sloppy_quorum   =>  boolean(),      %% Get/Put/Del Allow alternate partition(s).
+    notfound_ok     =>  boolean(),      %% Get @link riak_kv_get_fsm:options/0}
+    asis            =>  boolean(),      %% Put @link riak_kv_put_fsm:options/0}
+    sync_on_write   =>  atom(),         %% Put @link riak_kv_put_fsm:options/0}
+    timeout         =>  timeout(),      %% Total timeout for all operations.
+    recv_timeout    =>  timeout(),      %% Get/Put/Del Receive timeout.
+    provmeta        =>  store | strip,  %% Add(Replace)/Remove Provenance Metadata.
+    returnbody      =>  boolean(),      %% Return the full result object, not just metadata.
+    details         =>  detail_keys()   %% Return operation details from phases supporting them.
+}.
+%% Subset of clone_options() for dialyzer precision.
+
+%% Just to make specs easier and more consistent.
+
+-type op_label() :: atom().         %% Examples: `clone', `delete', `get', `put'.
+-type op_detail_rec() :: {atom(), term()}.
+-type op_detail_recs() :: list(op_detail_rec()).
+-type op_detail() :: {op_label(), op_detail_recs()}.
+-type op_details() :: list(op_detail()).
+-type nativetime() :: integer().    %% erlang:monotonic_time() value
+
+-type clone_state() :: #{
+    start       :=  nativetime(),   %% when it all began
+    timeout     :=  timeout(),      %% overall operation timeout
+
+    %% clone(...) parameters
+    opts        :=  clone_options(),
+    client      :=  riak_client(),
+    srcbucket   :=  riak_object:bucket(),
+    srckey      :=  riak_object:key(),
+    srcvclock   :=  vclock:vclock() | undefined,
+    dstbucket   :=  riak_object:bucket(),
+    dstkey      :=  riak_object:key() | undefined,
+
+    %% filtered 'get' options carried forward for re-use
+    getopts     =>  get_options(),
+
+    %% the source object, once retrieved
+    srcobj      =>  riak_object:riak_object(),
+
+    %% Keys below here are only present if we're collecting some manner of
+    %% details, and some only for certain classes of details.
+
+    %% reusable predicate for details per sub-operation
+    d_filter    =>  fun((atom()) -> boolean()),
+
+    %% if timing, when the last clone phase interval ended
+    lasttime    =>  nativetime(),
+    %% accumulated phase details from all operations
+    details     =>  op_details()
+}.
+%% The 'clone' operation is structured much as a state machine.
+%% While the state only ever progresses, information is accumulated along the
+%% way. This approach is a lot easier to work with that passing a dozen or
+%% more parameters through the chain of functions that comprise clone
+%% functionality.
+
+-type num_replies() :: non_neg_integer().
+
+-type del_err_reason() ::
+    notfound | timeout | too_many_fails |
+    {n_val_violation, n_val()} |
+    term().
+-type del_error() :: {error, del_err_reason()}.
+-type del_result() :: ok | del_error().
+
+-type get_err_reason() ::
+    notfound | timeout |
+    {deleted, vclock:vclock()} |
+    {n_val_violation, n_val()} |
+    {r_val_unsatisfied, rw_val(), num_replies()} |
+    term().
+-type get_error() ::
+    {error, get_err_reason()} | {error, get_err_reason(), op_details()}.
+-type get_result() ::
+    {ok, riak_object:riak_object()} |
+    {ok, riak_object:riak_object(), op_details()} |
+    get_error().
+
+-type put_err_reason() ::
+    notfound | timeout | too_many_fails |
+    {n_val_violation, n_val()} |
+    term().
+-type put_error() ::
+    {error, put_err_reason()} | {error, put_err_reason(), op_details()}.
+-type put_result() ::
+    ok |
+    {ok, riak_object:riak_object()} |
+    {ok, riak_object:riak_object(), op_details()} |
+    put_error().
+
+-type clone_err_reason() ::
+    destination_not_empty | name_unchanged | src_out_of_date |
+    get_err_reason() | put_err_reason().
+-type clone_error() ::
+    {error, clone_err_reason()} | {error, clone_err_reason(), op_details()}.
+-type clone_result() ::
+    {ok, riak_object:riak_object()} |
+    {ok, riak_object:riak_object(), op_details()} |
+    {ok, riak_object:riak_object(), del_err_reason()} |
+    {ok, riak_object:riak_object(), del_err_reason(), op_details()} |
+    clone_error().
+
+-type copy_err_reason() :: clone_err_reason().
+-type copy_error() ::
+    {error, copy_err_reason()} | {error, copy_err_reason(), op_details()}.
+-type copy_result() ::
+    {ok, riak_object:riak_object()} |
+    {ok, riak_object:riak_object(), op_details()} |
+    copy_error().
+
+-type move_err_reason() :: clone_err_reason().
+-type move_error() ::
+    {error, move_err_reason()} | {error, move_err_reason(), op_details()}.
+-type move_result() ::
+    {ok, riak_object:riak_object()} |
+    {ok, riak_object:riak_object(), op_details()} |
+    {ok, riak_object:riak_object(), del_err_reason()} |
+    {ok, riak_object:riak_object(), del_err_reason(), op_details()} |
+    move_error().
+
+
+-spec new(Node :: node(), ClientId :: client_id()) -> riak_client().
 %% @doc Return a riak client instance.
 new(Node, ClientId) ->
-    {?MODULE, [Node,ClientId]}.
+    {?MODULE, [Node, ClientId]}.
 
-%% @spec get(riak_object:bucket(), riak_object:key(), riak_client()) ->
-%%       {ok, riak_object:riak_object()} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, {r_val_unsatisfied, R::integer(), Replies::integer()}} |
-%%       {error, Err :: term()}
+-spec get(
+    Bucket :: riak_object:bucket(),
+    Key :: riak_object:key(),
+    This :: riak_client() ) ->  get_result().
 %% @doc Fetch the object at Bucket/Key.  Return a value as soon as the default
 %%      R-value for the nodes have responded with a value or error.
-%% @equiv get(Bucket, Key, R, default_timeout())
-get(Bucket, Key, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    get(Bucket, Key, [], THIS).
+%% @equiv get(Bucket, Key, [], This)
+get(Bucket, Key, {?MODULE, [_Node, _ClientId]} = This) ->
+    get(Bucket, Key, [], This).
 
 normal_get(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
@@ -175,7 +404,7 @@ replrtq_resetpeer_fun(QueueN) ->
     fun(Node, Acc) ->
         B = rpc:call(Node, riak_kv_replrtq_peer, update_discovery, [QueueN]),
         if B -> [Node|Acc]; true -> Acc end
-    end. 
+    end.
 
 %% @doc Reset the worker count and per peer limit on each up node, returning
 %% a list of nodes to which the change was successfully applied
@@ -186,7 +415,7 @@ replrtq_reset_all_workercounts(WorkerC, PerPeerL) ->
     UpNodes = riak_core_node_watcher:nodes(riak_kv),
     FoldFun =
         fun(Node, Acc) ->
-            UpdateSuccess = 
+            UpdateSuccess =
                 rpc:call(
                     Node,
                     riak_kv_replrtq_peer,
@@ -195,7 +424,7 @@ replrtq_reset_all_workercounts(WorkerC, PerPeerL) ->
             if UpdateSuccess -> [Node|Acc]; true -> Acc end
         end,
     lists:foldl(FoldFun, [], UpNodes).
-     
+
 
 %% @doc Fetch the next item from the replication queue
 -spec fetch(riak_kv_replrtq_src:queue_name(), riak_client()) ->
@@ -296,7 +525,7 @@ repl_push(RObj, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
     R = wait_for_reqid(ReqId, Timeout),
     LMD =
         lists:max(
-            lists:map(fun riak_object:get_last_modified/1, 
+            lists:map(fun riak_object:get_last_modified/1,
                         riak_object:get_metadatas(RObj))),
     Reply = {R, LMD},
 
@@ -309,7 +538,7 @@ repl_push(RObj, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
                     riak_kv_get_fsm:start({raw, ReapReqId, Me},
                                             Bucket, Key, ReapOptions);
                 _ ->
-                    % Still using the deprecated `start_link' alias for 
+                    % Still using the deprecated `start_link' alias for
                     %`start' here, in case the remote node is pre-2.2:
                     proc_lib:spawn_link(Node, riak_kv_get_fsm, start_link,
                                         [{raw, ReapReqId, Me},
@@ -322,67 +551,48 @@ repl_push(RObj, IsDeleted, _Opts, {?MODULE, [Node, _ClientId]}) ->
     end.
 
 
-%% @spec get(riak_object:bucket(), riak_object:key(), options(), riak_client()) ->
-%%       {ok, riak_object:riak_object()} |
-%%       {error, notfound} |
-%%       {error, {deleted, vclock()}} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, {r_val_unsatisfied, R::integer(), Replies::integer()}} |
-%%       {error, Err :: term()}
+-spec get(Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    OptionsOrR :: get_options() | rw_quorum(), This :: riak_client() )
+        ->  get_result().
 %% @doc Fetch the object at Bucket/Key.  Return a value as soon as R-value for the nodes
 %%      have responded with a value or error.
-get(Bucket, Key, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
+get(Bucket, Key, Options, {?MODULE, [Node, _ClientId]} = This)
+        when    (is_binary(Bucket) orelse is_tuple(Bucket))
+        andalso is_binary(Key)
+        andalso is_list(Options) ->
     case consistent_object(Node, Bucket) of
         true ->
-            consistent_get(Bucket, Key, Options, THIS);
+            consistent_get(Bucket, Key, Options, This);
         false ->
-            normal_get(Bucket, Key, Options, THIS);
+            normal_get(Bucket, Key, Options, This);
         {error,_}=Err ->
             Err
     end;
+get(Bucket, Key, R, {?MODULE, [_Node, _ClientId]} = This)
+        when    (is_binary(Bucket) orelse is_tuple(Bucket))
+        andalso is_binary(Key) ->
+    get(Bucket, Key, [{r, R}], This).
 
-%% @spec get(riak_object:bucket(), riak_object:key(), R :: integer(), riak_client()) ->
-%%       {ok, riak_object:riak_object()} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, {r_val_unsatisfied, R::integer(), Replies::integer()}} |
-%%       {error, Err :: term()}
+-spec get(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(), R :: rw_quorum(),
+    Timeout :: timeout(), This :: riak_client() )
+        ->  get_result().
 %% @doc Fetch the object at Bucket/Key.  Return a value as soon as R
-%%      nodes have responded with a value or error.
-%% @equiv get(Bucket, Key, R, default_timeout())
-get(Bucket, Key, R, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    get(Bucket, Key, [{r, R}], THIS).
-
-%% @spec get(riak_object:bucket(), riak_object:key(), R :: integer(),
-%%           TimeoutMillisecs :: integer(), riak_client()) ->
-%%       {ok, riak_object:riak_object()} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, {r_val_unsatisfied, R::integer(), Replies::integer()}} |
-%%       {error, Err :: term()}
-%% @doc Fetch the object at Bucket/Key.  Return a value as soon as R
-%%      nodes have responded with a value or error, or TimeoutMillisecs passes.
-get(Bucket, Key, R, Timeout, {?MODULE, [_Node, _ClientId]}=THIS) when
-                                  (is_binary(Bucket) orelse is_tuple(Bucket)),
-                                  is_binary(Key),
-                                  (is_atom(R) or is_integer(R)),
-                                  is_integer(Timeout) ->
-    get(Bucket, Key, [{r, R}, {timeout, Timeout}], THIS).
+%%      nodes have responded with a value or error, or TimeoutMS passes.
+%% @equiv get(Bucket, Key, [{r, R}, {timeout, Timeout}], This)
+get(Bucket, Key, R, Timeout, {?MODULE, [_Node, _ClientId]} = This) ->
+    get(Bucket, Key, [{r, R}, {timeout, Timeout}], This).
 
 
-%% @spec put(RObj :: riak_object:riak_object(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
+-spec put(
+    RObj :: riak_object:riak_object(),
+    This :: riak_client() ) ->  put_result().
 %% @doc Store RObj in the cluster.
 %%      Return as soon as the default W value number of nodes for this bucket
 %%      nodes have received the request.
-%% @equiv put(RObj, [])
-put(RObj, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [], THIS).
+%% @equiv put(RObj, [], This)
+put(RObj, {?MODULE, [_Node, _ClientId]} = This) ->
+    put(RObj, [], This).
 
 
 normal_put(RObj, Options, {?MODULE, [Node, ClientId]}) ->
@@ -456,73 +666,70 @@ consistent_put_type(RObj, Options) ->
             put_once
     end.
 
-%% @spec put(RObj :: riak_object:riak_object(), riak_kv_put_fsm:options(), riak_client()) ->
-%%       ok |
-%%       {ok, details()} |
-%%       {ok, riak_object:riak_object()} |
-%%       {ok, riak_object:riak_object(), details()} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()} |
-%%       {error, Err :: term(), details()}
+-spec put(
+    RObj :: riak_object:riak_object(),
+    OptionsOrW :: put_options() | rw_quorum(),
+    This :: riak_client() ) ->  put_result().
 %% @doc Store RObj in the cluster.
-put(RObj, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
+put(RObj, Options, {?MODULE, [Node, _ClientId]} = This) when is_list(Options) ->
     case consistent_object(Node, riak_object:bucket(RObj)) of
         true ->
-            consistent_put(RObj, Options, THIS);
+            consistent_put(RObj, Options, This);
         false ->
-            maybe_normal_put(RObj, Options, THIS);
-        {error,_}=Err ->
+            maybe_normal_put(RObj, Options, This);
+        {error, _} = Err ->
             Err
     end;
+put(RObj, W, {?MODULE, [_Node, _ClientId]} = This) ->
+    put(RObj, [{w, W}, {dw, W}], This).
 
-%% @spec put(RObj :: riak_object:riak_object(), W :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
-%% @doc Store RObj in the cluster.
-%%      Return as soon as at least W nodes have received the request.
-%% @equiv put(RObj, [{w, W}, {dw, W}])
-put(RObj, W, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [{w, W}, {dw, W}], THIS).
-
-%% @spec put(RObj::riak_object:riak_object(),W :: integer(),RW :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
+-spec put(
+    RObj::riak_object:riak_object(),
+    W :: rw_quorum(), DW :: pd_quorum(),
+    This :: riak_client() ) ->  put_result().
 %% @doc Store RObj in the cluster.
 %%      Return as soon as at least W nodes have received the request, and
 %%      at least DW nodes have stored it in their storage backend.
-%% @equiv put(Robj, W, DW, default_timeout())
-put(RObj, W, DW, {?MODULE, [_Node, _ClientId]}=THIS) -> put(RObj, [{w, W}, {dw, DW}], THIS).
+%% @equiv put(RObj, [{w, W}, {dw, DW}], This)
+put(RObj, W, DW, {?MODULE, [_Node, _ClientId]} = This) ->
+    put(RObj, [{w, W}, {dw, DW}], This).
 
-%% @spec put(RObj::riak_object:riak_object(), W :: integer(), RW :: integer(),
-%%           TimeoutMillisecs :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
+-spec put(
+    RObj::riak_object:riak_object(),
+    W :: rw_quorum(), DW :: pd_quorum(),
+    Timeout :: timeout(),
+    This :: riak_client() ) ->  put_result().
 %% @doc Store RObj in the cluster.
 %%      Return as soon as at least W nodes have received the request, and
 %%      at least DW nodes have stored it in their storage backend, or
-%%      TimeoutMillisecs passes.
-put(RObj, W, DW, Timeout, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    put(RObj,  [{w, W}, {dw, DW}, {timeout, Timeout}], THIS).
+%%      TimeoutMS passes.
+%% @equiv put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout}], This)
+put(RObj, W, DW, Timeout, {?MODULE, [_Node, _ClientId]} = This) ->
+    put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout}], This).
 
-%% @spec put(RObj::riak_object:riak_object(), W :: integer(), RW :: integer(),
-%%           TimeoutMillisecs :: integer(), Options::list(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}}
+-spec put(
+    RObj::riak_object:riak_object(),
+    W :: rw_quorum(), DW :: pd_quorum(),
+    Timeout :: timeout(),
+    Options :: put_options(),
+    This :: riak_client() ) ->  put_result().
 %% @doc Store RObj in the cluster.
 %%      Return as soon as at least W nodes have received the request, and
 %%      at least DW nodes have stored it in their storage backend, or
-%%      TimeoutMillisecs passes.
-put(RObj, W, DW, Timeout, Options, {?MODULE, [_Node, _ClientId]}=THIS) ->
-    put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout} | Options], THIS).
+%%      Timeout passes.
+%% @equiv put(RObj, [{w, W}, {dw, DW}, {timeout, Timeout} | Options], This)
+put(RObj, W, DW, Timeout, Options, {?MODULE, [_Node, _ClientId]} = This) ->
+    %% ToDo: Switch to the map-based version.
+    %% So much simpler with proplists:to_map/1, but someone may still want to
+    %% use OTP <24
+    % OptsMap = proplists:to_map(Options),
+    % PutOpts = proplists:from_map(OptsMap#{w => W, dw => DW, timeout => Timeout}),
+    PutOpts = lists:foldl(
+        fun({K, _V} = Rec, Proplist) ->
+            lists:keystore(K, 1, Proplist, Rec)
+        end,
+        proplists:unfold(Options), [{w, W}, {dw, DW}, {timeout, Timeout}]),
+    put(RObj, PutOpts, This).
 
 maybe_normal_put(RObj, Options, {?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
     case write_once(Node, riak_object:bucket(RObj)) of
@@ -539,52 +746,46 @@ write_once_put(Node, RObj, Options, {?MODULE, [_Node, _ClientId]}) when Node =:=
 write_once_put(Node, RObj, Options, {?MODULE, [_Node, _ClientId]}) ->
     rpc:call(Node, riak_kv_w1c_worker, put, [RObj, Options]).
 
-%% @spec delete(riak_object:bucket(), riak_object:key(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, Err :: term()}
+-spec delete(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    This :: riak_client() ) ->  del_result().
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as RW
 %%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, RW, default_timeout())
-delete(Bucket,Key,{?MODULE, [_Node, _ClientId]}=THIS) -> delete(Bucket,Key,[],?DEFAULT_TIMEOUT,THIS).
+%% @equiv delete(Bucket, Key, [], default_timeout(), This)
+delete(Bucket, Key, {?MODULE, [_Node, _ClientId]} = This) ->
+    delete(Bucket, Key, [], ?DEFAULT_TIMEOUT, This).
 
-%% @spec delete(riak_object:bucket(), riak_object:key(), RW :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, Err :: term()}
+-spec delete(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    OptionsOrRW :: del_options() |  rw_quorum(),
+    This :: riak_client() ) ->  del_result().
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
 %%      nodes have responded with a value or error.
-%% @equiv delete(Bucket, Key, RW, default_timeout())
-delete(Bucket,Key,Options,{?MODULE, [_Node, _ClientId]}=THIS) when is_list(Options) ->
-    delete(Bucket,Key,Options,recv_timeout(Options),THIS);
-delete(Bucket,Key,RW,{?MODULE, [_Node, _ClientId]}=THIS) ->
-    delete(Bucket,Key,[{rw, RW}],?DEFAULT_TIMEOUT,THIS).
+%% @equiv delete(Bucket, Key, Options, default_timeout(), This)
+delete(Bucket, Key, Options, {?MODULE, [_Node, _ClientId]} = This)
+        when is_list(Options) ->
+    delete(Bucket, Key, Options, recv_timeout(Options), This);
+delete(Bucket, Key, RW, {?MODULE, [_Node, _ClientId]} = This) ->
+    delete(Bucket, Key, [{rw, RW}], ?DEFAULT_TIMEOUT, This).
 
-%% @spec delete(riak_object:bucket(), riak_object:key(), RW :: integer(),
-%%           TimeoutMillisecs :: integer(), riak_client()) ->
-%%        ok |
-%%       {error, too_many_fails} |
-%%       {error, notfound} |
-%%       {error, timeout} |
-%%       {error, {n_val_violation, N::integer()}} |
-%%       {error, Err :: term()}
+-spec delete(
+    Bucket :: riak_object:bucket(), Key :: riak_object:key(),
+    OptionsOrRW :: del_options() | rw_quorum(),
+    Timeout :: timeout(), This :: riak_client() ) ->  del_result().
 %% @doc Delete the object at Bucket/Key.  Return a value as soon as W/DW (or RW)
-%%      nodes have responded with a value or error, or TimeoutMillisecs passes.
-delete(Bucket,Key,Options,Timeout,{?MODULE, [Node, _ClientId]}=THIS) when is_list(Options) ->
+%%      nodes have responded with a value or error, or TimeoutMS passes.
+delete(Bucket, Key, Options, Timeout, {?MODULE, [Node, _ClientId]} = This)
+        when is_list(Options) ->
     case consistent_object(Node, Bucket) of
         true ->
-            consistent_delete(Bucket, Key, Options, Timeout, THIS);
+            consistent_delete(Bucket, Key, Options, Timeout, This);
         false ->
-            normal_delete(Bucket, Key, Options, Timeout, THIS);
-        {error,_}=Err ->
+            normal_delete(Bucket, Key, Options, Timeout, This);
+        {error, _} = Err ->
             Err
     end;
-delete(Bucket,Key,RW,Timeout,{?MODULE, [_Node, _ClientId]}=THIS) ->
-    delete(Bucket,Key,[{rw, RW}], Timeout, THIS).
+delete(Bucket, Key, RW, Timeout, {?MODULE, [_Node, _ClientId]} = This) ->
+    delete(Bucket, Key, [{rw, RW}], Timeout, This).
 
 normal_delete(Bucket, Key, Options, Timeout, {?MODULE, [Node, ClientId]}) ->
     Me = self(),
@@ -604,6 +805,631 @@ consistent_delete(Bucket, Key, Options, _Timeout, {?MODULE, [Node, _ClientId]}) 
         {ok, Obj} when element(1, Obj) =:= r_object ->
             ok
     end.
+
+
+-spec clone(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    SrcVClock :: vclock:vclock() | undefined,
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key() | undefined,
+    CloneOpts :: clone_options(), Client :: riak_client() )
+        -> clone_result().
+%%
+%% @doc Copy or Move the source Bucket/Key to destination Bucket/Key.
+%%
+%% If `DstKey' is `undefined' a unique unused key will be generated and
+%% returned in the result object.
+%%
+%% If SrcVClock is not `undefined' and does not match the current vclock of the
+%% source record an error will be returned.
+%%
+%% @param SrcBucket The source `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param SrcKey The source `<<key>>'.
+%% @param SrcVClock The required vclock of the source, or `undefined' to not check.
+%% @param DstBucket The destination `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param DstKey The destination `<<key>>', or `undefined' to generate a random key.
+%% @param CloneOpts Options affecting the clone operation and the Get/Put/Delete
+%%                  operations it performs.
+%% @param Client The opaque client handle.
+%%
+%% @returns <dl>
+%%  <dt>`{ok, RiakObject :: riak_object:riak_object()}'</dt><dd>
+%%      Success.
+%%      The destination record as written is returned.
+%%      The result object contains only metadata unless the `returnbody'
+%%      option was given.</dd>
+%%  <dt>`{ok, RiakObject, Details :: op_details()}'</dt><dd>
+%%      Success.
+%%      `RiakObject' is returned as above.
+%%      `Details' is returned if the `details' option was given.</dd>
+%%  <dt>`{ok, RiakObject, DelFailReason :: del_err_reason()}'</dt><dd>
+%%      Partial success.
+%%      The copy to the destination record succeeded but the subsequent
+%%      deletion of the source record appears to have failed <i>(depending on
+%%      options, that may or may not actually be the case)</i>.<br/>
+%%      `RiakObject' is returned as above.
+%%      `DelFailReason' is the error returned by the delete operation.</dd>
+%%  <dt>`{ok, RiakObject, DelFailReason, Details}'</dt><dd>
+%%      Partial success.
+%%      `RiakObject', `DelFailReason', and `Details' are returned as above.</dd>
+%%  <dt>`{error, notfound}'</dt><dd>
+%%      The source record was not found.</dd>
+%%  <dt>`{error, name_unchanged}'</dt><dd>
+%%      The source and destination names are the same.</dd>
+%%  <dt>`{error, destination_not_empty}'</dt><dd>
+%%      The destination record already exists.</dd>
+%%  <dt>`{error, src_out_of_date}'</dt><dd>
+%%      The specified SrcVClock qualifier does not match the source record.</dd>
+%%  <dt>`{error, Reason :: term()}'</dt><dd>Any other error occurred.</dd>
+%%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
+%%      Any error may be returned with `Details' as desribed above.</dd>
+%% </dl>
+clone(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey,
+            #{} = CloneOpts, {?MODULE, [_Node, _ClientId]} = Client)
+        when    (erlang:is_binary(SrcBucket) orelse erlang:is_tuple(SrcBucket))
+        andalso erlang:is_binary(SrcKey)
+        andalso (erlang:is_binary(DstBucket) orelse erlang:is_tuple(DstBucket))
+        andalso (erlang:is_binary(DstKey) orelse DstKey =:= undefined) ->
+
+    StartTS = erlang:monotonic_time(),
+    %% Everything from here on can assume 'timeout' is present and valid.
+    %% We don't check for Timeout < 1 because that'd be silly to use in real
+    %% operation, but it *is* used by riak_test => 'verify_clone'.
+    Timeout = case CloneOpts of
+        #{timeout := Val} ->
+            Val;
+        _ ->
+            ?DEFAULT_CLONE_TIMEOUT
+    end,
+    State0 = #{
+        start       => StartTS,
+        timeout     => Timeout,
+        client      => Client,
+        srcbucket   => SrcBucket,
+        srcvclock   => SrcVClock,
+        srckey      => SrcKey,
+        dstbucket   => DstBucket,
+        dstkey      => DstKey
+    },
+    State1 = clone_init_details(CloneOpts, State0),
+    %% Keep the get opts without timeout for the next step.
+    GetOpts = clone_get_opts(State1),
+    State2 = clone_details(clone_init, State1#{getopts => GetOpts}),
+    {GetRes, State3} = clone_get(getsrc, SrcBucket, SrcKey, State2),
+    Res = case GetRes of
+        {ok, GetObj} ->
+            case SrcVClock of
+                undefined ->
+                    GetRes;
+                _ ->
+                    case riak_object:vclock(GetObj) of
+                        SrcVClock ->
+                            GetRes;
+                        _ ->
+                            {error, src_out_of_date}
+                    end
+            end;
+        _ ->
+            GetRes
+    end,
+    case Res of
+        {ok, SrcObj} ->
+            clone_chkdst(clone_details(clone_get, State3#{srcobj => SrcObj}));
+        _ ->
+            clone_return(Res, clone_details(clone_get, State3))
+    end.
+
+-spec clone_init_details(OptsIn :: clone_options(), StateIn :: map()) -> map().
+%% @hidden Return State with d_filter if appropriate and Opts without details.
+clone_init_details(
+        #{details := DetailsIn} = OptsIn, #{start := StartTS} = StateIn) ->
+    OptsOut = maps:remove(details, OptsIn),
+    State = StateIn#{opts => OptsOut},
+    case DetailsIn of
+        [_|_] = D1 ->
+            %% Filter details to either 'true' or a list of unique affirmative
+            %% atom() keys. Any istance of 'true' resets the predicate to
+            %% "collect everything", otherwise only specified keys. 'false' is
+            %% a valid key in at least one spec, but it's not clear whether it
+            %% should negate all other keys so I've chosen to ignore it.
+            Fun = fun
+                (_, true = True) ->
+                    True;
+                (true = True, _Acc) ->
+                    True;
+                (false, Acc) ->
+                    Acc;
+                (Key, Acc) when erlang:is_atom(Key) ->
+                    case lists:member(Key, Acc) of
+                        true ->
+                            Acc;
+                        _ ->
+                            [Key | Acc]
+                    end;
+                (_, Acc) ->
+                    Acc
+            end,
+            %% All that remains of the original 'details' list is a predicate
+            %% function for filtering sub-operations' detail options.
+            case lists:foldl(Fun, [], D1) of
+                true ->
+                    State#{
+                        d_filter => fun(_) -> true end,
+                        details => [], lasttime => StartTS
+                    };
+                [_|_] = D2 ->
+                    Pred = fun(DKey) -> lists:member(DKey, D2) end,
+                    case Pred(timing) of
+                        true ->
+                            State#{
+                                d_filter => Pred, details => [],
+                                lasttime => StartTS
+                            };
+                        _ ->
+                            State#{d_filter => Pred, details => []}
+                    end;
+                _ ->
+                    %% Nothing made it through the filter, no details will
+                    %% be collected.
+                    State
+            end;
+        _ ->
+            State
+    end;
+clone_init_details(OptsIn, StateIn) ->
+    StateIn#{opts => OptsIn}.
+
+-spec clone_get(
+    GetLabel :: atom(),
+    Bucket :: riak_object:bucket(),
+    Key :: riak_object:key(),
+    State :: clone_state() )
+        -> {{atom(), term()}, clone_state()}.
+%% @hidden Get operation surrogate, because we call Get 2+ times.
+%% Returns {Result, NewState}
+%% where:
+%%  Result is {ok, RiakObject} or {error, Reason}.
+%%  NewState is State updated with Get Details, if any.
+clone_get(OpLabel, Bucket, Key, #{getopts := Opts, client := Client} = State) ->
+    Timeout = clone_remain(State),
+    case Timeout =:= infinity orelse Timeout > 0 of
+        true ->
+            GetOpts = [{timeout, Timeout} | Opts],
+            GetRes = get(Bucket, Key, GetOpts, Client),
+            case GetRes of
+                {_OkErr, _ObjReason} ->
+                    {GetRes, State};
+                {OkErr, ObjReason, Details} ->
+                    {{OkErr, ObjReason},
+                        clone_details(OpLabel, Details, State)}
+            end;
+        _ ->
+            {{error, timeout}, State}
+    end.
+
+-spec clone_remain(State :: clone_state()) -> timeout().
+clone_remain(#{timeout := infinity}) ->
+    infinity;
+clone_remain(State) ->
+    clone_remain(erlang:monotonic_time(), State).
+
+%% At present clone_remain/2 is only called from clone_remain/1, so dialyzer
+%% accurately warns that 'timeout' can never be 'infinity'. We keep the
+%% pattern in place should it ever be called trough a different path.
+-dialyzer({no_match, clone_remain/2}).
+
+-spec clone_remain(
+    NowNative :: nativetime(), State :: clone_state()) -> timeout().
+clone_remain(_NowNative, #{timeout := infinity}) ->
+    infinity;
+clone_remain(NowNative, #{start := StartNative, timeout := Timeout}) ->
+    Timeout - erlang:convert_time_unit(
+        (NowNative - StartNative), native, millisecond).
+
+-spec clone_details(Label :: atom(), State :: clone_state() )
+        -> clone_state().
+%% @hidden If timings are being recorded, causes a new phase duration record
+%% to be added to State's details.
+clone_details(Label, #{lasttime := _} = State) ->
+    clone_details(Label, erlang:monotonic_time(), State);
+clone_details(_label, State) ->
+    State.
+
+-spec clone_details(
+    Label :: atom(), NowNativeOrRecord :: nativetime() | op_detail_recs(),
+    State :: clone_state() ) -> clone_state().
+%% @hidden If details are being recorded, adds the appropriate record as Label.
+%% If NowNativeOrRecord is an integer AND timings are being recorded, it is
+%% treated as the current native timestamp and a new duration record is
+%% created; otherwise it is assumed to be a list of informational records to
+%% be recorded as-is.
+clone_details(
+    Label, NowNative, #{details := Details, lasttime := LastNative} = State)
+        when erlang:is_integer(NowNative) ->
+    Record = {Label, duration_detail_rec(NowNative - LastNative)},
+    State#{details := [Record | Details], lasttime := NowNative};
+clone_details(Label, Record, #{details := Details} = State) ->
+    State#{details := [{Label, Record} | Details]};
+clone_details(_Label, _Info, State) ->
+    State.
+
+-spec duration_detail_rec(NativeDuration :: nativetime()) -> op_detail_recs().
+duration_detail_rec(NativeDuration) ->
+    MicroSecs = erlang:convert_time_unit(NativeDuration, native, microsecond),
+    [{usec, MicroSecs}].
+
+-spec clone_chkdst(State :: clone_state()) -> clone_result().
+%% @hidden Ensures that the destination record does not exist,
+%% generating a unique key if needed.
+clone_chkdst(#{dstkey := undefined} = StateIn) ->
+    {GenRes, State} = clone_genkey(StateIn),
+    StateOut = clone_details(clone_genkey, State),
+    case GenRes of
+        ok ->
+            clone_srcobj(StateOut);
+        _ ->
+            clone_return(GenRes, StateOut)
+    end;
+clone_chkdst(#{dstbucket := Bucket, dstkey := Key} = StateIn) ->
+    {GetRes, State} = clone_get(getdst, Bucket, Key, StateIn),
+    StateOut = clone_details(clone_chkdst, State),
+    case GetRes of
+        {error, notfound} ->
+            clone_srcobj(StateOut);
+        {ok, _} ->
+            clone_return({error, destination_not_empty}, StateOut);
+        _ ->
+            clone_return(GetRes, StateOut)
+    end.
+
+-spec clone_genkey(clone_state()) -> {ok | {error, term()}, clone_state()}.
+%% @hidden Genertaes a new, unique (unused) destination key.
+clone_genkey(#{dstbucket := Bucket} = StateIn) ->
+    Key = erlang:list_to_binary(riak_core_util:unique_id_62()),
+    {GetRes, State} = clone_get(chkkey, Bucket, Key, StateIn),
+    case GetRes of
+        {error, notfound} ->
+            {ok, State#{dstkey := Key}};
+        {ok, _} ->
+            clone_genkey(State);
+        _ ->
+            {GetRes, State}
+    end.
+
+-spec clone_srcobj(State :: clone_state()) -> clone_result().
+%% @hidden Performs the actual copy operation.
+clone_srcobj(#{dstbucket := Bucket, dstkey := Key,
+        srcobj := SrcObj, client := Client} = State) ->
+    %% all checks completed
+    Timeout = clone_remain(State),
+    case Timeout =:= infinity orelse Timeout > 0 of
+        true ->
+            case riak_object:clone(SrcObj, Bucket, Key) of
+                {ok, DstObj} ->
+                    PutOpts = clone_put_opts(State),
+                    %% ToDo: Implement 'provmeta' actions here.
+                    %% 'returnhead' would be ideal here; instead, simulate it.
+                    {MetaOnly, Opts} = case
+                            proplists:get_bool(returnbody, PutOpts) of
+                        true ->
+                            {false, PutOpts};
+                        _ ->
+                            {true, lists:keystore(
+                                returnbody, 1, PutOpts, {returnbody, true})}
+                    end,
+                    {PutRes, State1} = case put(
+                            DstObj, [{timeout, Timeout} | Opts], Client) of
+                        {_, _} = R ->
+                            {R, State};
+                        {OkOrErr, ObjOrReason, Details} ->
+                            {{OkOrErr, ObjOrReason},
+                                clone_details(putdst, Details, State)}
+                    end,
+                    CloneRes = case PutRes of
+                        {ok, RObj} when MetaOnly ->
+                            Contents = riak_object:get_contents(RObj),
+                            MetaContents = [{MD, <<>>} || {MD, _} <- Contents],
+                            {ok, riak_object:set_contents(RObj, MetaContents)};
+                        _ ->
+                            PutRes
+                    end,
+                    State2 = clone_details(clone_srcobj, State1),
+                    case CloneRes of
+                        {ok, _} ->
+                            clone_finish(CloneRes, State2);
+                        _ ->
+                            clone_return(CloneRes, State2)
+                    end;
+                ObjError ->
+                    clone_return(ObjError, clone_details(clone_srcobj, State))
+            end;
+        _ ->
+            clone_return({error, timeout}, clone_details(clone_srcobj, State))
+    end.
+
+-spec clone_finish(
+    CloneRes :: {ok, riak_object:riak_object()} | {error, term()},
+    State :: clone_state() )
+        -> clone_result().
+%% @hidden Finalizes the clone, possibly deleting the source record.
+clone_finish({_Ok, ResObj} = CloneRes, #{opts := #{del_src := true},
+        srcbucket := Bucket, srckey := Key, srcvclock := SrcVClock,
+        client := Client} = State) ->
+    Timeout = clone_remain(State),
+    case Timeout =:= infinity orelse Timeout > 0 of
+        true ->
+            DelOpts = [{timeout, Timeout} | clone_del_opts(State)],
+            DelRes = case SrcVClock of
+                undefined ->
+                    delete(Bucket, Key, DelOpts, Client);
+                _ ->
+                    delete_vclock(Bucket, Key, SrcVClock, DelOpts, Client)
+            end,
+            StateOut = clone_details(clone_delsrc, State),
+            case DelRes of
+                ok ->
+                    clone_return(CloneRes, StateOut);
+                {error, DelFail} ->
+                    clone_return({ok, ResObj, DelFail}, StateOut)
+            end;
+        _ ->
+            clone_return({ok, ResObj, timeout},
+                clone_details(clone_delsrc, State))
+    end;
+clone_finish(CloneRes, State) ->
+    clone_return(CloneRes, State).
+
+-spec clone_return(
+    CloneRes :: {ok, riak_object:riak_object()} |
+                {ok, riak_object:riak_object(), term()} |
+                {error, term()},
+    State :: clone_state() ) -> clone_result().
+%% @hidden Returns the clone result, possibly with accumulated details.
+clone_return(CloneRes, #{lasttime := _, start := StartTS} = State) ->
+    %% Only collect clone duration if 'lasttime' is present.
+    DurationRec = duration_detail_rec(erlang:monotonic_time() - StartTS),
+    #{details := DetailsAcc} = clone_details(clone, DurationRec, State),
+    %% The compiler should optimize this away and jump to the next head's
+    %% identical body ...
+    Details = lists:reverse(DetailsAcc),
+    case CloneRes of
+        {OkOrError, ObjOrReason} ->
+            {OkOrError, ObjOrReason, Details};
+        {ok, DstObj, DelFail} ->
+            {ok, DstObj, DelFail, Details}
+    end;
+clone_return(CloneRes, #{details := [_|_] = DetailsAcc}) ->
+    Details = lists:reverse(DetailsAcc),
+    case CloneRes of
+        {OkOrError, ObjOrReason} ->
+            {OkOrError, ObjOrReason, Details};
+        {ok, DstObj, DelFail} ->
+            {ok, DstObj, DelFail, Details}
+    end;
+clone_return(CloneRes, _State) ->
+    CloneRes.
+
+-spec clone_del_opts(State :: clone_state()) -> del_options().
+%% @hidden Options in riak_kv_delete:option() less timeout.
+%%clone_del_opts(#{opts := CloneOpts}) ->
+clone_del_opts(State) ->
+    Keys = [
+        r, pr, rw, w, dw, pw, n_val,
+        sloppy_quorum, recv_timeout
+    ],
+    maps:to_list(maps:with(Keys, maps:get(opts, State))).
+
+-spec clone_get_opts(State :: clone_state()) -> get_options().
+%% @hidden Options from riak_kv_get_fsm:option() less timeout.
+clone_get_opts(#{opts := CloneOpts} = State) ->
+    Keys = [
+        r, pr, n_val,
+        notfound_ok, basic_quorum, sloppy_quorum,
+        recv_timeout, crdt_op
+    ],
+    Opts1 = maps:with(Keys, CloneOpts),
+    Opts2 = clone_detail_opts([timing, vnodes], Opts1, State),
+    maps:to_list(Opts2).
+
+-spec clone_put_opts(State :: clone_state()) -> put_options().
+%% @hidden Options from riak_kv_put_fsm:option() less timeout.
+clone_put_opts(#{opts := CloneOpts} = State) ->
+    Keys = [
+        pw, w, dw, n_val,
+        returnbody,
+        asis, disable_hooks, sync_on_write,
+        sloppy_quorum,
+        retry_put_coordinator_failure, mbox_check,
+        recv_timeout,
+        counter_op, crdt_op
+    ],
+    Opts1 = maps:with(Keys, CloneOpts),
+    Opts2 = clone_detail_opts([timing], Opts1, State),
+    maps:to_list(Opts2).
+
+-spec clone_detail_opts(
+    Keys :: list(atom()), Opts :: map(), State :: clone_state() )
+        -> map().
+%% @hidden Figure out which, if any, of the specified sub-operation Keys is
+%% selected by the 'details' option.
+%% Returns the resulting sub-operation options, possibly modified.
+clone_detail_opts(Keys, Opts, #{d_filter := Filter}) ->
+    case lists:filter(Filter, Keys) of
+        [_|_] = Match ->
+            Opts#{details => Match};
+        _ ->
+            Opts
+    end;
+clone_detail_opts(_Keys, Opts, _State) ->
+    Opts.
+
+
+-spec copy(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    Client :: riak_client() ) -> copy_result().
+%%
+%% @doc Create a new copy of the source Bucket/Key as destination Bucket/Key.
+%%
+%% @equiv copy(SrcBucket, SrcKey, undefined, DstBucket, DstKey, #{}, Client)
+%%
+copy(SrcBucket, SrcKey, DstBucket, DstKey, Client) ->
+    copy(SrcBucket, SrcKey, undefined, DstBucket, DstKey, #{}, Client).
+
+-spec copy(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    CopyOpts :: copy_options(), Client :: riak_client() )
+        -> copy_result().
+%%
+%% @doc Create a new copy of the source Bucket/Key as destination Bucket/Key.
+%%
+%% @equiv copy(SrcBucket, SrcKey, undefined,
+%%          DstBucket, DstKey, CopyOpts, Client)
+%%
+copy(SrcBucket, SrcKey, DstBucket, DstKey, CopyOpts, Client) ->
+    copy(SrcBucket, SrcKey, undefined,
+        DstBucket, DstKey, CopyOpts, Client).
+
+-spec copy(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    SrcVClock :: vclock:vclock() | undefined,
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    CopyOpts :: copy_options(), Client :: riak_client() )
+        -> copy_result().
+%%
+%% @doc Create a new copy of the source Bucket/Key as destination Bucket/Key.
+%%
+%% If `DstKey' is `undefined' a unique unused key will be generated and
+%% returned in the result object.
+%%
+%% If SrcVClock is not `undefined' and does not match the current vclock of the
+%% source record an error will be returned.
+%%
+%% @param SrcBucket The source `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param SrcKey The source `<<key>>'.
+%% @param SrcVClock The required vclock of the source, or `undefined' to not check.
+%% @param DstBucket The destination `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param DstKey The destination `<<key>>', or `undefined' to generate a random key.
+%% @param CopyOpts Options affecting the copy operation and the Get/Put
+%%          operations it performs.
+%% @param Client The opaque client handle.
+%%
+%% @returns <dl>
+%%  <dt>`{ok, RiakObject :: riak_object:riakc_obj()}'</dt><dd>
+%%      Success.
+%%      The destination record as written is returned.
+%%      The result object contains only metadata unless the `returnbody'
+%%      option was given.</dd>
+%%  <dt>`{ok, RiakObject, Details :: op_details()}'</dt><dd>
+%%      Success.
+%%      `RiakObject' is returned as above.
+%%      `Details' is returned if the `details' option was given.</dd>
+%%  <dt>`{error, notfound}'</dt><dd>
+%%      The source record was not found.</dd>
+%%  <dt>`{error, name_unchanged}'</dt><dd>
+%%      The source and destination names are the same.</dd>
+%%  <dt>`{error, destination_not_empty}'</dt><dd>
+%%      The destination record already exists.</dd>
+%%  <dt>`{error, src_out_of_date}'</dt><dd>
+%%      The specified SrcVClock qualifier does not match the source record.</dd>
+%%  <dt>`{error, Reason :: term()}'</dt><dd>Any other error occurred.</dd>
+%%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
+%%      Any error may be returned with `Details' as desribed above.</dd>
+%% </dl>
+copy(Bucket, Key, _SrcVClock, Bucket, Key, _CopyOpts, _Client) ->
+    {error, name_unchanged};
+copy(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey, CopyOpts, Client) ->
+    %% CopyOpts should not contain the 'del_src' key, but make sure.
+    clone(SrcBucket, SrcKey, SrcVClock,
+        DstBucket, DstKey, maps:remove(del_src, CopyOpts), Client).
+
+
+-spec move(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    Client :: riak_client() ) -> move_result().
+%%
+%% @doc Move the source Bucket/Key to destination Bucket/Key.
+%%
+%% @equiv move(SrcBucket, SrcKey, undefined, DstBucket, DstKey, #{}, Client)
+%%
+move(SrcBucket, SrcKey, DstBucket, DstKey, Client) ->
+    move(SrcBucket, SrcKey, undefined, DstBucket, DstKey, #{}, Client).
+
+-spec move(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    MoveOpts :: move_options(), Client :: riak_client() )
+        -> move_result().
+%%
+%% @doc Move the source Bucket/Key to destination Bucket/Key.
+%%
+%% @equiv move(SrcBucket, SrcKey, undefined,
+%%          DstBucket, DstKey, MoveOpts, Client)
+%%
+move(SrcBucket, SrcKey, DstBucket, DstKey, MoveOpts, Client) ->
+    move(SrcBucket, SrcKey, undefined,
+        DstBucket, DstKey, MoveOpts, Client).
+
+-spec move(
+    SrcBucket :: riak_object:bucket(), SrcKey :: riak_object:key(),
+    SrcVClock :: vclock:vclock() | undefined,
+    DstBucket :: riak_object:bucket(), DstKey :: riak_object:key(),
+    MoveOpts :: move_options(), Client :: riak_client() )
+        -> move_result().
+%%
+%% @doc Move the source Bucket/Key to destination Bucket/Key.
+%%
+%% If `DstKey' is `undefined' a unique unused key will be generated and
+%% returned in the result object.
+%%
+%% If SrcVClock is not `undefined' and does not match the current vclock of the
+%% source record an error will be returned.
+%%
+%% @param SrcBucket The source `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param SrcKey The source `<<key>>'.
+%% @param SrcVClock The required vclock of the source, or `undefined' to not check.
+%% @param DstBucket The destination `<<bucket>>' or `{<<bucket_type>>, <<bucket>>}'.
+%% @param DstKey The destination `<<key>>', or `undefined' to generate a random key.
+%% @param MoveOpts Options affecting the move operation and the Get/Put/Delete
+%%          operations it performs.
+%% @param Client The opaque client handle.
+%%
+%% @returns <dl>
+%%  <dt>`{ok, RiakObject :: riak_object:riak_object()}'</dt><dd>
+%%      Success.
+%%      The destination record as written is returned.
+%%      The result object contains only metadata unless the `returnbody'
+%%      option was given.</dd>
+%%  <dt>`{ok, RiakObject, Details :: op_details()}'</dt><dd>
+%%      Success.
+%%      `RiakObject' is returned as above.
+%%      `Details' is returned if the `details' option was given.</dd>
+%%  <dt>`{ok, RiakObject, DelFailReason :: del_err_reason()}'</dt><dd>
+%%      Partial success.
+%%      The copy to the destination record succeeded but the subsequent
+%%      deletion of the source record appears to have failed <i>(depending on
+%%      options, that may or may not actually be the case)</i>.<br/>
+%%      `RiakObject' is returned as above.
+%%      `DelFailReason' is the error returned by the delete operation.</dd>
+%%  <dt>`{ok, RiakObject, DelFailReason, Details}'</dt><dd>
+%%      Partial success.
+%%      `RiakObject', `DelFailReason', and `Details' are returned as above.</dd>
+%%  <dt>`{error, notfound}'</dt><dd>
+%%      The source record was not found.</dd>
+%%  <dt>`{error, name_unchanged}'</dt><dd>
+%%      The source and destination names are the same.</dd>
+%%  <dt>`{error, destination_not_empty}'</dt><dd>
+%%      The destination record already exists.</dd>
+%%  <dt>`{error, src_out_of_date}'</dt><dd>
+%%      The specified SrcVClock qualifier does not match the source record.</dd>
+%%  <dt>`{error, Reason :: term()}'</dt><dd>Any other error occurred.</dd>
+%%  <dt>`{error, Reason :: term(), Details}'</dt><dd>
+%%      Any error may be returned with `Details' as desribed above.</dd>
+%% </dl>
+move(SrcBucket, SrcKey, SrcVClock, DstBucket, DstKey, MoveOpts, Client) ->
+    clone(SrcBucket, SrcKey, SrcVClock,
+        DstBucket, DstKey, MoveOpts#{del_src => true}, Client).
 
 
 -spec reap(
@@ -936,7 +1762,7 @@ aae_fold(Query) ->
 aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
     Me = self(),
     ReqId = mk_reqid(),
-    TimeOut = 
+    TimeOut =
         app_helper:get_env(
             riak_kv, riak_client_aaefold_timeout, ?DEFAULT_FOLD_TIMEOUT),
     Q0 = riak_kv_clusteraae_fsm:convert_fold(Query),
@@ -1025,7 +1851,7 @@ tictacaae_resume_node() ->
 participate_in_coverage(Participate) ->
     F =
         fun(R, _) ->
-            {new_ring, 
+            {new_ring,
                 riak_core_ring:update_member_meta(
                     node(), R, node(), participate_in_coverage, Participate)}
         end,
@@ -1198,6 +2024,7 @@ get_client_id({?MODULE, [_Node, ClientId]}) ->
 for_dialyzer_only_ignore(_X, _Y, {?MODULE, [_Node, _ClientId]}=THIS) ->
     THIS.
 
+-spec mk_reqid() -> req_id().
 %% @private
 mk_reqid() ->
     erlang:phash2({self(), os:timestamp()}). % only has to be unique per-pid
@@ -1270,12 +2097,18 @@ wait_for_fold_results(ReqId, Timeout) ->
         {error, timeout}
     end.
 
+-spec recv_timeout(Options :: proplists:proplist()) -> timeout().
 recv_timeout(Options) ->
     case proplists:get_value(recv_timeout, Options) of
         undefined ->
             %% If no reply timeout given, use the FSM timeout + 100ms to give it a chance
             %% to respond.
-            proplists:get_value(timeout, Options, ?DEFAULT_TIMEOUT) + 100;
+            case proplists:get_value(timeout, Options, ?DEFAULT_TIMEOUT) of
+                infinity ->
+                    infinity;
+                MilliSecs ->
+                    MilliSecs + 100
+            end;
         Timeout ->
             %% Otherwise use the directly supplied timeout.
             Timeout
