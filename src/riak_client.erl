@@ -930,7 +930,7 @@ aae_fold(Query) ->
 %%
 %% Run a cluster-wide AAE query - which can either access cached AAE
 %% data across the cluster, or fold over ranges of the AAE store
-%% (which in the case of Leveled can be the native AAE store.
+%% (which in the case of Leveled can be the native AAE store.)
 -spec aae_fold(riak_kv_clusteraae_fsm:query_definition(), riak_client())
                     -> {ok, any()}|{error, timeout}|{error, Err :: term()}.
 aae_fold(Query, {?MODULE, [Node, _ClientId]}) ->
@@ -974,7 +974,7 @@ ttaaefs_fullsync(WorkItem) ->
 %% - all_check (sync over all time - only permissible sync if not bucket-based)
 %% - hour_check (sync over past hour, only allowed if bucket-based sync)
 %% - day_check (sync over past day, only allowed if bucket-based sync)
-%% - range_check (sync over a range if one has been discovered by a previour sync)
+%% - range_check (sync over a range if one has been discovered by a previous sync)
 %% - auto_check (sync over range if one is present, otherwise use all if within window, otherwise day)
 -spec ttaaefs_fullsync(riak_kv_ttaaefs_manager:work_item(), integer())
         -> ok | {error, term()}.

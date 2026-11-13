@@ -178,13 +178,13 @@ requeue_work(WorkItem) ->
     gen_server:cast(?MODULE, {requeue_work, WorkItem}).
 
 %% @doc
-%% Suspend the activity asociated with a given queue (for all peers)
+%% Suspend the activity associated with a given queue (for all peers)
 -spec suspend_snkqueue(queue_name()) -> ok|not_found.
 suspend_snkqueue(QueueName) ->
     gen_server:call(?MODULE, {suspend, QueueName}).
 
 %% @doc
-%% Resume the activity asociated with a given queue (for all peers)
+%% Resume the activity associated with a given queue (for all peers)
 -spec resume_snkqueue(queue_name()) -> ok|not_found.
 resume_snkqueue(QueueName) ->
     gen_server:call(?MODULE, {resume, QueueName}).
@@ -221,7 +221,7 @@ add_snkqueue(
 
 %% @doc
 %% Return the current list of peers being used by this snk host, and the
-%% settings currently being used for this host and he workers per peer. 
+%% settings currently being used for this host and the workers per peer. 
 %% Returns undefined if there are currently no peers defined.
 -spec current_peers(queue_name()) -> list(peer_info())|suspended|disabled.
 current_peers(QueueName) ->
