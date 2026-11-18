@@ -61,6 +61,7 @@
          stop/1,
          get/3,
          put/5,
+         flush_put/5,
          delete/4,
          drop/1,
          fold_buckets/4,
@@ -91,7 +92,7 @@
 
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold, index_reformat]).
--define(ANY_CAPABILITIES, [indexes, iterator_refresh]).
+-define(ANY_CAPABILITIES, [indexes, iterator_refresh, flush_put]).
 
 -record (state, {backends :: [{atom(), atom(), term()}], % [{BackendName, BackendModule, SubState}]
                  default_backend :: atom()}).
@@ -264,6 +265,29 @@ head(Bucket, Key, State) ->
 put(Bucket, PrimaryKey, IndexSpecs, Value, State) ->
     {Name, Module, SubState} = get_backend(Bucket, State),
     case Module:put(Bucket, PrimaryKey, IndexSpecs, Value, SubState) of
+        {ok, NewSubState} ->
+            NewState = update_backend_state(Name, Module, NewSubState, State),
+            {ok, NewState};
+        {error, Reason, NewSubState} ->
+            NewState = update_backend_state(Name, Module, NewSubState, State),
+            {error, Reason, NewState}
+    end.
+
+%% @doc As put/5, but use the child backend's flush_put/5 if it has one
+-spec flush_put(
+    riak_object:bucket(), riak_object:key(), [index_spec()], binary(), state())
+        -> {ok, state()} | {error, term(), state()}.
+flush_put(Bucket, PrimaryKey, IndexSpecs, Value, State) ->
+    {Name, Module, SubState} = get_backend(Bucket, State),
+    {ok, ModCaps} = Module:capabilities(SubState),
+    PutFun =
+        case lists:member(flush_put, ModCaps) of
+            true ->
+                fun Module:flush_put/5;
+            false ->
+                fun Module:put/5
+        end,
+    case PutFun(Bucket, PrimaryKey, IndexSpecs, Value, SubState) of
         {ok, NewSubState} ->
             NewState = update_backend_state(Name, Module, NewSubState, State),
             {ok, NewState};
@@ -766,6 +790,53 @@ multi_backend_test_() ->
                           start(42, bad_backend_config()))
                end
               }
+      end,
+      fun(_) ->
+              {"flush_put test",
+               fun() ->
+                       B1 = <<"b1">>, B2 = <<"b2">>,
+                       K1 = <<"k1">>, K2 = <<"k2">>,
+                       V1 = <<"v1">>, V2 = <<"v2">>,
+
+                       riak_core_bucket:set_bucket(B1, [{backend, first_backend}]),
+                       riak_core_bucket:set_bucket(B2, [{backend, second_backend}]),
+
+                       %% No child has flush_put: falls back to put/5
+                       {ok, MemState} = start(42, sample_config()),
+                       {ok, MemCaps} = capabilities(MemState),
+                       ?assertNot(lists:member(flush_put, MemCaps)),
+                       {ok, MemState1} = flush_put(B1, K1, [], V1, MemState),
+                       ?assertMatch({ok, V1, _}, get(B1, K1, MemState1)),
+                       ok = stop(MemState1),
+
+                       %% Only bitcask has flush_put
+                       meck:new(riak_kv_bitcask_backend, [passthrough]),
+                       meck:new(riak_kv_memory_backend, [passthrough]),
+                       try
+                           {ok, State} = start(42, flush_put_config()),
+                           {ok, Caps} = capabilities(State),
+                           ?assert(lists:member(flush_put, Caps)),
+                           {ok, State1} = flush_put(B1, K1, [], V1, State),
+                           {ok, State2} = flush_put(B2, K2, [], V2, State1),
+                           ?assertEqual(
+                              1,
+                              meck:num_calls(
+                                riak_kv_bitcask_backend, flush_put, '_')),
+                           ?assertEqual(
+                              0,
+                              meck:num_calls(riak_kv_bitcask_backend, put, '_')),
+                           ?assertEqual(
+                              1,
+                              meck:num_calls(riak_kv_memory_backend, put, '_')),
+                           ?assertMatch({ok, V1, _}, get(B1, K1, State2)),
+                           ?assertMatch({ok, V2, _}, get(B2, K2, State2)),
+                           ok = stop(State2)
+                       after
+                           meck:unload([riak_kv_bitcask_backend,
+                                        riak_kv_memory_backend])
+                       end
+               end
+              }
       end
      ]
     }.
@@ -857,6 +928,16 @@ sample_config() ->
      {multi_backend_default, second_backend},
       {multi_backend, [
                       {first_backend, riak_kv_memory_backend, []},
+                      {second_backend, riak_kv_memory_backend, []}
+                     ]}
+    ].
+
+flush_put_config() ->
+    [
+     {storage_backend, riak_kv_multi_backend},
+     {multi_backend_default, second_backend},
+      {multi_backend, [
+                      {first_backend, riak_kv_bitcask_backend, []},
                       {second_backend, riak_kv_memory_backend, []}
                      ]}
     ].
