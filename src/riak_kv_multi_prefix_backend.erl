@@ -81,6 +81,7 @@
          stop/1,
          get/3,
          put/5,
+         flush_put/5,
          delete/4,
          drop/1,
          fold_buckets/4,
@@ -302,6 +303,29 @@ head(Bucket, Key, State) ->
 put(Bucket, PrimaryKey, IndexSpecs, Value, State) ->
     {Name, Module, SubState} = get_backend(Bucket, State),
     case Module:put(Bucket, PrimaryKey, IndexSpecs, Value, SubState) of
+        {ok, NewSubState} ->
+            NewState = update_backend_state(Name, Module, NewSubState, State),
+            {ok, NewState};
+        {error, Reason, NewSubState} ->
+            NewState = update_backend_state(Name, Module, NewSubState, State),
+            {error, Reason, NewState}
+    end.
+
+%% @doc As put/5, but use the child backend's flush_put/5 if it has one
+-spec flush_put(
+    riak_object:bucket(), riak_object:key(), [index_spec()], binary(), state())
+        -> {ok, state()} | {error, term(), state()}.
+flush_put(Bucket, PrimaryKey, IndexSpecs, Value, State) ->
+    {Name, Module, SubState} = get_backend(Bucket, State),
+    {ok, ModCaps} = Module:capabilities(SubState),
+    PutFun =
+        case lists:member(flush_put, ModCaps) of
+            true ->
+                fun Module:flush_put/5;
+            false ->
+                fun Module:put/5
+        end,
+    case PutFun(Bucket, PrimaryKey, IndexSpecs, Value, SubState) of
         {ok, NewSubState} ->
             NewState = update_backend_state(Name, Module, NewSubState, State),
             {ok, NewState};
