@@ -296,7 +296,8 @@ handle_call({request, RequestTimeout, VerifyList}, _From, State) ->
         granted ->
             <<SessionID:32/integer>> = crypto:strong_rand_bytes(4),
             SessionRef = encode_session_reference(SessionID),
-            Client = riak_client:new(node(), State#state.token_id),
+            %% No client ID, so PUTs are coordinated (needed for nextgenrepl)
+            Client = riak_client:new(node(), undefined),
             {reply,
                 {true, SessionRef},
                 State#state{client = Client, session_id = SessionID},
@@ -472,6 +473,19 @@ basic_session_request_tester() ->
     end,
     {1, 0, 1} = riak_kv_token_manager:stats(),
 
+    gen_server:stop(riak_kv_token_manager).
+
+session_client_id_test_() ->
+    {timeout, 10, fun session_client_id_tester/0}.
+
+session_client_id_tester() ->
+    _TokenManager = riak_kv_token_manager:start_link(),
+    {true, SessionRef} =
+        session_local_request({token, <<"ClientID">>}, [], 1000, 2000),
+    {_Node, SessionPid, _SessionID} = decode_session_reference(SessionRef),
+    #state{client = Client} = sys:get_state(SessionPid),
+    ?assertEqual(undefined, riak_client:get_client_id(Client)),
+    session_release(SessionRef),
     gen_server:stop(riak_kv_token_manager).
 
 
