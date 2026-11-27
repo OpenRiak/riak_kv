@@ -3292,7 +3292,7 @@ prepare_put_existing_object(#state{idx =Idx} = State,
                             OldObj, IndexBackend, CacheData, RequiresGet) ->
     {IsNewEpoch, ActorId, State2} = maybe_new_key_epoch(Coord, State, OldObj, RObj),
     case put_merge(Coord, LWW, OldObj, RObj, {IsNewEpoch, ActorId}, StartTime) of
-        {oldobj, OldObj} ->
+        {oldobj, _OldObj} ->
             {{false, {OldObj, unchanged_no_old_object}}, PutArgs, State2};
         {newobj, NewObj} ->
             case enforce_allow_mult(NewObj, OldObj, BProps) of
