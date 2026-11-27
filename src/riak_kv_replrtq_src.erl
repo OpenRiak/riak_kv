@@ -261,7 +261,7 @@ delist_rtq(QueueName) ->
     gen_server:call(?MODULE, {delist_rtq, QueueName}, infinity).
 
 %% @doc
-%% Suspend a queue form receiving further updates, all attempted updates after
+%% Suspend a queue from receiving further updates; all attempted updates after
 %% the suspension will be discarded.  The queue will remain listed, and
 %% consumption from the queue may continue
 -spec suspend_rtq(queue_name()) -> ok|not_found.
